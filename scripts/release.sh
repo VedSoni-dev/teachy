@@ -29,6 +29,11 @@ RELEASES_DIR="${PROJECT_DIR}/releases"
 DMG_BACKGROUND="${PROJECT_DIR}/dmg-background.png"
 DERIVED_DATA_PATH="${BUILD_DIR}/DerivedData"
 
+# Prefer full Xcode over bare Command Line Tools (no sudo xcode-select needed)
+if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+fi
+
 GITHUB_REPO="VedSoni-dev/teachy"
 SPARKLE_KEYCHAIN_ACCOUNT="teachy"
 NOTARIZE="${NOTARIZE:-0}"
@@ -168,12 +173,21 @@ else
         -scheme "${SCHEME}" \
         -configuration Release \
         -derivedDataPath "${DERIVED_DATA_PATH}" \
+        -destination 'platform=macOS,arch=arm64' \
+        ONLY_ACTIVE_ARCH=YES \
+        ARCHS=arm64 \
         MARKETING_VERSION="${MARKETING_VERSION}" \
         CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
         CODE_SIGN_IDENTITY="-" \
         CODE_SIGNING_ALLOWED=YES \
         CODE_SIGNING_REQUIRED=NO \
-        2>&1 | tail -12
+        2>&1 | tee /tmp/teachy-xcodebuild.log | tail -20
+
+    if ! grep -q "BUILD SUCCEEDED" /tmp/teachy-xcodebuild.log; then
+        echo "❌ xcodebuild failed — last errors:"
+        rg -i "error:" /tmp/teachy-xcodebuild.log | head -40 || true
+        exit 1
+    fi
 
     BUILT_APP=$(find "${DERIVED_DATA_PATH}/Build/Products/Release" -maxdepth 1 -name "${APP_NAME}.app" | head -1)
     if [ -z "$BUILT_APP" ]; then
@@ -193,7 +207,8 @@ echo "✅ App ready at ${EXPORT_DIR}/${APP_NAME}.app"
 DMG_PATH="${RELEASES_DIR}/${DMG_FILENAME}"
 
 echo "💿 Creating DMG…"
-create-dmg \
+# Prefer create-dmg (pretty Finder layout). Fall back to hdiutil if Finder AppleScript flakes.
+if create-dmg \
     --volname "${APP_NAME}" \
     --window-pos 200 120 \
     --window-size 660 400 \
@@ -203,9 +218,25 @@ create-dmg \
     --background "${DMG_BACKGROUND}" \
     "${DMG_PATH}" \
     "${EXPORT_DIR}/${APP_NAME}.app" \
-    2>&1 | tail -5
-
-echo "✅ DMG created: ${DMG_PATH}"
+    2>&1 | tee /tmp/teachy-createdmg.log | tail -8 \
+  && [ -f "${DMG_PATH}" ]; then
+    echo "✅ DMG created: ${DMG_PATH}"
+else
+    echo "⚠️  create-dmg failed (often Finder AppleScript) — falling back to hdiutil…"
+    rm -f "${DMG_PATH}"
+    STAGE="${BUILD_DIR}/dmg-stage"
+    rm -rf "${STAGE}"
+    mkdir -p "${STAGE}"
+    cp -R "${EXPORT_DIR}/${APP_NAME}.app" "${STAGE}/"
+    ln -s /Applications "${STAGE}/Applications"
+    hdiutil create \
+        -volname "${APP_NAME}" \
+        -srcfolder "${STAGE}" \
+        -ov \
+        -format UDZO \
+        "${DMG_PATH}"
+    echo "✅ DMG created (hdiutil): ${DMG_PATH}"
+fi
 
 if [ "$USE_NOTARIZE" = "1" ]; then
     echo "🔏 Notarizing DMG with Apple…"

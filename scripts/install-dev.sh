@@ -3,6 +3,11 @@
 # survive rebuilds (TCC is tied to bundle path + signing identity).
 set -euo pipefail
 
+if [ "${CONFIGURATION:-}" = "Release" ] || [ "${SKIP_DEV_INSTALL:-}" = "1" ]; then
+  echo "install-dev: skipping (Release / SKIP_DEV_INSTALL)"
+  exit 0
+fi
+
 INSTALL_DIR="${HOME}/Applications"
 INSTALL_APP="${INSTALL_DIR}/Teachy.app"
 PRODUCT_NAME="${FULL_PRODUCT_NAME:-Teachy.app}"

@@ -261,7 +261,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "export RUNNING_FROM_XCODE_BUILD=1\n\"${SRCROOT}/scripts/install-dev.sh\"\n";
+			shellScript = "export RUNNING_FROM_XCODE_BUILD=1\nif [ \"${CONFIGURATION}\" = \"Release\" ] || [ \"${SKIP_DEV_INSTALL:-}\" = \"1\" ]; then\n  echo \"install-dev: skipping for Release / SKIP_DEV_INSTALL\"\n  exit 0\nfi\n\"${SRCROOT}/scripts/install-dev.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
