@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>LSUIElement</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>DWNYW003srgruUHJyPHghwR5tshBuHWncCOHmmL/vZU=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>VoiceTranscriptionProvider</key>
+	<string>apple</string>
+	<key>WorkerBaseURL</key>
+	<string>http://localhost:8787</string>
+	<key>TeachyAcademyRegistryURL</key>
+	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy/main/academy/registry.json</string>
+	<key>TeachyAcademyWebsiteURL</key>
+	<string>https://raw.githack.com/VedSoni-dev/teachy/main/academy/index.html</string>
+	<key>ClickyAcademyRegistryURL</key>
+	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy/main/academy/registry.json</string>
+	<key>ClickyAcademyWebsiteURL</key>
+	<string>https://raw.githack.com/VedSoni-dev/teachy/main/academy/index.html</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Teachy uses your microphone so you can talk to your tutor</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Teachy needs screen recording access to see your screen and coach you.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Teachy uses speech recognition to transcribe your voice when you talk</string>
+</dict>
+</plist>

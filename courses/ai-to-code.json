@@ -1,0 +1,115 @@
+{
+  "id": "ai-to-code",
+  "title": "Use AI to Code",
+  "subtitle": "From idea to something that runs — with AI",
+  "description": "The flagship Teachy path. Learn the real skill of 2026: describe what you want, get AI to build it, run it, and fix it when it’s wrong — on your Mac, with a 1:1 tutor beside you. No CS degree required.",
+  "iconSystemName": "laptopcomputer.and.arrow.down",
+  "estimatedMinutes": 45,
+  "startURL": "https://claude.ai",
+  "learningOutcomes": [
+    "Open an AI that can help you write code",
+    "Describe a tiny project in plain language",
+    "Get a first working version from the AI",
+    "Run or open the result so you can see it",
+    "Ask for a change and verify it landed",
+    "Save the project somewhere you’ll find again",
+    "Say in one sentence what you built"
+  ],
+  "goals": [
+    {
+      "id": "ai-open-tool",
+      "title": "Open your AI",
+      "goal": "Have an AI coding helper open — Claude, ChatGPT, Cursor, or similar — so you can start building.",
+      "coachAsk": "Help me open an AI that can write code with me — Claude, ChatGPT, or Cursor is fine. Point at how I get started.",
+      "doneWhen": "An AI chat or AI coding tool is open and recognizable on screen (Claude, ChatGPT, Cursor, Copilot, or similar).",
+      "tips": [
+        "Browser Claude or ChatGPT is perfect for beginners",
+        "Cursor is great if you already have it",
+        "Signing in is OK if the tool asks"
+      ]
+    },
+    {
+      "id": "ai-clear-ask",
+      "title": "Ask for something tiny",
+      "goal": "Send a clear first prompt for a tiny project — like a one-page site, a calculator, or a to-do list — in plain language.",
+      "coachAsk": "I want to build something tiny with AI. Help me write a clear first prompt — not too big — and point at where I should send it.",
+      "doneWhen": "A clear project prompt is visible in the AI chat input or as a sent message (a small app, page, or script request).",
+      "tips": [
+        "Small is better: one page, one feature",
+        "Say what it should look like and what it should do",
+        "Example vibe: “Make a single HTML page with a tip calculator”"
+      ]
+    },
+    {
+      "id": "ai-first-version",
+      "title": "Get a first version",
+      "goal": "Receive a first version of the project from the AI — code, files, or a scaffold you can use.",
+      "coachAsk": "The AI should give me a first version now. Point at the reply or code I should use, and tell me what to do next in one short beat.",
+      "doneWhen": "AI-generated code, files, or a clear project scaffold is visible in the conversation or editor.",
+      "tips": [
+        "If it asks clarifying questions, answer simply",
+        "You don’t need to understand every line yet"
+      ]
+    },
+    {
+      "id": "ai-see-it-run",
+      "title": "See it run",
+      "goal": "Open or run the result so something real is on screen — a browser preview, a window, or output that proves it works.",
+      "coachAsk": "How do I actually see this thing run? Help me open a preview, save a file and open it, or run it — point at the next move.",
+      "doneWhen": "A running or previewed result is visible — browser page, app window, terminal output, or live preview of the project.",
+      "tips": [
+        "HTML often means save as .html and open in a browser",
+        "If the AI gave a link or preview, use that",
+        "“It runs” beats “it looks smart in the chat”"
+      ]
+    },
+    {
+      "id": "ai-request-change",
+      "title": "Change something",
+      "goal": "Ask the AI to change the project — color, text, feature, or fix — and get an updated version.",
+      "coachAsk": "I want to change something about what we built. Help me ask the AI clearly, then point at where the update shows up.",
+      "doneWhen": "An updated AI response or edited project is visible that reflects a requested change.",
+      "tips": [
+        "One change at a time",
+        "Point at what you dislike: “make the button bigger” beats “make it better”"
+      ]
+    },
+    {
+      "id": "ai-verify-change",
+      "title": "Verify the change",
+      "goal": "Confirm the change in the running project — refresh preview, re-open the file, or check the UI so you know it landed.",
+      "coachAsk": "How do I check that the change actually landed in the running thing? Point at what I should look at.",
+      "doneWhen": "The running or previewed project shows the requested change (or the learner has clearly checked the updated output).",
+      "tips": [
+        "Refresh the browser if it’s a web page",
+        "This is the habit that separates builders from copy-pasters"
+      ]
+    },
+    {
+      "id": "ai-save-project",
+      "title": "Save it for later",
+      "goal": "Save the project somewhere durable on your Mac — a folder, file, or project you’ll find again.",
+      "coachAsk": "Help me save this project somewhere obvious on my Mac so I don’t lose it. Point at how I should save or where to put the files.",
+      "doneWhen": "The project is saved as a file, folder, or named project on disk (Finder, editor save dialog, or clearly saved project UI).",
+      "tips": [
+        "Desktop or a Documents/Projects folder is fine",
+        "Name it something you’ll recognize next week"
+      ]
+    },
+    {
+      "id": "ai-say-what-you-built",
+      "title": "Name what you built",
+      "goal": "Write or say one clear sentence: what you built and that you used AI to do it.",
+      "coachAsk": "Last step — help me write one sentence that says what I built with AI. Point at a notes app, the chat, or anywhere I can type it.",
+      "doneWhen": "A short written sentence is visible describing what was built (notes, chat, doc, or similar).",
+      "tips": [
+        "Example: “I built a tip calculator webpage with AI.”",
+        "This is your proof — keep it"
+      ]
+    }
+  ],
+  "trackID": "build-with-ai",
+  "trackTitle": "Build with AI",
+  "trackOrder": 1,
+  "prerequisiteCourseIDs": ["ai-first-win"]
+}

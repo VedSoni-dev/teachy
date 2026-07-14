@@ -1,0 +1,53 @@
+{
+  "id": "ai-first-win",
+  "title": "First Win with AI",
+  "subtitle": "10 minutes to something that runs",
+  "description": "The easiest Teachy on-ramp. Open an AI, ask for one tiny thing, and see it run — so you feel the loop before the full Use AI to Code path.",
+  "iconSystemName": "sparkle",
+  "estimatedMinutes": 10,
+  "startURL": "https://claude.ai",
+  "learningOutcomes": [
+    "Open an AI that can help you write code",
+    "Send one clear tiny prompt",
+    "See a result run or preview on screen"
+  ],
+  "goals": [
+    {
+      "id": "first-win-open",
+      "title": "Open your AI",
+      "goal": "Have Claude, ChatGPT, or Cursor open so you can ask it to build something tiny.",
+      "coachAsk": "They're starting First Win. Explain from zero if needed: an “AI chat” is a website or app where you type what you want and it writes back — Claude (claude.ai) and ChatGPT are popular ones; Cursor is an app that helps you write code with AI. Help them open whichever is easiest. Point at what to click. Don't assume they know any of these names.",
+      "doneWhen": "An AI chat or AI coding tool is open and recognizable on screen.",
+      "tips": [
+        "Claude or ChatGPT in the browser is perfect",
+        "Cursor works too if they already have it"
+      ]
+    },
+    {
+      "id": "first-win-prompt",
+      "title": "Ask for one tiny thing",
+      "goal": "Send one clear prompt for a tiny project — tip calculator, to-do, or hello page.",
+      "coachAsk": "Explain what a “prompt” is if needed — it's just the message you type to the AI, like asking a friend. Help them send one clear tiny ask (suggest: make a single HTML tip calculator — HTML is a simple webpage file). Point at where they type and how to send. Prompt chips may be on the HUD.",
+      "doneWhen": "A clear tiny-project prompt is visible as typed or sent in the AI chat.",
+      "tips": [
+        "One feature only",
+        "Plain language beats jargon"
+      ]
+    },
+    {
+      "id": "first-win-run",
+      "title": "See it run",
+      "goal": "Open or preview the result so something real is on screen.",
+      "coachAsk": "The AI should have answered with code or steps. Explain if needed: “running” means opening the result so they can see it work — often save as a .html file and open it in a browser (Chrome, Safari, etc.). Point at the next move to actually see it.",
+      "doneWhen": "A running or previewed result is visible — browser page, preview, or clear live output.",
+      "tips": [
+        "HTML → save .html → open in browser",
+        "That’s a win — you’re done"
+      ]
+    }
+  ],
+  "trackID": "build-with-ai",
+  "trackTitle": "Build with AI",
+  "trackOrder": 0,
+  "prerequisiteCourseIDs": null
+}

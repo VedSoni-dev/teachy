@@ -1,0 +1,16 @@
+name = "teachy-proxy"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+ELEVENLABS_VOICE_ID = "kPzsL2i3teMYv0FxEYQ6"
+MODEL = "google/gemini-2.5-flash"
+VISION_MODEL = "google/gemini-2.5-flash"
+TEXT_MODEL = "deepseek/deepseek-v4-flash"
+WORKER_REFERER = "https://clicky.app"
+
+# Secrets (set via `npx wrangler secret put`):
+#   OPENROUTER_API_KEY   — primary backend (chat + agent)
+#   ASSEMBLYAI_API_KEY   — speech-to-text tokens
+#   ANTHROPIC_API_KEY    — legacy fallback if OpenRouter is not set
+#   ELEVENLABS_API_KEY   — cloud TTS (optional)

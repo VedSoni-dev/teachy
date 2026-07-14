@@ -1,0 +1,20 @@
+# Notice
+
+Teachy is free and open source software licensed under the MIT License.
+See [LICENSE](LICENSE).
+
+## Upstream
+
+Teachy continues [Clicky](https://github.com/farzaa/clicky) by [Farza](https://x.com/farzatv),
+also MIT-licensed. Significant portions of the companion / overlay / voice pipeline
+originate there. Thank you Farza.
+
+## Third-party software
+
+This product embeds or distributes:
+
+- [Sparkle](https://sparkle-project.org/) — software update framework (MIT / Permissive)
+- [PostHog](https://github.com/PostHog/posthog-ios) — analytics SDK (MIT)
+- Notch UI inspiration from [boring.notch](https://github.com/TheBoredTeam/boring.notch) — reference clone may live under `reference/` locally and is not required to build Teachy
+
+API services used at runtime (OpenRouter, AssemblyAI, etc.) are optional and configured by the operator of the Teachy proxy — they are not redistributed with this source tree.

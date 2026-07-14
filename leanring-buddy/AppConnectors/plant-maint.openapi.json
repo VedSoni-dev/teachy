@@ -1,0 +1,201 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Plant Maintenance ERP",
+    "description": "Legacy plant maintenance system for Teachy OpenAPI connections.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:9477"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health_check",
+        "summary": "Connector health check",
+        "x-clicky-hidden": true,
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/assets": {
+      "get": {
+        "operationId": "list_assets",
+        "summary": "List plant assets",
+        "description": "List plant assets. Optionally filter by plant name.",
+        "parameters": [
+          {
+            "name": "plant",
+            "in": "query",
+            "description": "Optional plant filter, e.g. Building A",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Asset list"
+          }
+        }
+      }
+    },
+    "/assets/{asset_id}": {
+      "get": {
+        "operationId": "get_asset",
+        "summary": "Get asset details",
+        "description": "Get details for a single asset by asset_id.",
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "description": "Asset ID, e.g. PUMP-101",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Asset details"
+          },
+          "404": {
+            "description": "Asset not found"
+          }
+        }
+      }
+    },
+    "/work-orders": {
+      "get": {
+        "operationId": "list_work_orders",
+        "summary": "List work orders",
+        "description": "List work orders. Optionally filter by status.",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Optional status filter",
+            "schema": {
+              "type": "string",
+              "enum": ["open", "in_progress", "completed", "cancelled"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Work order list"
+          }
+        }
+      },
+      "post": {
+        "operationId": "create_work_order",
+        "summary": "Create work order",
+        "description": "Create a new maintenance work order for an asset.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["asset_id", "description"],
+                "properties": {
+                  "asset_id": {
+                    "type": "string",
+                    "description": "Asset to create the work order for"
+                  },
+                  "priority": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Priority level"
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "What needs to be done"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Work order created"
+          }
+        }
+      }
+    },
+    "/work-orders/{work_order_id}": {
+      "get": {
+        "operationId": "get_work_order",
+        "summary": "Get work order",
+        "description": "Get a single work order by work_order_id.",
+        "parameters": [
+          {
+            "name": "work_order_id",
+            "in": "path",
+            "required": true,
+            "description": "Work order ID, e.g. WO-1001",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Work order details"
+          },
+          "404": {
+            "description": "Work order not found"
+          }
+        }
+      }
+    },
+    "/work-orders/{work_order_id}/status": {
+      "patch": {
+        "operationId": "update_work_order_status",
+        "summary": "Update work order status",
+        "description": "Update the status of an existing work order.",
+        "parameters": [
+          {
+            "name": "work_order_id",
+            "in": "path",
+            "required": true,
+            "description": "Work order ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["status"],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": ["open", "in_progress", "completed", "cancelled"],
+                    "description": "New status"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Status updated"
+          }
+        }
+      }
+    }
+  }
+}

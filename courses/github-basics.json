@@ -1,0 +1,71 @@
+{
+  "id": "github-basics",
+  "title": "Explore GitHub",
+  "subtitle": "Repos, README, issues, and pull requests",
+  "description": "First stop on the Git & GitHub path — get comfortable browsing public projects before you touch git or create anything.",
+  "iconSystemName": "globe",
+  "estimatedMinutes": 15,
+  "startURL": "https://github.com",
+  "learningOutcomes": [
+    "Open GitHub in a browser",
+    "Find and open a public repository",
+    "Read a repo's overview or code",
+    "Find the Issues area",
+    "Find Pull Requests and understand what they are for",
+    "Get back to search or your main GitHub home"
+  ],
+  "goals": [
+    {
+      "id": "github-open",
+      "title": "Open GitHub",
+      "goal": "Have GitHub open in a browser so you can start exploring.",
+      "coachAsk": "Help me get GitHub open in my browser and show me where I'd start looking around — this site feels dense.",
+      "doneWhen": "GitHub is open and recognizable as the GitHub site.",
+      "tips": ["Any modern browser is fine", "Signing in is optional for browsing public repos"]
+    },
+    {
+      "id": "github-find-repo",
+      "title": "Find a repository",
+      "goal": "Search or browse until a public repository page is open.",
+      "coachAsk": "How do I find a public repository on GitHub — like an open source project I care about? Point at what I should use.",
+      "doneWhen": "A repository page is open (code, overview, or files for a specific project).",
+      "tips": ["Any public repo is fine", "Try searching for something you know, like react or vscode"]
+    },
+    {
+      "id": "github-explore-code",
+      "title": "Explore the repo",
+      "goal": "Look around the repository — README, files, or overview — enough to see how the project is organized.",
+      "coachAsk": "I'm on a GitHub repo and it's a lot. Point at the README or main files area and help me figure out what I'm looking at.",
+      "doneWhen": "Repo content is visible — README, file tree, or code view — and the learner has confirmed they're oriented.",
+      "tips": ["You don't need to understand every file", "The README is usually the friendliest place to start"]
+    },
+    {
+      "id": "github-find-issues",
+      "title": "Find Issues",
+      "goal": "Open the Issues area for the repository and see how people report bugs and request features.",
+      "coachAsk": "Where are Issues on this GitHub repo? Point at how I open them and tell me what they're for in one casual sentence.",
+      "doneWhen": "The Issues list or Issues section for the repository is visible.",
+      "tips": ["Issues are how people track bugs and ideas", "Reading is enough — no need to file one"]
+    },
+    {
+      "id": "github-find-pull-requests",
+      "title": "Find Pull Requests",
+      "goal": "Open Pull Requests and get a plain-language sense of what they are (proposed code changes).",
+      "coachAsk": "Where are Pull Requests on this repo? Point at how I open them and explain what a pull request is like I'm new — keep it short.",
+      "doneWhen": "The Pull Requests list or Pull Requests section for the repository is visible.",
+      "tips": ["PRs are proposed changes waiting for review", "You can just look — contributing is optional"]
+    },
+    {
+      "id": "github-navigate",
+      "title": "Find your way around",
+      "goal": "Get back to GitHub search, explore, or the main homepage from inside a repo.",
+      "coachAsk": "How do I get out of this repo and back to searching or the main GitHub home? Point at what I should use.",
+      "doneWhen": "The learner is on GitHub search, explore, dashboard, or homepage — not stuck inside one repository.",
+      "tips": ["Logo and search are common escape hatches — use whatever exists today"]
+    }
+  ],
+  "trackID": "git-and-github",
+  "trackTitle": "Git & GitHub",
+  "trackOrder": 1,
+  "prerequisiteCourseIDs": null
+}

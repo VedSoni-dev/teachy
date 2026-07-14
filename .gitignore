@@ -1,0 +1,15 @@
+worker/node_modules/
+worker/.dev.vars
+worker/.env
+.DS_Store
+*.xcuserstate
+**/xcuserdata/
+build/
+releases/
+.claude/
+coding-plans/
+# Local UI reference clones — not shipped with Teachy
+reference/
+# Sparkle private keys must never be committed
+*.sparkle-private.key
+teachy-sparkle-private.key

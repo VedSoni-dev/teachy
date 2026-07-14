@@ -1,0 +1,58 @@
+{
+  "id": "khan-academy-basics",
+  "title": "Khan Academy Basics",
+  "subtitle": "Find a subject, open a lesson, and try practice",
+  "description": "Get comfortable on Khan Academy — Teachy coaches you toward each goal using whatever the site looks like today.",
+  "iconSystemName": "book.fill",
+  "estimatedMinutes": 12,
+  "startURL": "https://www.khanacademy.org",
+  "learningOutcomes": [
+    "Open Khan Academy in a browser",
+    "Browse or search for a subject",
+    "Open a lesson, video, or article",
+    "Start a practice exercise if one is available",
+    "Find your way back to courses or the homepage"
+  ],
+  "goals": [
+    {
+      "id": "khan-open",
+      "title": "Open Khan Academy",
+      "goal": "Have Khan Academy open in a browser so you can start learning.",
+      "coachAsk": "Help me get Khan Academy open in my browser and show me where I'd start exploring.",
+      "doneWhen": "Khan Academy is open and recognizable as the Khan Academy site.",
+      "tips": ["Any modern browser is fine", "Signing in is optional for exploring"]
+    },
+    {
+      "id": "khan-find-subject",
+      "title": "Find a subject",
+      "goal": "Browse or search until you land on a subject or topic area you care about.",
+      "coachAsk": "How do I find a subject on Khan Academy — like math, science, or something else I'm into? Point at what I should use.",
+      "doneWhen": "A subject, course, or topic listing is visible (not just the generic marketing homepage).",
+      "tips": ["Any subject is fine", "Search or browse both work"]
+    },
+    {
+      "id": "khan-open-lesson",
+      "title": "Open a lesson",
+      "goal": "Open a lesson, video, or article so learning content is on screen.",
+      "coachAsk": "How do I open an actual lesson or video from here? Point at what I should click.",
+      "doneWhen": "A lesson, video player, article, or unit content page is open.",
+      "tips": ["Any lesson in the subject is fine"]
+    },
+    {
+      "id": "khan-try-practice",
+      "title": "Try practice",
+      "goal": "Start a practice exercise, quiz, or interactive problem — or clearly find where practice lives if one isn't available yet.",
+      "coachAsk": "I'd like to try a practice problem on Khan Academy. Point at how I start practice or an exercise from here.",
+      "doneWhen": "A practice exercise, quiz, or problem UI is visible, or the learner has confirmed they found where practice lives and are done trying.",
+      "tips": ["If this lesson has no practice, finding the practice entry point still counts"]
+    },
+    {
+      "id": "khan-navigate",
+      "title": "Find your way around",
+      "goal": "Navigate back to courses, subjects, or the Khan Academy homepage.",
+      "coachAsk": "How do I get back to courses or the Khan Academy homepage from here? Point at what I should use.",
+      "doneWhen": "The learner is on a main courses/subjects area or the Khan Academy homepage (not stuck inside one lesson).",
+      "tips": ["Logo and main navigation are common patterns — use whatever exists today"]
+    }
+  ]
+}

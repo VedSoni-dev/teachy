@@ -1,0 +1,62 @@
+{
+  "id": "github-make-a-repo",
+  "title": "Make a Repo & Push",
+  "subtitle": "Create on GitHub, connect remote, push",
+  "description": "Part 3 of Git & GitHub — create your own repository, wire up a remote, and push commits so your work lives on GitHub.",
+  "iconSystemName": "plus.rectangle.on.folder",
+  "estimatedMinutes": 25,
+  "startURL": "https://github.com/new",
+  "learningOutcomes": [
+    "Create a new repository on GitHub",
+    "Get a local project ready for git (init or existing folder)",
+    "Connect the local repo to the GitHub remote",
+    "Push commits so they appear on GitHub",
+    "Confirm the code is visible on the GitHub repo page"
+  ],
+  "goals": [
+    {
+      "id": "repo-create-on-github",
+      "title": "Create a repository",
+      "goal": "Create a new repository on GitHub (empty is fine).",
+      "coachAsk": "Help me create a new repository on GitHub. I'm signed in or ready to sign in — point at how to start a new repo and what to fill in at a high level.",
+      "doneWhen": "A new GitHub repository page exists (can be empty), or the create-repo form was completed.",
+      "tips": ["Public is fine for learning", "You can skip README if you already have local files"]
+    },
+    {
+      "id": "repo-local-ready",
+      "title": "Prepare a local project",
+      "goal": "Have a local folder that is a git repo (git init or an existing project) ready to connect.",
+      "coachAsk": "Help me get a local folder ready as a git repo — either init a new one with a simple file, or use a project I already have. No push yet.",
+      "doneWhen": "A local directory is a git repository with at least one commit (or clearly ready to connect).",
+      "tips": ["A folder with a single README is enough", "You can reuse work from Git on Your Mac"]
+    },
+    {
+      "id": "repo-add-remote",
+      "title": "Connect the remote",
+      "goal": "Add the GitHub repo as the remote for your local project.",
+      "coachAsk": "How do I connect my local git repo to the GitHub repo I just created? Walk me through adding the remote — look at my screen for Terminal or GitHub's suggested commands.",
+      "doneWhen": "A remote pointing at the GitHub repo is configured (e.g. git remote -v shows it), or the learner confirmed it's set.",
+      "tips": ["GitHub often shows the exact commands after create", "HTTPS or SSH both work — pick what you can auth with"]
+    },
+    {
+      "id": "repo-push",
+      "title": "Push to GitHub",
+      "goal": "Push your local commits so they land on GitHub.",
+      "coachAsk": "Help me push my local commits to GitHub. If auth pops up, coach me through whatever's on screen without assuming one login method.",
+      "doneWhen": "Push succeeded, or GitHub shows the commits/files from the local repo.",
+      "tips": ["Auth prompts are normal the first time", "If push fails, read the error together — don't panic"]
+    },
+    {
+      "id": "repo-confirm-online",
+      "title": "Confirm it's online",
+      "goal": "Open the GitHub repo page and see your files or latest commit there.",
+      "coachAsk": "Show me how to confirm my code is actually on GitHub — point at the repo page proof that the push worked.",
+      "doneWhen": "The GitHub repository page shows the pushed files or commit.",
+      "tips": ["Refresh the repo page if it still looks empty", "You're done when you can see your stuff online"]
+    }
+  ],
+  "trackID": "git-and-github",
+  "trackTitle": "Git & GitHub",
+  "trackOrder": 3,
+  "prerequisiteCourseIDs": ["github-git-fundamentals"]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "teachy-proxy",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "local": "node local-proxy.mjs",
+    "harness": "node harness.mjs",
+    "check": "node harness.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

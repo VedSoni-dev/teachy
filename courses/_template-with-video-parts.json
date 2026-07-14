@@ -1,0 +1,58 @@
+{
+  "id": "my-teacher-course",
+  "title": "My Teacher Course",
+  "subtitle": "Your face beside Teachy, then they do the work",
+  "description": "Template for Farza-style part videos + lesson briefs so Teachy knows how to coach.",
+  "iconSystemName": "person.wave.2.fill",
+  "estimatedMinutes": 20,
+  "startURL": null,
+  "teacherName": "Your Name",
+  "teacherVideoURL": "https://stream.mux.com/REPLACE_COURSE_INTRO_PLAYBACK_ID.m3u8",
+  "learningOutcomes": [
+    "Understand beside-cursor teacher clips",
+    "Finish one real goal on their own Mac"
+  ],
+  "goals": [
+    {
+      "id": "part-1",
+      "title": "Part 1 — explain then do",
+      "goal": "The learner finished the first hands-on win for this track.",
+      "coachAsk": "Look at my screen and coach me through this part’s first real move.",
+      "doneWhen": "The durable outcome for part 1 is visibly done.",
+      "tips": [
+        "Keep the clip short",
+        "Then let Teachy point at the real UI"
+      ],
+      "teacherVideoURL": "https://stream.mux.com/REPLACE_PART_1_PLAYBACK_ID.m3u8",
+      "teacherName": "Your Name",
+      "teacherVideoNotes": "- Key beat from your clip\n- Second beat they must practice",
+      "toolPolicy": "preferPointing",
+      "teachingContext": {
+        "concepts": ["Core idea in plain words"],
+        "commonMistakes": ["What beginners usually get wrong"],
+        "successExamples": ["What done looks like on screen"],
+        "whyItMatters": "One sentence why this skill matters.",
+        "teachBackPrompt": "in your words — what did we just do?",
+        "skipTeachBack": false
+      }
+    },
+    {
+      "id": "part-2",
+      "title": "Part 2 — next skill",
+      "goal": "The learner finished the second hands-on win for this track.",
+      "coachAsk": "Look at my screen and coach me through the next move for this part.",
+      "doneWhen": "The durable outcome for part 2 is visibly done.",
+      "teacherVideoURL": "https://stream.mux.com/REPLACE_PART_2_PLAYBACK_ID.m3u8",
+      "teacherVideoNotes": "- What you covered in part 2",
+      "toolPolicy": "helpWhenStuck",
+      "teachingContext": {
+        "concepts": ["Second skill idea"],
+        "commonMistakes": ["Likely mix-up"],
+        "successExamples": ["Visible done state"],
+        "whyItMatters": "Why part 2 builds on part 1.",
+        "teachBackPrompt": "how does this build on what we did before?",
+        "skipTeachBack": false
+      }
+    }
+  ]
+}
