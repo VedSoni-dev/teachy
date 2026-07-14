@@ -36,7 +36,7 @@ enum ClickyAcademyConfiguration {
     static let defaultRegistryURLString =
         "https://raw.githubusercontent.com/VedSoni-dev/teachy/main/academy/registry.json"
     static let defaultWebsiteURLString =
-        "https://raw.githack.com/VedSoni-dev/teachy/main/academy/index.html"
+        "https://vedsoni-dev.github.io/teachy/"
 
     static var registryURLString: String {
         AppBundleConfiguration.stringValue(forKey: "TeachyAcademyRegistryURL")

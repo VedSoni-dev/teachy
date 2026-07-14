@@ -17,11 +17,11 @@
 	<key>TeachyAcademyRegistryURL</key>
 	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy/main/academy/registry.json</string>
 	<key>TeachyAcademyWebsiteURL</key>
-	<string>https://raw.githack.com/VedSoni-dev/teachy/main/academy/index.html</string>
+	<string>https://vedsoni-dev.github.io/teachy/</string>
 	<key>ClickyAcademyRegistryURL</key>
 	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy/main/academy/registry.json</string>
 	<key>ClickyAcademyWebsiteURL</key>
-	<string>https://raw.githack.com/VedSoni-dev/teachy/main/academy/index.html</string>
+	<string>https://vedsoni-dev.github.io/teachy/</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Teachy uses your microphone so you can talk to your tutor</string>
 	<key>NSScreenCaptureUsageDescription</key>

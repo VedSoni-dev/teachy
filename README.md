@@ -7,6 +7,8 @@
 
 Born from Farza’s [Clicky](https://www.heyclicky.com/) experiments. This line is Teachy: courses-first, teach-by-doing, open curriculum.
 
+**Website:** [vedsoni-dev.github.io/teachy](https://vedsoni-dev.github.io/teachy/)
+
 ![Teachy on macOS](clicky-demo.gif)
 
 ## Free download
