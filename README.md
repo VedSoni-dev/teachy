@@ -1,23 +1,22 @@
 # Teachy
 
-**Teachy** is free & open-source macOS software — a 1:1 teaching companion in your menu bar that sees your screen, points at real UI, and coaches you until something actually runs.
+**Teachy** is free & open-source macOS software — the ultimate free teaching companion. A 1:1 tutor in your menu bar that sees your screen, points at real UI, and coaches you until something actually runs.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Download](https://img.shields.io/badge/download-macOS%20DMG-black.svg)](https://github.com/VedSoni-dev/teachy/releases/latest)
+[![Website](https://img.shields.io/badge/website-live-brightgreen.svg)](https://vedsoni-dev.github.io/teachy/)
+
+> **North star:** free 1:1 teaching for everyone — practice on the real screen, not another video player.
 
 Born from Farza’s [Clicky](https://www.heyclicky.com/) experiments. This line is Teachy: courses-first, teach-by-doing, open curriculum.
 
-**Website:** [vedsoni-dev.github.io/teachy](https://vedsoni-dev.github.io/teachy/)
+**Website:** [vedsoni-dev.github.io/teachy](https://vedsoni-dev.github.io/teachy/) · **Launch posts:** [`docs/LAUNCH_POSTS.md`](docs/LAUNCH_POSTS.md)
 
 ![Teachy on macOS](clicky-demo.gif)
 
 ## Free download
 
-Grab the latest build from GitHub Releases (always free — no App Store, no subscription):
-
-**→ [Download Teachy.dmg](https://github.com/VedSoni-dev/teachy/releases/latest/download/Teachy.dmg)**
-
-Or open [Releases](https://github.com/VedSoni-dev/teachy/releases/latest).
+**→ [Download Teachy.dmg](https://github.com/VedSoni-dev/teachy/releases/latest/download/Teachy.dmg)** · [All releases](https://github.com/VedSoni-dev/teachy/releases/latest)
 
 ### First open (Gatekeeper)
 
@@ -27,10 +26,9 @@ Community builds ship **without** Apple’s paid Developer ID / notarization (ke
 2. **Right-click** → **Open** → **Open**  
    (or System Settings → Privacy & Security → **Open Anyway**)  
 3. Grant Microphone, Screen Recording, Accessibility  
+4. Run the local Teachy proxy (below) with an OpenRouter key
 
-Then run a Teachy proxy (below). Installed apps can **Check for Updates…** under Home → Updates (Sparkle).
-
-> First release shipping soon — until a DMG is posted, build from source with the steps below.
+Installed apps can **Check for Updates…** under Home → Updates (Sparkle).
 
 ## What it does
 

@@ -114,11 +114,15 @@ echo "   Previous: ${LATEST_TAG:-none}"
 echo "   Download: https://github.com/${GITHUB_REPO}/releases/latest/download/${DMG_FILENAME}"
 echo ""
 
-read -p "   Proceed? (y/N) " -n 1 -r
-echo ""
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "   Aborted."
-    exit 0
+if [ "${YES:-0}" = "1" ]; then
+    echo "   Proceeding (YES=1)…"
+else
+    read -p "   Proceed? (y/N) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "   Aborted."
+        exit 0
+    fi
 fi
 echo ""
 
