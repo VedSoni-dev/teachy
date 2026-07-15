@@ -12,12 +12,14 @@ import SwiftUI
 
 extension Notification.Name {
     static let clickyDismissPanel = Notification.Name("clickyDismissPanel")
+    static let clickySwitchToCoursesTab = Notification.Name("clickySwitchToCoursesTab")
 }
 
 @MainActor
 final class MenuBarPanelManager: NSObject {
     private var statusItem: NSStatusItem?
     private var dismissPanelObserver: NSObjectProtocol?
+    private var switchToCoursesTabObserver: NSObjectProtocol?
 
     private let companionManager: CompanionManager
     private weak var notchManager: NotchWindowManager?
@@ -35,10 +37,26 @@ final class MenuBarPanelManager: NSObject {
         ) { [weak self] _ in
             self?.notchManager?.collapseIfExpanded()
         }
+
+        switchToCoursesTabObserver = NotificationCenter.default.addObserver(
+            forName: .clickySwitchToCoursesTab,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self, let notchManager = self.notchManager else { return }
+            notchManager.selectedTab = .courses
+            if !notchManager.isExpanded {
+                notchManager.show()
+                notchManager.expand()
+            }
+        }
     }
 
     deinit {
         if let observer = dismissPanelObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = switchToCoursesTabObserver {
             NotificationCenter.default.removeObserver(observer)
         }
     }

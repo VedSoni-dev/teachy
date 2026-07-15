@@ -91,7 +91,7 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - Beside-cursor video (onboarding + curriculum parts)
 
-    /// Same overlay player used for Farza's intro and per-goal course clips.
+    /// Same overlay player used for the intro and per-goal course clips.
     @Published var onboardingVideoPlayer: AVPlayer?
     @Published var showOnboardingVideo: Bool = false
     @Published var onboardingVideoOpacity: Double = 0.0
@@ -101,7 +101,7 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var besideCursorVideoCredit: String? = nil
     private var onboardingVideoEndObserver: NSObjectProtocol?
     private var onboardingDemoTimeObserver: Any?
-    /// When true, push-to-talk is ignored (Farza onboarding). Curriculum clips stay skippable by voice.
+    /// When true, push-to-talk is ignored (onboarding). Curriculum clips stay skippable by voice.
     private var besideCursorVideoBlocksPushToTalk = false
     private var curriculumVideoContinuation: CheckedContinuation<Void, Never>?
     private var besideCursorVideoFadeOutTask: Task<Void, Never>?
@@ -341,7 +341,7 @@ final class CompanionManager: ObservableObject {
         fadeOutOnboardingMusic()
 
         if isClickyCursorEnabled {
-            // Skip welcome + Farza video — the panel tour already explained Teachy.
+            // Skip welcome + intro video — the panel tour already explained Teachy.
             overlayWindowManager.hasShownOverlayBefore = true
             overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
             isOverlayVisible = true
@@ -389,8 +389,8 @@ final class CompanionManager: ObservableObject {
         onboardingMusicPlayer = nil
     }
 
-    /// Soft Besaid-style under-score for Teachy first-run + Farza demo replay.
-    /// Pass `forceRestart: true` to restart from the top (Farza video / replay).
+    /// Soft Besaid-style under-score for Teachy first-run + demo replay.
+    /// Pass `forceRestart: true` to restart from the top (intro video / replay).
     func startOnboardingMusic(forceRestart: Bool = false) {
         if !forceRestart, onboardingMusicPlayer?.isPlaying == true { return }
         stopOnboardingMusic()
@@ -474,7 +474,7 @@ final class CompanionManager: ObservableObject {
         NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
     }
 
-    /// Farza-style proof beat: collapse the panel, say we can see the screen, then fly to something real.
+    /// Teachy proof beat: collapse the panel, say we can see the screen, then fly to something real.
     func beginTeachyScreenProofDemo() {
         teachyScreenProofTask?.cancel()
         teachyScreenProofDidPlay = false
@@ -482,7 +482,7 @@ final class CompanionManager: ObservableObject {
         startOnboardingMusic()
         playTeachyUISound(.pageAdvance)
 
-        // Skip Farza video welcome path — this is Teachy's own live proof.
+        // Skip video welcome path — this is Teachy's own live proof.
         overlayWindowManager.hasShownOverlayBefore = true
         overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
         isOverlayVisible = true
@@ -507,7 +507,7 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    /// Character-by-character cursor prompt (same feel as Farza’s post-video nudge).
+    /// Character-by-character cursor prompt (same feel as the intro nudge).
     @MainActor
     private func streamOnboardingCursorPrompt(_ message: String) async {
         onboardingPromptText = ""
@@ -724,7 +724,7 @@ final class CompanionManager: ObservableObject {
         switch transition {
         case .pressed:
             guard !buddyDictationManager.isDictationInProgress else { return }
-            // Don't register push-to-talk while the Farza onboarding video is playing.
+            // Don't register push-to-talk while the onboarding video is playing.
             // Curriculum part clips stay skippable via voice / HUD.
             guard !(showOnboardingVideo && besideCursorVideoBlocksPushToTalk) else { return }
 
@@ -799,7 +799,7 @@ final class CompanionManager: ObservableObject {
     // MARK: - AI Response Pipeline
 
     private static let companionVoiceResponseSystemPrompt = """
-    you're teachy — a little blue buddy in their menu bar. same vibes as farza's intro: warm, playful, lightly cheeky, always in their corner.
+    you're teachy — a little blue buddy in their menu bar. same vibes as the intro: warm, playful, lightly cheeky, always in their corner.
     they just talked to you and you can see their screen. your reply gets spoken out loud, so sound like a real person talking — not a help doc, not siri, not a corporate tutor.
 
     voice:
@@ -1006,9 +1006,9 @@ final class CompanionManager: ObservableObject {
             guard let session = coursesManager.startCourse(courseID: courseID) else { return }
 
             applyVoiceKeytermsForActiveCourse()
-            courseLessonHUDManager.show(companionManager: self)
-            // Teaching shell: collapse the notch so HUD + cursor lead.
-            NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+            // Keep the notch panel open — the course lesson view lives inside it now.
+            // Switch to courses tab so the user sees the lesson immediately.
+            NotificationCenter.default.post(name: .clickySwitchToCoursesTab, object: nil)
 
             ClickyAnalytics.trackCourseStarted(
                 courseID: session.course.id,
@@ -1072,6 +1072,12 @@ final class CompanionManager: ObservableObject {
 
     func requestCourseHint() {
         lessonPlayer.requestHint()
+    }
+
+    func submitCourseTextQuestion(_ question: String) {
+        Task { @MainActor in
+            await lessonPlayer.handleTextQuestion(question)
+        }
     }
 
     /// Lightweight placement model — chooses first goal they still need (skip-ahead).
@@ -1926,7 +1932,7 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - Beside-cursor video (onboarding + curriculum)
 
-    /// Farza onboarding clip — fades in beside Teachy, demos at 40s, then prompts to talk.
+    /// Onboarding clip — fades in beside Teachy, demos at 40s, then prompts to talk.
     func setupOnboardingVideo() {
         guard let videoURL = URL(string: "https://stream.mux.com/e5jB8UuSrtFABVnTHCR7k3sIsmcUHCyhtLu1tzqLlfs.m3u8") else { return }
 
@@ -1943,7 +1949,7 @@ final class CompanionManager: ObservableObject {
                 }
             }
         )
-        besideCursorVideoCredit = "Farza"
+        besideCursorVideoCredit = "Teachy"
 
         // At 40 seconds into the video, trigger the onboarding demo where
         // Teachy flies to something interesting on screen and comments on it
@@ -1957,9 +1963,9 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    /// Plays a curriculum part/intro clip beside Teachy (same UX as Farza's intro).
+    /// Plays a curriculum part/intro clip beside Teachy.
     /// Completes when the video ends or `skipCurriculumVideo()` is called.
-    /// `teacherCredit` is shown on the player (e.g. "Farza" or the course author's name).
+    /// `teacherCredit` is shown on the player (e.g. the course author's name).
     func playCurriculumVideoBesideCursor(urlString: String, teacherCredit: String? = nil) async {
         let trimmedURLString = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let videoURL = URL(string: trimmedURLString) else {
@@ -2132,7 +2138,7 @@ final class CompanionManager: ObservableObject {
     private static let onboardingDemoSystemPrompt = """
     you're teachy, a little blue buddy on their screen. onboarding demo — find ONE specific thing to point at: an app icon, a button label, a tab title, some readable text. be specific, not vague.
 
-    say something short and playful about it — 3 to 6 words max. no emojis. don't quote what's on screen, just react. all lowercase. farza-energy: warm, cheeky, lovable.
+    say something short and playful about it — 3 to 6 words max. no emojis. don't quote what's on screen, just react. all lowercase. teachy-energy: warm, cheeky, lovable.
 
     the screenshot has a hidden grid (columns A-T, rows 1-12). pick a center cell on your target. respond with ONLY your quip plus [POINT:E4:label].
 

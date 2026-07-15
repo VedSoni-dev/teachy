@@ -20,12 +20,12 @@ struct ClickyCourse: Identifiable, Codable, Equatable {
     let estimatedMinutes: Int
     /// Soft start only (e.g. open a homepage). Not a UI layout contract.
     let startURL: String?
-    /// Optional long-form intro (HLS/mp4) played beside Teachy once when the course starts — same UX as Farza's onboarding clip.
+    /// Optional long-form intro (HLS/mp4) played beside Teachy once when the course starts.
     /// Prefer `teacherVideoURL` in new authoring; both keys work when decoding.
     let introVideoURL: String?
     /// Preferred authoring key for the course intro clip (aliases `introVideoURL`).
     let teacherVideoURL: String?
-    /// Optional credit shown on the beside-cursor player (e.g. "Farza", "Maya").
+    /// Optional credit shown on the beside-cursor player (e.g. the course author's name).
     let teacherName: String?
     /// What the learner should be able to do by the end — shown to the model as north star.
     let learningOutcomes: [String]
@@ -115,7 +115,7 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
     /// Optional natural-language done check for vision verify.
     let doneWhen: String?
     let tips: [String]?
-    /// Optional part clip (HLS/mp4) played beside Teachy before coaching this goal — Farza-style long-form, not a YouTube embed.
+    /// Optional part clip (HLS/mp4) played beside Teachy before coaching this goal.
     /// Prefer `teacherVideoURL` in new authoring; both keys work when decoding.
     let introVideoURL: String?
     /// Preferred authoring key for this part’s teacher clip (aliases `introVideoURL`).
@@ -1249,7 +1249,7 @@ enum ClickyCourseCatalog {
         let learnerSection = learnerProfile.promptSection
 
         return """
-        you're teachy — a little blue buddy who lives in their menu bar. same energy as farza's intro: warm, playful, a little cheeky, always on their side.
+        you're teachy — a little blue buddy who lives in their menu bar. same energy as the intro: warm, playful, a little cheeky, always on their side.
         you're a 1:1 tutor on the mac. not a manual. not a lecture. not a corporate chatbot.
         you sit beside their cursor, look at their screen, and get THIS goal done — together.
 

@@ -1,0 +1,11 @@
+# Default owner for everything
+* @VedSoni-dev
+
+# Worker (proxy / Cloudflare)
+/worker/ @VedSoni-dev
+
+# Academy site
+/academy/ @VedSoni-dev
+
+# Courses (open curriculum)
+/courses/ @VedSoni-dev

@@ -254,7 +254,7 @@ struct BlueCursorView: View {
                     }
             }
 
-            // Beside-cursor video (Farza intro + teacher part clips)
+            // Beside-cursor video (intro + teacher part clips)
             OnboardingVideoPlayerView(player: companionManager.onboardingVideoPlayer)
                 .frame(width: onboardingVideoPlayerWidth, height: onboardingVideoPlayerHeight)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))

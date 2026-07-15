@@ -1,23 +1,24 @@
 /**
- * Teachy Proxy Worker
+ * Teachy Proxy Worker (Cloudflare)
+ *
+ * Multi-provider AI backend — supports OpenRouter, Anthropic, and OpenAI.
+ * The active provider is determined by which API key is present.
+ *
+ * Priority: OPENROUTER_API_KEY > ANTHROPIC_API_KEY > OPENAI_API_KEY
  *
  * Routes:
- *   GET  /health                  — proxy status + configured models
- *   POST /chat                    — companion vision chat (OpenRouter or Anthropic)
- *   POST /v1/chat/completions     — background agent tool loop (OpenRouter)
+ *   GET  /health                  — proxy status + active backend + models
+ *   POST /chat                    — companion vision chat (Anthropic format in)
+ *   POST /v1/chat/completions     — background agent tool loop (OpenAI format in)
  *   POST /tts                     — ElevenLabs TTS (or stub)
  *   POST /transcribe-token        — AssemblyAI streaming token
- *
- * Backend selection:
- *   - If OPENROUTER_API_KEY is set → /chat and /v1/chat/completions use OpenRouter
- *   - Else if ANTHROPIC_API_KEY is set → /chat uses Anthropic directly
  */
 
 import {
-  handleOpenRouterChat,
-  handleOpenRouterCompletions,
-  openRouterHealthPayload,
-  type OpenRouterEnv,
+  handleProviderChat,
+  handleProviderCompletions,
+  providerHealthPayload,
+  type ProviderEnv,
 } from "./openrouter";
 import {
   composioHealthPayload,
@@ -25,17 +26,13 @@ import {
   handleComposioConnections,
   handleComposioToolkits,
 } from "./composio";
+import { detectProvider } from "./model-routing";
 
-interface Env extends OpenRouterEnv {
-  ANTHROPIC_API_KEY?: string;
+interface Env extends ProviderEnv {
   ELEVENLABS_API_KEY?: string;
   ELEVENLABS_VOICE_ID?: string;
   ASSEMBLYAI_API_KEY?: string;
   COMPOSIO_API_KEY?: string;
-}
-
-function usesOpenRouter(env: Env): boolean {
-  return Boolean(env.OPENROUTER_API_KEY);
 }
 
 export default {
@@ -71,20 +68,11 @@ export default {
 
     try {
       if (url.pathname === "/chat") {
-        if (usesOpenRouter(env)) {
-          return await handleOpenRouterChat(request, env);
-        }
-        if (env.ANTHROPIC_API_KEY) {
-          return await handleAnthropicChat(request, env);
-        }
-        return jsonResponse({ error: "No chat backend configured" }, 503);
+        return await handleProviderChat(request, env);
       }
 
       if (url.pathname === "/v1/chat/completions") {
-        if (!usesOpenRouter(env)) {
-          return jsonResponse({ error: "Agent route requires OPENROUTER_API_KEY" }, 503);
-        }
-        return await handleOpenRouterCompletions(request, env);
+        return await handleProviderCompletions(request, env);
       }
 
       if (url.pathname === "/tts") {
@@ -122,57 +110,31 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function handleHealth(env: Env): Response {
-  if (usesOpenRouter(env)) {
+  const provider = detectProvider(env);
+
+  // Composio payload (independent of AI provider)
+  const composio = composioHealthPayload(env);
+
+  if (provider === "openrouter" || provider === "anthropic" || provider === "openai") {
     return jsonResponse({
-      ...openRouterHealthPayload(env),
-      ...composioHealthPayload(env),
+      ...providerHealthPayload(env),
+      ...composio,
     });
   }
 
   return jsonResponse({
     ok: true,
     service: "teachy-proxy",
-    backend: env.ANTHROPIC_API_KEY ? "anthropic" : "unconfigured",
+    backend: "unconfigured",
     openrouter: false,
-    anthropic: Boolean(env.ANTHROPIC_API_KEY),
-    ...composioHealthPayload(env),
+    anthropic: false,
+    openai: false,
+    ...composio,
     models: {
-      chat: "claude-sonnet-4-6",
+      chat: null,
       agent: null,
     },
     routes: ["/health", "/chat", "/tts", "/transcribe-token", "/composio/connections", "/composio/connect"],
-  });
-}
-
-async function handleAnthropicChat(request: Request, env: Env): Promise<Response> {
-  const body = await request.text();
-
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": env.ANTHROPIC_API_KEY!,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body,
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error(`[/chat] Anthropic API error ${response.status}: ${errorBody}`);
-    return new Response(errorBody, {
-      status: response.status,
-      headers: { "content-type": "application/json" },
-    });
-  }
-
-  return new Response(response.body, {
-    status: response.status,
-    headers: {
-      "content-type": response.headers.get("content-type") || "text/event-stream",
-      "cache-control": "no-cache",
-      ...corsHeaders(),
-    },
   });
 }
 

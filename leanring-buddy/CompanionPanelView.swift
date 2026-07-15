@@ -65,7 +65,7 @@ struct CompanionPanelView: View {
                 Spacer()
                     .frame(height: 16)
 
-                dmFarzaButton
+                dmFeedbackButton
                     .padding(.horizontal, 16)
             }
 
@@ -154,7 +154,7 @@ struct CompanionPanelView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Hi, I'm Farza. This is Teachy.")
+                Text("Hi, I'm Teachy. This is your learning companion.")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(DS.Colors.textSecondary)
 
@@ -771,11 +771,11 @@ struct CompanionPanelView: View {
         }
     }
 
-    // MARK: - DM Farza Button
+    // MARK: - Feedback Button
 
-    private var dmFarzaButton: some View {
+    private var dmFeedbackButton: some View {
         Button(action: {
-            if let url = URL(string: "https://x.com/farzatv") {
+            if let url = URL(string: "https://github.com/VedSoni-dev/teachy/issues") {
                 NSWorkspace.shared.open(url)
             }
         }) {
@@ -784,9 +784,9 @@ struct CompanionPanelView: View {
                     .font(.system(size: 12, weight: .medium))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Got feedback? DM me")
+                    Text("Give feedback")
                         .font(.system(size: 12, weight: .semibold))
-                    Text("Bugs, ideas, anything — I read every message.")
+                    Text("Bugs, ideas, anything — we read every issue.")
                         .font(.system(size: 10))
                         .foregroundColor(DS.Colors.textTertiary)
                 }

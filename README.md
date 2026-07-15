@@ -39,7 +39,56 @@ Installed apps can **Check for Updates…** under Home → Updates (Sparkle).
 
 MIT licensed. Hack on it, ship courses, build companies — go wild.
 
-## Quick start (Claude / Cursor)
+## Quick start (from source)
+
+### Prerequisites
+
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| macOS | 14.2+ | ScreenCaptureKit required |
+| Xcode | 15+ | App Store or developer.apple.com |
+| Node.js | 18+ | For the local API proxy |
+| OpenRouter key | — | Free at [openrouter.ai](https://openrouter.ai) |
+
+### Step 1 — Start the proxy
+
+The app routes all AI traffic through a local proxy. It supports OpenRouter (recommended), Anthropic, and OpenAI keys.
+
+```bash
+cd worker
+cp .env.template .env      # paste your API key
+npm install
+npm run local              # runs on http://localhost:8787
+```
+
+Verify it's working: open `http://localhost:8787/health` in your browser — you should see `"ok": true`.
+
+### Step 2 — Build the app
+
+```bash
+open leanring-buddy.xcodeproj
+```
+
+1. Select the **leanring-buddy** scheme in the toolbar (the app displays as **Teachy** — the project name is a legacy spelling)
+2. Go to **Signing & Capabilities** and set your Apple Development Team — this lets Accessibility and Screen Recording permissions persist across rebuilds
+3. **Cmd+R** to build and run
+
+> **Do not** use `xcodebuild` from the terminal for day-to-day runs — it invalidates TCC permissions and the app will re-request screen recording, accessibility, etc.
+
+### Step 3 — Grant permissions
+
+When prompted, grant:
+- **Microphone** — voice input
+- **Screen Recording** — Teachy sees your screen
+- **Accessibility** — cursor pointing
+
+### Step 4 — Use it
+
+Click the Teachy icon in your menu bar. The notch panel opens. Pick a learning path (try "First Win with AI" — 10 minutes) and hold **ctrl+option** to talk.
+
+## AI-assisted setup
+
+If you're using Claude or Cursor, paste this into your AI assistant:
 
 ```
 Clone this repo. Read AGENTS.md (or CLAUDE.md — same file).
@@ -49,54 +98,6 @@ I want Teachy running locally on my Mac.
 Help me set up the worker proxy with my API keys, then get the Teachy target
 building in Xcode (leanring-buddy scheme / PRODUCT_NAME Teachy).
 ```
-
-## Manual setup (from source)
-
-### Prerequisites
-
-- macOS 14.2+ (ScreenCaptureKit)
-- Xcode 15+
-- Node.js 18+ (local proxy / Cloudflare Worker)
-- API keys: [OpenRouter](https://openrouter.ai) (recommended), [AssemblyAI](https://www.assemblyai.com) optional for streaming STT
-
-### 1. API proxy
-
-The app never ships secrets. All model / STT traffic goes through the Teachy proxy.
-
-```bash
-cd worker
-cp .env.template .env   # add OPENROUTER_API_KEY (and others as needed)
-npm install
-npm run local           # http://localhost:8787
-npm run harness         # optional smoke test
-```
-
-For production Cloudflare:
-
-```bash
-cd worker
-npx wrangler secret put OPENROUTER_API_KEY
-npx wrangler secret put ASSEMBLYAI_API_KEY   # optional
-npx wrangler deploy
-```
-
-Point the app at your worker via `WorkerBaseURL` in `leanring-buddy/Info.plist`.
-
-### 2. Build & run the Mac app
-
-```bash
-open leanring-buddy.xcodeproj
-```
-
-1. Select the **leanring-buddy** scheme (legacy project name — the app displays as **Teachy**)
-2. Set your Apple Development Team (Signing & Capabilities) so Accessibility / Screen Recording stick across rebuilds
-3. **Cmd+R**
-
-Do **not** use `xcodebuild` from the terminal for day-to-day runs — it tends to invalidate TCC permissions.
-
-### 3. Permissions
-
-Grant: Microphone, Screen Recording, Accessibility (and Speech Recognition if using Apple Speech).
 
 | Path | Purpose |
 |------|---------|
