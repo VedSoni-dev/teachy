@@ -82,7 +82,7 @@ npm run harness                      # validate all routes
 | `LessonPlayer.swift` | ~730 | Goal auto-prompter — video parts → tutor turns → verify → teach-back. |
 | `ClickyAcademyCatalog.swift` | ~100 | Academy registry models + GitHub→raw install URL resolver. |
 | `courses/README.md` | — | Open curriculum authoring (JSON + Mux/HLS part videos). |
-| `academy/` | — | Teachy Academy site — Apple×Khan UI, cinematic intro, Teachy cursor tour, `registry.json`. |
+| `academy/` | — | Teachy Academy site — cinematic intro, single landing page (big Teachy + Get Teachy / Free Learning) where the clicky physically clicks any tapped button for the visitor, one-course wall, `registry.json`. |
 | `CourseUIGrounder.swift` | ~50 | Soft start URL open + cursor-screen capture (no UI hardcoding). |
 | `CourseVerifier.swift` | ~90 | Vision YES/NO verify for natural-language `doneWhen`. |
 | `CourseLessonHUDWindow.swift` | ~340 | Teaching HUD — coach line, glass hover expand, Hint / Do it / I did it. |
