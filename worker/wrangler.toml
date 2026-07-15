@@ -10,7 +10,8 @@ TEXT_MODEL = "deepseek/deepseek-v4-flash"
 WORKER_REFERER = "https://clicky.app"
 
 # Secrets (set via `npx wrangler secret put`):
-#   OPENROUTER_API_KEY   — primary backend (chat + agent)
+#   OPENROUTER_API_KEY   — primary backend (recommended — free tier available)
+#   ANTHROPIC_API_KEY    — Claude direct (fallback if OpenRouter is not set)
+#   OPENAI_API_KEY       — GPT direct (fallback if OpenRouter + Anthropic are not set)
 #   ASSEMBLYAI_API_KEY   — speech-to-text tokens
-#   ANTHROPIC_API_KEY    — legacy fallback if OpenRouter is not set
 #   ELEVENLABS_API_KEY   — cloud TTS (optional)

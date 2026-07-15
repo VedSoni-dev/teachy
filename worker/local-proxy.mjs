@@ -1,20 +1,23 @@
 #!/usr/bin/env node
 /**
- * Teachy Local Proxy — translates Anthropic Messages API format to
- * OpenAI-compatible format so the app can use OpenRouter's free tier
- * (or any OpenAI-compatible API) without changing Swift code.
+ * Teachy Local Proxy — multi-provider AI backend.
+ *
+ * Supports OpenRouter, Anthropic, and OpenAI. The proxy auto-detects which
+ * provider to use based on which API key is present in worker/.env.
+ *
+ * Priority: OPENROUTER_API_KEY > ANTHROPIC_API_KEY > OPENAI_API_KEY
  *
  * Usage:
- *   1. Create worker/.env (see .env.template)
+ *   1. Create worker/.env (see .env.template) with at least one provider key
  *   2. npm run local
  *   3. App points at http://localhost:8787 (CompanionManager.workerBaseURL)
  *
  * Routes:
- *   GET  /health                  — proxy status + configured models
- *   POST /chat                    — companion vision chat (Anthropic → OpenRouter)
- *   POST /v1/chat/completions     — background agent tool loop (OpenAI passthrough)
+ *   GET  /health                  — proxy status + active backend + models
+ *   POST /chat                    — companion vision chat (Anthropic format in)
+ *   POST /v1/chat/completions     — background agent tool loop (OpenAI format in)
  *   POST /tts                     — stub (app uses LocalSpeechSynthesizer)
- *   POST /transcribe-token        — stub (needs real AssemblyAI key for production)
+ *   POST /transcribe-token        — AssemblyAI streaming token (or stub)
  */
 
 import { createServer } from 'http';
@@ -25,32 +28,61 @@ import {
   fetchAvailableToolkits,
 } from './composio.mjs';
 import {
+  ACTIVE_PROVIDER,
+  ANTHROPIC_API_KEY,
+  ANTHROPIC_URL,
   ASSEMBLYAI_API_KEY,
-  AGENT_MODEL,
-  CHAT_MODEL,
-  MODEL,
+  OPENAI_API_KEY,
+  OPENAI_URL,
   OPENROUTER_API_KEY,
   OPENROUTER_URL,
   PORT,
-  TEXT_MODEL,
-  VISION_MODEL,
+  anthropicHeaders,
+  openAIHeaders,
   openRouterHeaders,
   resolveAgentModel,
   resolveChatModelRequest,
+  VISION_MODEL,
+  TEXT_MODEL,
+  MODEL,
+  CHAT_MODEL,
+  AGENT_MODEL,
 } from './config.mjs';
+import {
+  resolveChatModel,
+  resolveCompletionsModel,
+  providerVisionModel,
+  providerTextModel,
+  requestMessagesContainImages,
+} from './model-routing.mjs';
 
 const COMPOSIO_API_KEY = process.env.COMPOSIO_API_KEY;
 
-if (!OPENROUTER_API_KEY) {
-  console.error('❌ OPENROUTER_API_KEY not set.');
-  console.error('   Run: cp .env.template .env  then add your key.');
-  console.error('   Get a free key at https://openrouter.ai/keys');
+// ─── Startup ─────────────────────────────────────────────────────────────────
+
+if (!ACTIVE_PROVIDER) {
+  console.error('❌ No AI provider configured.');
+  console.error('   Add at least one key to worker/.env:');
+  console.error('     OPENROUTER_API_KEY  (recommended — free tier available)');
+  console.error('     ANTHROPIC_API_KEY   (Claude direct)');
+  console.error('     OPENAI_API_KEY      (GPT direct)');
+  console.error('   Copy .env.template → .env and fill in your key.');
   process.exit(1);
 }
 
-// ─── Format converters ───────────────────────────────────────────────────────
+const BACKEND_LABELS = {
+  openrouter: 'OpenRouter',
+  anthropic: 'Anthropic (Claude)',
+  openai: 'OpenAI (GPT)',
+};
 
-function anthropicToOpenAI(body) {
+// ─── Format Converters ───────────────────────────────────────────────────────
+
+/**
+ * Convert Anthropic Messages API format → OpenAI Chat Completions format.
+ * Used when the upstream expects OpenAI format (OpenRouter, OpenAI direct).
+ */
+function anthropicToOpenAI(body, model) {
   const messages = [];
 
   if (body.system) {
@@ -80,43 +112,187 @@ function anthropicToOpenAI(body) {
     }
   }
 
-  const resolvedModel = resolveChatModelRequest(body.model);
-
   return {
-    model: resolvedModel,
+    model,
     max_tokens: body.max_tokens || 1024,
     stream: body.stream !== false,
     messages,
   };
 }
 
+/**
+ * Convert OpenAI Chat Completions format → Anthropic Messages API format.
+ * Used when the upstream expects Anthropic format (Anthropic direct).
+ */
+function openAIToAnthropic(body, model) {
+  const messages = [];
+
+  for (const msg of body.messages || []) {
+    if (msg.role === 'system') {
+      // Anthropic puts system as a top-level field
+      continue; // handled separately below
+    }
+    if (typeof msg.content === 'string') {
+      messages.push({ role: msg.role, content: msg.content });
+    } else if (Array.isArray(msg.content)) {
+      const converted = msg.content.map((block) => {
+        if (block.type === 'text') {
+          return { type: 'text', text: block.text };
+        }
+        if (block.type === 'image_url') {
+          const url = block.image_url?.url || '';
+          // Parse data URI
+          const match = url.match(/^data:([^;]+);base64,(.+)$/);
+          if (match) {
+            return {
+              type: 'image',
+              source: { type: 'base64', media_type: match[1], data: match[2] },
+            };
+          }
+        }
+        return block;
+      });
+      messages.push({ role: msg.role, content: converted });
+    }
+  }
+
+  // Extract system message
+  const systemMsg = (body.messages || []).find((m) => m.role === 'system');
+  const systemContent = systemMsg
+    ? (typeof systemMsg.content === 'string' ? systemMsg.content : '')
+    : undefined;
+
+  return {
+    model,
+    max_tokens: body.max_tokens || 1024,
+    stream: body.stream !== false,
+    ...(systemContent ? { system: systemContent } : {}),
+    messages,
+  };
+}
+
+// ─── Upstream Senders ────────────────────────────────────────────────────────
+
+/**
+ * Send to OpenRouter (OpenAI-compatible API).
+ * Returns { status, headers, body } for the upstream response.
+ */
+async function sendToOpenRouter(openAIBody, title = 'Teachy') {
+  return fetch(OPENROUTER_URL, {
+    method: 'POST',
+    headers: openRouterHeaders(title),
+    body: JSON.stringify(openAIBody),
+  });
+}
+
+/**
+ * Send to Anthropic Messages API directly.
+ */
+async function sendToAnthropic(anthropicBody) {
+  return fetch(ANTHROPIC_URL, {
+    method: 'POST',
+    headers: anthropicHeaders(),
+    body: JSON.stringify(anthropicBody),
+  });
+}
+
+/**
+ * Send to OpenAI Chat Completions API directly.
+ */
+async function sendToOpenAI(openAIBody) {
+  return fetch(OPENAI_URL, {
+    method: 'POST',
+    headers: openAIHeaders(),
+    body: JSON.stringify(openAIBody),
+  });
+}
+
+// ─── Response Converters (SSE Streaming) ─────────────────────────────────────
+
+/** Convert OpenAI streaming chunk → Anthropic streaming event. */
 function openAIChunkToAnthropic(chunk) {
   const content = chunk.choices?.[0]?.delta?.content;
   if (!content) return null;
   return { type: 'content_block_delta', delta: { type: 'text_delta', text: content } };
 }
 
+/** Convert OpenAI non-streaming response → Anthropic response. */
 function openAIResponseToAnthropic(response) {
   const text = response.choices?.[0]?.message?.content || '';
   return { content: [{ type: 'text', text }] };
 }
 
-// ─── Route handlers ──────────────────────────────────────────────────────────
+/** Convert Anthropic streaming event → Anthropic SSE for the Swift client. */
+function anthropicEventToSSE(event) {
+  return `data: ${JSON.stringify(event)}\n\n`;
+}
+
+// ─── Streaming Proxy Helper ──────────────────────────────────────────────────
+
+/**
+ * Pipe an upstream SSE stream through a chunk converter, sending Anthropic-format
+ * SSE events to the downstream client.
+ */
+async function pipeSSEStream(upstream, res, chunkToAnthropic) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6).trim();
+        if (payload === '[DONE]') {
+          res.write('data: [DONE]\n\n');
+          continue;
+        }
+        try {
+          const anthropicEvent = chunkToAnthropic(JSON.parse(payload));
+          if (anthropicEvent) res.write(anthropicEventToSSE(anthropicEvent));
+        } catch {
+          // skip malformed chunks
+        }
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+    res.end();
+  }
+}
+
+// ─── Route Handlers ──────────────────────────────────────────────────────────
 
 function handleHealth(_req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(
     JSON.stringify({
       ok: true,
-      service: 'clicky-local-proxy',
-      backend: 'openrouter',
+      service: 'teachy-local-proxy',
+      backend: ACTIVE_PROVIDER,
+      backendLabel: BACKEND_LABELS[ACTIVE_PROVIDER],
       openrouter: Boolean(OPENROUTER_API_KEY),
+      anthropic: Boolean(ANTHROPIC_API_KEY),
+      openai: Boolean(OPENAI_API_KEY),
       assemblyai: Boolean(ASSEMBLYAI_API_KEY),
       ...composioHealthPayload(Boolean(COMPOSIO_API_KEY)),
       models: {
         default: MODEL,
-        vision: VISION_MODEL,
-        text: TEXT_MODEL,
+        vision: providerVisionModel(ACTIVE_PROVIDER),
+        text: providerTextModel(ACTIVE_PROVIDER),
         chat: CHAT_MODEL,
         agent: AGENT_MODEL,
       },
@@ -133,6 +309,179 @@ function handleHealth(_req, res) {
     })
   );
 }
+
+/**
+ * POST /chat — Companion vision chat.
+ *
+ * The Swift app sends Anthropic Messages API format. We route to the active
+ * provider, converting formats as needed:
+ *   - OpenRouter: Anthropic → OpenAI → OpenRouter
+ *   - Anthropic:  Anthropic → Anthropic (passthrough)
+ *   - OpenAI:     Anthropic → OpenAI → OpenAI
+ */
+async function handleChat(req, res) {
+  const buffers = [];
+  for await (const chunk of req) buffers.push(chunk);
+  const body = JSON.parse(Buffer.concat(buffers).toString());
+
+  const requestedModel = body.model;
+  const isStream = body.stream !== false;
+
+  console.log(`[/chat] provider=${ACTIVE_PROVIDER} model=${requestedModel || '(default)'} stream=${isStream}`);
+
+  try {
+    let upstream;
+
+    if (ACTIVE_PROVIDER === 'openrouter') {
+      const resolvedModel = resolveChatModelRequest(requestedModel);
+      const openAIBody = anthropicToOpenAI(body, resolvedModel);
+      upstream = await sendToOpenRouter(openAIBody, 'Teachy');
+    } else if (ACTIVE_PROVIDER === 'anthropic') {
+      // Anthropic format → Anthropic API (passthrough with model resolution)
+      const resolvedModel = resolveChatModel(requestedModel, 'anthropic');
+      const anthropicBody = { ...body, model: resolvedModel };
+      upstream = await sendToAnthropic(anthropicBody);
+    } else if (ACTIVE_PROVIDER === 'openai') {
+      const resolvedModel = resolveChatModel(requestedModel, 'openai');
+      const openAIBody = anthropicToOpenAI(body, resolvedModel);
+      upstream = await sendToOpenAI(openAIBody);
+    }
+
+    if (!upstream.ok) {
+      const errorText = await upstream.text();
+      console.error(`[/chat] ${BACKEND_LABELS[ACTIVE_PROVIDER]} error ${upstream.status}: ${errorText}`);
+      res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
+      res.end(errorText);
+      return;
+    }
+
+    // Non-streaming: Anthropic returns Anthropic format, OpenAI/OpenRouter return OpenAI format
+    if (!isStream) {
+      const data = await upstream.json();
+      if (ACTIVE_PROVIDER === 'anthropic') {
+        // Already in Anthropic format
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+      } else {
+        // Convert OpenAI format → Anthropic format
+        const converted = openAIResponseToAnthropic(data);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(converted));
+      }
+      return;
+    }
+
+    // Streaming: Anthropic SSE → Anthropic SSE (passthrough), OpenAI SSE → Anthropic SSE
+    if (ACTIVE_PROVIDER === 'anthropic') {
+      // Anthropic returns Anthropic SSE directly — pipe through
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+      const reader = upstream.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (line.startsWith('data: ') || line.startsWith('event: ')) {
+              res.write(line + '\n');
+            }
+          }
+        }
+      } finally {
+        reader.cancel().catch(() => {});
+        res.end();
+      }
+    } else {
+      // OpenAI/OpenRouter SSE → Anthropic SSE
+      await pipeSSEStream(upstream, res, openAIChunkToAnthropic);
+    }
+  } catch (error) {
+    console.error(`[/chat] Unhandled error:`, error);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: String(error) }));
+  }
+}
+
+/**
+ * POST /v1/chat/completions — Background agent tool loop.
+ *
+ * The Swift app sends OpenAI Chat Completions format. We route to the active
+ * provider, converting formats as needed:
+ *   - OpenRouter: OpenAI → OpenRouter (passthrough)
+ *   - Anthropic:  OpenAI → Anthropic → Anthropic
+ *   - OpenAI:     OpenAI → OpenAI (passthrough)
+ */
+async function handleOpenAICompatible(req, res) {
+  const buffers = [];
+  for await (const chunk of req) buffers.push(chunk);
+  const body = JSON.parse(Buffer.concat(buffers).toString());
+
+  const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
+  const resolvedModel = resolveCompletionsModel(body.model, body.messages, ACTIVE_PROVIDER);
+
+  console.log(`[/v1/chat/completions] provider=${ACTIVE_PROVIDER} model=${resolvedModel} tools=${hasTools} messages=${(body.messages || []).length}`);
+
+  try {
+    let upstream;
+
+    if (ACTIVE_PROVIDER === 'anthropic') {
+      // OpenAI format → Anthropic Messages API
+      const anthropicBody = openAIToAnthropic(body, resolvedModel);
+      upstream = await sendToAnthropic(anthropicBody);
+    } else {
+      // OpenRouter and OpenAI both use OpenAI format
+      const forwardedBody = { ...body, model: resolvedModel };
+      if (ACTIVE_PROVIDER === 'openrouter') {
+        upstream = await sendToOpenRouter(forwardedBody, 'Teachy Agent');
+      } else {
+        upstream = await sendToOpenAI(forwardedBody);
+      }
+    }
+
+    if (!upstream.ok) {
+      const errorText = await upstream.text();
+      console.error(`[/v1/chat/completions] ${BACKEND_LABELS[ACTIVE_PROVIDER]} error ${upstream.status}: ${errorText}`);
+      res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
+      res.end(errorText);
+      return;
+    }
+
+    const data = await upstream.json();
+
+    if (ACTIVE_PROVIDER === 'anthropic') {
+      // Convert Anthropic response → OpenAI format for the Swift agent loop
+      const openAIResponse = {
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: data.content?.[0]?.text || '',
+          },
+          finish_reason: data.stop_reason === 'end_turn' ? 'stop' : 'stop',
+        }],
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(openAIResponse));
+    } else {
+      // OpenRouter and OpenAI both return OpenAI format
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    }
+  } catch (error) {
+    console.error(`[/v1/chat/completions] Unhandled error:`, error);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: String(error) }));
+  }
+}
+
+// ─── Composio Routes ─────────────────────────────────────────────────────────
 
 async function handleComposioConnections(req, res, url) {
   if (!COMPOSIO_API_KEY) {
@@ -208,109 +557,7 @@ async function handleComposioConnect(req, res) {
   }
 }
 
-async function handleChat(req, res) {
-  const buffers = [];
-  for await (const chunk of req) buffers.push(chunk);
-  const body = JSON.parse(Buffer.concat(buffers).toString());
-
-  const openAIBody = anthropicToOpenAI(body);
-  const isStream = body.stream !== false;
-
-  console.log(`[/chat] model=${openAIBody.model} stream=${isStream} messages=${openAIBody.messages.length}`);
-
-  const upstream = await fetch(OPENROUTER_URL, {
-    method: 'POST',
-    headers: openRouterHeaders('Teachy'),
-    body: JSON.stringify(openAIBody),
-  });
-
-  if (!upstream.ok) {
-    const errorText = await upstream.text();
-    console.error(`[/chat] OpenRouter error ${upstream.status}: ${errorText}`);
-    res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
-    res.end(errorText);
-    return;
-  }
-
-  if (!isStream) {
-    const data = await upstream.json();
-    const converted = openAIResponseToAnthropic(data);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(converted));
-    return;
-  }
-
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-  });
-
-  const reader = upstream.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const payload = line.slice(6).trim();
-        if (payload === '[DONE]') {
-          res.write('data: [DONE]\n\n');
-          continue;
-        }
-        try {
-          const anthropicEvent = openAIChunkToAnthropic(JSON.parse(payload));
-          if (anthropicEvent) res.write(`data: ${JSON.stringify(anthropicEvent)}\n\n`);
-        } catch {
-          // skip malformed chunks
-        }
-      }
-    }
-  } finally {
-    reader.cancel().catch(() => {});
-    res.end();
-  }
-}
-
-async function handleOpenAICompatible(req, res) {
-  const buffers = [];
-  for await (const chunk of req) buffers.push(chunk);
-  const body = JSON.parse(Buffer.concat(buffers).toString());
-
-  const resolvedModel = resolveAgentModel(body.model, body.messages);
-  const forwardedBody = { ...body, model: resolvedModel };
-
-  const hasTools = Array.isArray(forwardedBody.tools) && forwardedBody.tools.length > 0;
-  console.log(
-    `[/v1/chat/completions] model=${resolvedModel} tools=${hasTools} messages=${(forwardedBody.messages || []).length}`
-  );
-
-  const upstream = await fetch(OPENROUTER_URL, {
-    method: 'POST',
-    headers: openRouterHeaders('Teachy Agent'),
-    body: JSON.stringify(forwardedBody),
-  });
-
-  if (!upstream.ok) {
-    const errorText = await upstream.text();
-    console.error(`[/v1/chat/completions] OpenRouter error ${upstream.status}: ${errorText}`);
-    res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
-    res.end(errorText);
-    return;
-  }
-
-  const data = await upstream.json();
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(data));
-}
+// ─── TTS & STT Stubs ────────────────────────────────────────────────────────
 
 function handleTTS(_req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -404,10 +651,15 @@ const server = createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`🚀 Teachy local proxy on http://localhost:${PORT}`);
-  console.log(`   Default model:       ${MODEL}`);
-  console.log(`   Vision routing:      ${VISION_MODEL}`);
-  console.log(`   Text routing:        ${TEXT_MODEL}`);
-  console.log(`   Health:              http://localhost:${PORT}/health`);
-  console.log(`   Harness:             npm run harness`);
+  console.log(`   Backend:            ${BACKEND_LABELS[ACTIVE_PROVIDER]} (${ACTIVE_PROVIDER})`);
+  console.log(`   Vision model:       ${providerVisionModel(ACTIVE_PROVIDER)}`);
+  console.log(`   Text model:         ${providerTextModel(ACTIVE_PROVIDER)}`);
+  console.log(`   Chat model:         ${CHAT_MODEL}`);
+  console.log(`   Agent model:        ${AGENT_MODEL}`);
+  console.log(`   Health:             http://localhost:${PORT}/health`);
+  console.log(`   Harness:            npm run harness`);
   console.log(`   AssemblyAI:  ${ASSEMBLYAI_API_KEY ? '✓ configured' : 'stub (add ASSEMBLYAI_API_KEY)'}`);
+  if (!OPENROUTER_API_KEY && !ANTHROPIC_API_KEY && !OPENAI_API_KEY) {
+    console.error('❌ No API key found — the proxy will not work.');
+  }
 });

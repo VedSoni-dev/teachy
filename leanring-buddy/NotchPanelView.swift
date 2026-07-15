@@ -21,6 +21,7 @@ struct NotchPanelView: View {
     @ObservedObject private var softwareUpdater = TeachySoftwareUpdater.shared
     @State private var courseInstallURLText: String = ""
     @State private var teachyOnboardingPageIndex: Int = 0
+    @State private var courseQuestionText: String = ""
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -49,7 +50,7 @@ struct NotchPanelView: View {
 
     @ViewBuilder
     private var tabContent: some View {
-        // Permissions + Farza intro must show even when Courses is the default tab.
+        // Permissions + intro must show even when Courses is the default tab.
         if needsSetup {
             setupContent
         } else {
@@ -80,7 +81,7 @@ struct NotchPanelView: View {
 
             watchIntroAgainButton
 
-            dmFarzaButton
+            dmFeedbackButton
         }
     }
 
@@ -617,7 +618,7 @@ struct NotchPanelView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "play.rectangle.fill")
                             .font(.system(size: 10))
-                        Text("Or watch Farza’s full intro")
+                        Text("Or watch the full intro")
                             .font(.system(size: 10, weight: .medium))
                     }
                     .foregroundColor(NotchPanelColors.textTertiary)
@@ -1263,12 +1264,24 @@ struct NotchPanelView: View {
         let lessonPlayer = companionManager.lessonPlayer
         let stepNumber = session.currentStepIndex + 1
         let stepCount = session.course.stepCount
+        let phase = lessonPlayer.phase
 
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Step \(stepNumber) of \(stepCount)")
-                    .font(.system(size: 10, weight: .bold))
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: phase.systemImageName)
+                    .font(.system(size: 14))
                     .foregroundColor(NotchPanelColors.courseAccent)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.currentStep.title)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(NotchPanelColors.textPrimary)
+                        .lineLimit(1)
+
+                    Text("Step \(stepNumber) of \(stepCount)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(NotchPanelColors.courseAccent)
+                }
 
                 Spacer(minLength: 0)
 
@@ -1288,57 +1301,74 @@ struct NotchPanelView: View {
                 .pointerCursor()
             }
 
-            Text(session.currentStep.title)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundColor(NotchPanelColors.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
+            courseProgressBar(session: session)
+                .padding(.top, 8)
 
             Text(session.currentStep.goal)
                 .font(.system(size: 12))
                 .foregroundColor(NotchPanelColors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10)
 
-            courseProgressBar(session: session)
+            courseConversationArea(session: session)
+                .padding(.top, 10)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("How this works")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(NotchPanelColors.textTertiary)
-
-                howCourseWorksRow(
-                    keys: "ctrl + option",
-                    body: "hold to talk — ask anything about this step"
+            if phase.isPlacement {
+                coursePhasePromptRow(
+                    icon: "questionmark.circle",
+                    title: "Quick check",
+                    subtitle: "Tell Teachy what you already know — it'll skip ahead if you're ready."
                 )
-                howCourseWorksRow(
-                    keys: "say “next step”",
-                    body: "when you think you’re done — Teachy checks, then advances"
+            } else if phase.isWatchingVideo {
+                coursePhasePromptRow(
+                    icon: "play.rectangle",
+                    title: "Teacher clip",
+                    subtitle: "Watch the clip, then Teachy will check in."
                 )
-                howCourseWorksRow(
-                    keys: "questions",
-                    body: "if you don’t say next step, Teachy answers and steers you back"
+            } else if phase.isYourTurn {
+                coursePhasePromptRow(
+                    icon: "hand.raised",
+                    title: "Your turn",
+                    subtitle: "Try it out. Say \"next step\" when you're done, or ask a question."
+                )
+            } else if phase.isUnderstanding {
+                coursePhasePromptRow(
+                    icon: "lightbulb",
+                    title: "Quick check",
+                    subtitle: "Explain it in your own words."
+                )
+            } else if phase == .checking {
+                coursePhasePromptRow(
+                    icon: "checkmark.circle",
+                    title: "Checking…",
+                    subtitle: "Teachy is verifying your work."
                 )
             }
-            .padding(.top, 2)
 
-            if lessonPlayer.phase.isWatchingVideo {
+            if phase.isWatchingVideo {
                 HStack(spacing: 8) {
                     courseActionChip(title: "Skip video", isPrimary: true) {
                         companionManager.skipCourseVideo()
                     }
-                    Text("or say “skip”")
+                    Text("or say \"skip\"")
                         .font(.system(size: 10))
                         .foregroundColor(NotchPanelColors.textTertiary)
                 }
-            } else if lessonPlayer.phase.isYourTurn {
+                .padding(.top, 8)
+            } else if phase.isYourTurn || phase.isPlacement || phase.isUnderstanding {
                 HStack(spacing: 8) {
                     courseActionChip(title: "Hint", isPrimary: false) {
                         companionManager.requestCourseHint()
                     }
-                    courseActionChip(title: "Next step", isPrimary: true) {
+                    courseActionChip(title: "I did it", isPrimary: true) {
                         companionManager.confirmCourseBeat()
                     }
                 }
+                .padding(.top, 8)
             }
+
+            courseQuestionInput()
+                .padding(.top, 8)
         }
         .padding(14)
         .background(
@@ -1351,17 +1381,162 @@ struct NotchPanelView: View {
         )
     }
 
-    private func howCourseWorksRow(keys: String, body: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(keys)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(NotchPanelColors.courseAccent)
-                .frame(width: 108, alignment: .leading)
-            Text(body)
-                .font(.system(size: 11))
-                .foregroundColor(NotchPanelColors.textSecondary)
+    @ViewBuilder
+    private func courseConversationArea(session: ClickyCourseSession) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(session.stepConversationHistory.enumerated()), id: \.offset) { _, exchange in
+                        courseConversationExchange(exchange)
+                    }
+
+                    if let coachMessage = companionManager.coursesManager.lastCoachMessage {
+                        courseCoachMessageBlock(message: coachMessage)
+                    } else if !companionManager.coursesManager.lastCoachSpokenText.isEmpty {
+                        courseCoachMessageBlock(
+                            message: CourseCoachMessageParts(
+                                infoText: nil,
+                                todoText: companionManager.coursesManager.lastCoachSpokenText,
+                                spokenText: companionManager.coursesManager.lastCoachSpokenText
+                            )
+                        )
+                    }
+                }
+                .id("conversation")
+            }
+            .frame(maxHeight: 200)
+            .onChange(of: companionManager.coursesManager.lastCoachMessage) { _ in
+                withAnimation { proxy.scrollTo("conversation", anchor: .bottom) }
+            }
+        }
+    }
+
+    private func courseConversationExchange(_ exchange: ClickyCourseStepExchange) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 8))
+                    .foregroundColor(NotchPanelColors.textTertiary)
+                    .frame(width: 14)
+
+                Text(exchange.userTranscript)
+                    .font(.system(size: 11))
+                    .foregroundColor(NotchPanelColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "sparkle")
+                    .font(.system(size: 8))
+                    .foregroundColor(NotchPanelColors.courseAccent)
+                    .frame(width: 14)
+
+                Text(exchange.assistantResponse)
+                    .font(.system(size: 11))
+                    .foregroundColor(NotchPanelColors.textPrimary.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func courseCoachMessageBlock(message: CourseCoachMessageParts) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let infoText = message.infoText, !infoText.isEmpty {
+                courseCoachBlock(kindLabel: "FYI", text: infoText, accent: Color(red: 0.35, green: 0.55, blue: 0.95))
+            }
+            if let todoText = message.todoText, !todoText.isEmpty {
+                courseCoachBlock(kindLabel: "Teachy", text: todoText, accent: NotchPanelColors.courseAccent)
+            }
+            if !message.hasStructuredParts, !message.spokenText.isEmpty {
+                courseCoachBlock(kindLabel: "Teachy", text: message.spokenText, accent: NotchPanelColors.courseAccent)
+            }
+        }
+    }
+
+    private func courseCoachBlock(kindLabel: String, text: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(kindLabel)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(accent)
+                .tracking(0.4)
+
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(NotchPanelColors.textPrimary.opacity(0.94))
                 .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(accent.opacity(0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(accent.opacity(0.45), lineWidth: 1)
+                )
+        )
+    }
+
+    private func coursePhasePromptRow(icon: String, title: String, subtitle: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundColor(NotchPanelColors.courseAccent)
+                .frame(width: 14)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(NotchPanelColors.textPrimary)
+
+                Text(subtitle)
+                    .font(.system(size: 10))
+                    .foregroundColor(NotchPanelColors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    private func courseQuestionInput() -> some View {
+        HStack(spacing: 8) {
+            TextField("Ask a question…", text: $courseQuestionText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundColor(NotchPanelColors.textPrimary)
+                .onSubmit {
+                    let question = courseQuestionText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !question.isEmpty else { return }
+                    courseQuestionText = ""
+                    companionManager.submitCourseTextQuestion(question)
+                }
+
+            if !courseQuestionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    let question = courseQuestionText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !question.isEmpty else { return }
+                    courseQuestionText = ""
+                    companionManager.submitCourseTextQuestion(question)
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(NotchPanelColors.courseAccent)
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                )
+        )
     }
 
     private func courseActionChip(title: String, isPrimary: Bool, action: @escaping () -> Void) -> some View {
@@ -1948,16 +2123,16 @@ struct NotchPanelView: View {
         .disabled(!isEnabled)
     }
 
-    private var dmFarzaButton: some View {
+    private var dmFeedbackButton: some View {
         Button(action: {
-            if let url = URL(string: "https://x.com/farzatv") {
+            if let url = URL(string: "https://github.com/VedSoni-dev/teachy/issues") {
                 NSWorkspace.shared.open(url)
             }
         }) {
             HStack(spacing: 8) {
                 Image(systemName: "bubble.left.fill")
                     .font(.system(size: 11))
-                Text("Feedback? DM Farza")
+                Text("Give feedback")
                     .font(.system(size: 11, weight: .medium))
             }
             .foregroundColor(NotchPanelColors.textTertiary)
@@ -2071,7 +2246,7 @@ private enum TeachyOnboardingPage: Int, CaseIterable {
         case .howToLearn:
             return "During a path, a lesson HUD shows the coach line plus Hint / Do it for me / I did it. Voice always works too."
         case .seeYourScreen:
-            return "Same vibe as Farza’s intro — collapse Teachy, and your blue buddy will fly to something real on your desk."
+            return "Same vibe as the intro — collapse Teachy, and your blue buddy will fly to something real on your desk."
         case .ready:
             return "First Win takes about ten minutes and shows the whole loop. Or browse paths — AI, coding, GitHub, YouTube, and more."
         }
@@ -2098,7 +2273,7 @@ private enum TeachyOnboardingPage: Int, CaseIterable {
         case .seeYourScreen:
             return [
                 "Hit Show me — music stays under, cursor does the proof",
-                "Skip if you already felt the Farza version"
+                "Skip if you already felt the intro"
             ]
         case .ready:
             return []

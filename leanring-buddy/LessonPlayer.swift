@@ -112,6 +112,12 @@ final class LessonPlayer: ObservableObject {
         await answerUserQuestion(trimmed)
     }
 
+    func handleTextQuestion(_ text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        await answerUserQuestion(trimmed)
+    }
+
     func requestHint() {
         resumeYourTurn(.hint)
     }
@@ -212,7 +218,7 @@ final class LessonPlayer: ObservableObject {
         setPhase(.placement(prompt: placementPrompt))
         coursesManager.setCourseInteractionRunning(false)
         host.setCourseVoiceStateIdle()
-        NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+        NotificationCenter.default.post(name: .clickySwitchToCoursesTab, object: nil)
 
         let answer = await waitForPlacementAnswer()
         guard !Task.isCancelled, coursesManager.activeSession != nil else { return }
@@ -270,7 +276,7 @@ final class LessonPlayer: ObservableObject {
             try? await Task.sleep(for: .milliseconds(1400))
         }
 
-        // Optional course-level long-form intro (Farza-style, beside Teachy) — once per session.
+        // Optional course-level long-form intro, beside Teachy — once per session.
         if !didPlayCourseIntroVideo,
            let courseIntroVideoURL = session.course.resolvedCourseTeacherVideoURL {
             didPlayCourseIntroVideo = true
@@ -315,7 +321,7 @@ final class LessonPlayer: ObservableObject {
             ask: """
             \(goal.coachAsk)
 
-            Be Teachy — warm, playful, farza-energy. One clear next move only — point at the real control. \
+            Be Teachy — warm, playful, teachy-energy. One clear next move only — point at the real control. \
             Urge them to do it now. If the wrong app/page is open, open the right one, then point. \
             Use the LESSON BRIEF and any teacher clip notes. Respect TOOL POLICY.\
             \(promptChipCue)
@@ -332,8 +338,7 @@ final class LessonPlayer: ObservableObject {
             setPhase(.yourTurn(prompt: turnPrompt))
             coursesManager.setCourseInteractionRunning(false)
             host.setCourseVoiceStateIdle()
-            // Invisible shell: panel out of the way — HUD + cursor carry the lesson.
-            NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+            NotificationCenter.default.post(name: .clickySwitchToCoursesTab, object: nil)
 
             scheduleHintTimeout(alreadyOffered: didOfferHint)
             let action = await waitForYourTurnAction()
@@ -536,7 +541,7 @@ final class LessonPlayer: ObservableObject {
         setPhase(.understanding(prompt: prompt))
         coursesManager.setCourseInteractionRunning(false)
         host.setCourseVoiceStateIdle()
-        NotificationCenter.default.post(name: .clickyDismissPanel, object: nil)
+        NotificationCenter.default.post(name: .clickySwitchToCoursesTab, object: nil)
 
         let answer = await waitForUnderstandingAnswer()
         guard !Task.isCancelled, coursesManager.activeSession != nil else { return false }
