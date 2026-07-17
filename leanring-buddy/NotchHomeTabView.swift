@@ -14,7 +14,6 @@ struct NotchHomeTabView: View {
     @ObservedObject private var softwareUpdater = TeachySoftwareUpdater.shared
 
     @State private var elevenLabsAPIKeyInput: String = ""
-    @State private var elevenLabsVoiceIDInput: String = ""
     @State private var elevenLabsIsValidating: Bool = false
     @State private var elevenLabsError: String?
     @State private var elevenLabsIsConfigured: Bool = TeachyElevenLabsKeyStore.isConfigured
@@ -284,7 +283,7 @@ struct NotchHomeTabView: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundColor(DS.Colors.textPrimary)
 
-            Text("Optional — use your own ElevenLabs voice instead of the built-in one. Get a key at elevenlabs.io (their pricing applies) — Teachy sounds great without one too.")
+            Text("Optional — use your own ElevenLabs key so Teachy speaks with its real voice. Get a key at elevenlabs.io (their pricing applies) — Teachy sounds great without one too.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -302,9 +301,7 @@ struct NotchHomeTabView: View {
 
                     Button {
                         TeachyElevenLabsKeyStore.apiKey = nil
-                        TeachyElevenLabsKeyStore.voiceID = nil
                         elevenLabsAPIKeyInput = ""
-                        elevenLabsVoiceIDInput = ""
                         elevenLabsError = nil
                         elevenLabsIsConfigured = false
                     } label: {
@@ -318,16 +315,6 @@ struct NotchHomeTabView: View {
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     SecureField("ElevenLabs API key", text: $elevenLabsAPIKeyInput)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(DS.Colors.textPrimary)
-                        .padding(8)
-                        .glassCard(cornerRadius: 8, tint: DS.Colors.learnAccent)
-                        .onSubmit {
-                            validateAndSaveElevenLabsKey()
-                        }
-
-                    TextField("Voice ID", text: $elevenLabsVoiceIDInput)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundColor(DS.Colors.textPrimary)
@@ -368,7 +355,6 @@ struct NotchHomeTabView: View {
                 .pointerCursor()
                 .disabled(
                     elevenLabsAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || elevenLabsVoiceIDInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || elevenLabsIsValidating
                 )
             }
@@ -380,8 +366,7 @@ struct NotchHomeTabView: View {
 
     private func validateAndSaveElevenLabsKey() {
         let key = elevenLabsAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let voiceID = elevenLabsVoiceIDInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty, !voiceID.isEmpty else { return }
+        guard !key.isEmpty else { return }
 
         elevenLabsIsValidating = true
         elevenLabsError = nil
@@ -396,7 +381,6 @@ struct NotchHomeTabView: View {
                 let (_, response) = try await URLSession.shared.data(for: request)
                 if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
                     TeachyElevenLabsKeyStore.apiKey = key
-                    TeachyElevenLabsKeyStore.voiceID = voiceID
                     await MainActor.run {
                         elevenLabsIsValidating = false
                         elevenLabsIsConfigured = true

@@ -102,9 +102,8 @@ final class LocalSpeechSynthesizer: NSObject {
     /// configured their own key, or if the direct call fails for any reason.
     private static func fetchDirectElevenLabsAudio(text: String) async -> Data? {
         guard let apiKey = TeachyElevenLabsKeyStore.apiKey,
-              let voiceID = TeachyElevenLabsKeyStore.voiceID,
-              !apiKey.isEmpty, !voiceID.isEmpty,
-              let url = URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voiceID)")
+              !apiKey.isEmpty,
+              let url = URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(TeachyElevenLabsKeyStore.voiceID)")
         else { return nil }
 
         var request = URLRequest(url: url)

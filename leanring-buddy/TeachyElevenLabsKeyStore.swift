@@ -2,11 +2,12 @@
 //  TeachyElevenLabsKeyStore.swift
 //  leanring-buddy
 //
-//  Secure storage for the user's own ElevenLabs API key + voice ID, so
-//  self-hosted voice usage never lands on the developer's ElevenLabs bill.
-//  Mirrors TeachyAPIKeyStore.swift's Keychain wrapper exactly (same
-//  Keychain service, sibling account). Voice ID is not a secret, so it is
-//  stored in UserDefaults rather than the Keychain.
+//  Secure storage for the user's own ElevenLabs API key, so self-hosted
+//  voice usage never lands on the developer's ElevenLabs bill. Mirrors
+//  TeachyAPIKeyStore.swift's Keychain wrapper exactly (same Keychain
+//  service, sibling account). The voice itself is fixed — Teachy speaks
+//  with one chosen voice for everyone who brings their own key, so the
+//  only thing a user configures is the API key.
 //
 
 import Foundation
@@ -15,7 +16,9 @@ import Security
 enum TeachyElevenLabsKeyStore {
     private static let service = "com.teachy.apikey"
     private static let account = "elevenlabs"
-    private static let voiceIDDefaultsKey = "teachy_elevenlabs_voice_id"
+
+    /// Teachy's chosen ElevenLabs voice — fixed for every user, not configurable.
+    static let voiceID = "D3ek8QDklZYsBuELS8a9"
 
     /// The user's own ElevenLabs API key, or nil if not set.
     static var apiKey: String? {
@@ -38,16 +41,9 @@ enum TeachyElevenLabsKeyStore {
         }
     }
 
-    /// The ElevenLabs voice ID to use for the user's own key. Not a secret,
-    /// so UserDefaults is sufficient (no need for Keychain).
-    static var voiceID: String? {
-        get { UserDefaults.standard.string(forKey: voiceIDDefaultsKey) }
-        set { UserDefaults.standard.set(newValue, forKey: voiceIDDefaultsKey) }
-    }
-
-    /// Whether the user has configured both an API key and a voice ID.
+    /// Whether the user has configured their own API key.
     static var isConfigured: Bool {
-        !(apiKey ?? "").isEmpty && !(voiceID ?? "").isEmpty
+        !(apiKey ?? "").isEmpty
     }
 
     // MARK: - Keychain
