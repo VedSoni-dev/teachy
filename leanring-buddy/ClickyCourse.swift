@@ -1262,7 +1262,10 @@ enum ClickyCourseCatalog {
         - INFO = teaching / clarifying (not a button to click yet)
         - TODO = their move (click, type, open, paste, send)
         - one INFO + one TODO only. Warm spoken English. No markdown outside the tags.
-        - Include [POINT:cell:label] or better [POINT:x,y:label] when they should click something.
+        - Include [POINT:cell:label] or better [POINT:x,y:label] when they should click something —
+          and phrase [TODO] as "click here" / "right here" / "this one", not a separate location
+          description ("on the left sidebar", "the option that says X"). The cursor is already
+          moving there; restating where it is makes you sound disconnected from their screen.
         - Optionally append invisible memory tags (never speak them): [MEMORY:knows:…] or [MEMORY:confused:…]
         - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.
 
