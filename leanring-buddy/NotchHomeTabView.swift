@@ -372,13 +372,27 @@ struct NotchHomeTabView: View {
         elevenLabsError = nil
 
         Task {
-            // Quick validation: hit ElevenLabs with the key
-            var request = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/voices")!)
+            // Validate against the REAL endpoint Teachy uses (text-to-speech), not a
+            // side endpoint like /v1/voices or /v1/user. ElevenLabs keys can be scoped
+            // to specific permissions at creation — a key restricted to "Text to Speech
+            // only" is exactly what Teachy needs and is completely valid, but it 401s
+            // on /v1/voices (missing voices_read) or /v1/user (missing user_read). This
+            // sends a 1-character synthesis request so "validation passes" reliably
+            // means "the actual feature will work," not just "some other scope exists."
+            let url = URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(TeachyElevenLabsKeyStore.voiceID)")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
             request.timeoutInterval = 10
             request.setValue(key, forHTTPHeaderField: "xi-api-key")
+            request.setValue("application/json", forHTTPHeaderField: "content-type")
+            request.setValue("audio/mpeg", forHTTPHeaderField: "accept")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: [
+                "text": "Hi",
+                "model_id": "eleven_turbo_v2_5",
+            ])
 
             do {
-                let (_, response) = try await URLSession.shared.data(for: request)
+                let (data, response) = try await URLSession.shared.data(for: request)
                 if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
                     TeachyElevenLabsKeyStore.apiKey = key
                     await MainActor.run {
@@ -388,7 +402,7 @@ struct NotchHomeTabView: View {
                 } else {
                     await MainActor.run {
                         elevenLabsIsValidating = false
-                        elevenLabsError = "That key doesn't seem valid. Check it and try again."
+                        elevenLabsError = Self.elevenLabsErrorMessage(from: data)
                     }
                 }
             } catch {
@@ -398,6 +412,23 @@ struct NotchHomeTabView: View {
                 }
             }
         }
+    }
+
+    /// ElevenLabs distinguishes an outright-invalid key from a valid key that's
+    /// missing a required permission scope — surface that distinction instead of
+    /// a generic "invalid key" message that sends people chasing the wrong fix.
+    private static func elevenLabsErrorMessage(from responseData: Data) -> String {
+        guard
+            let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+            let detail = json["detail"] as? [String: Any],
+            let status = detail["status"] as? String
+        else {
+            return "That key doesn't seem valid. Check it and try again."
+        }
+        if status == "missing_permissions" {
+            return "That key is missing the Text to Speech permission — enable it in ElevenLabs → API Keys."
+        }
+        return "That key doesn't seem valid. Check it and try again."
     }
 
     private var watchIntroAgainButton: some View {
