@@ -16,7 +16,7 @@
  *   GET  /health                  — proxy status + active backend + models
  *   POST /chat                    — companion vision chat (Anthropic format in)
  *   POST /v1/chat/completions     — background agent tool loop (OpenAI format in)
- *   POST /tts                     — stub (app uses LocalSpeechSynthesizer)
+ *   POST /tts                     — ElevenLabs / OpenAI TTS (or stub → local neural)
  *   POST /transcribe-token        — AssemblyAI streaming token (or stub)
  */
 
@@ -32,6 +32,8 @@ import {
   ANTHROPIC_API_KEY,
   ANTHROPIC_URL,
   ASSEMBLYAI_API_KEY,
+  ELEVENLABS_API_KEY,
+  ELEVENLABS_VOICE_ID,
   OPENAI_API_KEY,
   OPENAI_URL,
   OPENROUTER_API_KEY,
@@ -557,11 +559,98 @@ async function handleComposioConnect(req, res) {
   }
 }
 
-// ─── TTS & STT Stubs ────────────────────────────────────────────────────────
+// ─── TTS (ElevenLabs → OpenAI → stub) & STT ─────────────────────────────────
 
-function handleTTS(_req, res) {
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const raw = Buffer.concat(chunks).toString('utf8');
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+async function handleTTS(req, res) {
+  const payload = await readJsonBody(req);
+  const text = String(payload.text || '').trim();
+  if (!text) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'missing text' }));
+    return;
+  }
+
+  if (ELEVENLABS_API_KEY && ELEVENLABS_VOICE_ID) {
+    try {
+      const upstream = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
+        {
+          method: 'POST',
+          headers: {
+            'xi-api-key': ELEVENLABS_API_KEY,
+            'content-type': 'application/json',
+            accept: 'audio/mpeg',
+          },
+          body: JSON.stringify({
+            text,
+            model_id: payload.model_id || 'eleven_turbo_v2_5',
+            voice_settings: payload.voice_settings || {
+              stability: 0.4,
+              similarity_boost: 0.8,
+              style: 0.4,
+              use_speaker_boost: true,
+            },
+          }),
+        }
+      );
+      if (upstream.ok) {
+        const audio = Buffer.from(await upstream.arrayBuffer());
+        res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
+        res.end(audio);
+        return;
+      }
+      console.error(`[/tts] ElevenLabs ${upstream.status}: ${await upstream.text()}`);
+    } catch (error) {
+      console.error('[/tts] ElevenLabs failed:', error);
+    }
+  }
+
+  if (OPENAI_API_KEY) {
+    try {
+      const upstream = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${OPENAI_API_KEY}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini-tts',
+          voice: 'nova',
+          input: text,
+          response_format: 'mp3',
+        }),
+      });
+      if (upstream.ok) {
+        const audio = Buffer.from(await upstream.arrayBuffer());
+        res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
+        res.end(audio);
+        return;
+      }
+      console.error(`[/tts] OpenAI ${upstream.status}: ${await upstream.text()}`);
+    } catch (error) {
+      console.error('[/tts] OpenAI failed:', error);
+    }
+  }
+
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ ok: true, note: 'local stub — app uses NSSpeechSynthesizer' }));
+  res.end(
+    JSON.stringify({
+      ok: true,
+      note: 'TTS not configured — app uses local neural speech. Add ELEVENLABS_API_KEY or OPENAI_API_KEY to worker/.env',
+    })
+  );
 }
 
 async function handleTranscribeToken(_req, res) {
@@ -638,7 +727,11 @@ const server = createServer((req, res) => {
     case '/v1/chat/completions':
       return handleOpenAICompatible(req, res);
     case '/tts':
-      return handleTTS(req, res);
+      return handleTTS(req, res).catch((error) => {
+        console.error('[/tts] unhandled:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: String(error) }));
+      });
     case '/transcribe-token':
       return handleTranscribeToken(req, res);
     case '/composio/connect':

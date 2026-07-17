@@ -33,6 +33,25 @@ All API keys live on the Teachy proxy (local dev server or Cloudflare Worker) �
 - **Concurrency**: `@MainActor` isolation, async/await throughout
 - **Analytics**: PostHog via `ClickyAnalytics.swift`
 
+### TeachyEngine (Core Learning Engine)
+
+The `TeachyEngine/` directory contains the environment-agnostic learning engine. It receives `LearnerEvent` inputs from adapters and outputs `CoachingOutput` decisions. The engine never knows where events come from; adapters never know how coaching is generated.
+
+**Subsystems:**
+- **LearnerModel**: Persistent learner profile with skill nodes, proficiency levels, teaching demos, streaks. Replaces flat knows/confusedBy lists.
+- **SkillGraph**: Connected skill nodes with prerequisites, cross-domain transfers, and difficulty ratings. Ships with bundled AI fluency graph (20+ skills).
+- **VerificationEngine**: Multi-modal verification beyond vision-only checks. Adds understanding depth, near-transfer tests, and code analysis.
+- **TeachBackEngine**: Enhanced teach-back with protégé effect. Scores teaching quality, generates teaching demos, supports teach-someone-else mode.
+- **SpacedRepetitionEngine**: SM-2 based spaced repetition. Schedules reviews via forgetting curves, generates contextual retention checks and nudges.
+- **PortfolioManager**: Persistent portfolio system. Captures real artifacts, enriches with verification/teach-back data, generates shareable cards.
+- **CoachingSession**: Session management. Tracks coaching phases, event logs, goal history, and session-level metrics.
+
+**Integration:** The engine is wired into `CompanionManager` and `LessonPlayer` at key lifecycle points (course start, goal completion, teach-back, course finish). The `CoursesManager` bridges legacy `CourseLearnerProfile` to the new `LearnerModel` via `syncToEngineLearnerModel()`.
+
+**Persistence:** Engine state is stored at `~/.teachy/engine-state.json`. Portfolio items at `~/.teachy/portfolio/`. All data is local-first, no cloud sync yet.
+
+**Adapter Protocol:** Any surface (macOS, browser extension, CLI, Makr client) implements `TeachyAdapter` to connect to the engine. The macOS adapter is the current implementation.
+
 ### API Proxy (Cloudflare Worker + Local Dev)
 
 The app never calls external APIs directly. All requests go through the Teachy proxy (`worker/src/index.ts` in production, `worker/local-proxy.mjs` for local dev). Base URL is read from `WorkerBaseURL` in Info.plist (default `http://localhost:8787`).
@@ -75,22 +94,30 @@ npm run harness                      # validate all routes
 |------|-------|---------|
 | `leanring_buddyApp.swift` | ~100 | Menu bar app entry point. Starts companion + Sparkle via `TeachySoftwareUpdater`. |
 | `TeachySoftwareUpdater.swift` | ~70 | Sparkle auto-update controller — GitHub Releases feed + Check for Updates in Home settings. |
-| `CompanionManager.swift` | ~1400 | Central state machine. Owns dictation, shortcut monitoring, screen capture, companion chat, background agent dispatch (voice trigger: "agent,"), Teachy Courses sessions, local TTS, and overlay management. Tracks voice state, conversation history, chat/agent model selection, and cursor visibility. |
+| `CompanionManager.swift` | ~2000 | Central state machine. Owns dictation, shortcut monitoring, screen capture, companion chat, Teachy Courses sessions, local TTS, and overlay management. Tracks voice state, conversation history, chat/agent model selection, and cursor visibility. |
 | `ClickyCourse.swift` | ~1380 | Goal-based courses; **First Win** + **Use AI to Code** flagship; Teachy catalog + lesson briefs. |
 | `CoursesManager.swift` | ~710 | Catalog, sessions, learner profile memory, tool step log. |
 | `TeachyDataPaths.swift` | ~40 | Resolves `~/.teachy/{courses,connectors}` with legacy `~/.clicky/` fallback. |
 | `LessonPlayer.swift` | ~730 | Goal auto-prompter — video parts → tutor turns → verify → teach-back. |
+| `TeachyEngine/AdapterProtocol.swift` | ~100 | Environment-agnostic contract between the Teachy engine and any surface (macOS, browser, CLI, Makr). Defines LearnerEvent inputs, CoachingOutput decisions, and the TeachyAdapter protocol. |
+| `TeachyEngine/LearnerModel.swift` | ~400 | Enhanced persistent learner model with skill nodes, proficiency tracking, teaching demos, streaks, and cross-course memory. Replaces flat knows/confusedBy lists. |
+| `TeachyEngine/SkillGraph.swift` | ~350 | Connected skill nodes with prerequisites, cross-domain transfers, difficulty ratings. Ships with bundled AI fluency graph (20+ skills). |
+| `TeachyEngine/VerificationEngine.swift` | ~500 | Multi-modal verification: vision-only, vision+explain, near-transfer tests, code analysis. Goes beyond output checking to verify understanding. |
+| `TeachyEngine/TeachBackEngine.swift` | ~550 | Enhanced teach-back with protégé effect: quick check, full explanation, teach-someone-else, teach-with-follow-up. Scores teaching quality. |
+| `TeachyEngine/SpacedRepetitionEngine.swift` | ~300 | SM-2 based spaced repetition. Schedules reviews via forgetting curves, generates contextual retention checks and nudges. |
+| `TeachyEngine/PortfolioManager.swift` | ~350 | Persistent portfolio system. Captures real artifacts, enriches with verification/teach-back data, generates shareable cards. |
+| `TeachyEngine/CoachingSession.swift` | ~180 | Session management. Tracks coaching phases, event logs, goal history, and session-level metrics. |
+| `TeachyEngine/TeachyEngine.swift` | ~450 | Main engine coordinating all subsystems. Environment-agnostic — receives events from adapters, outputs coaching decisions. |
 | `ClickyAcademyCatalog.swift` | ~100 | Academy registry models + GitHub→raw install URL resolver. |
 | `courses/README.md` | — | Open curriculum authoring (JSON + Mux/HLS part videos). |
 | `academy/` | — | Teachy Academy site — cinematic intro, single landing page (big Teachy + Get Teachy / Free Learning) where the clicky physically clicks any tapped button for the visitor, one-course wall, `registry.json`. |
 | `CourseUIGrounder.swift` | ~50 | Soft start URL open + cursor-screen capture (no UI hardcoding). |
 | `CourseVerifier.swift` | ~90 | Vision YES/NO verify for natural-language `doneWhen`. |
 | `CourseLessonHUDWindow.swift` | ~340 | Teaching HUD — coach line, glass hover expand, Hint / Do it / I did it. |
-| `CourseModeNotchDockWindow.swift` | ~200 | Legacy compact dock (HUD is primary in v2). |
+| `CourseModeNotchDockWindow.swift` | ~200 | Legacy compact dock (HUD is primary in v2). Its manager is still instantiated/hidden by `CompanionManager`, but `.show()` is never called — the dock itself never surfaces. |
 | `AgentToolResult.swift` | ~35 | Tool results with optional vision images fed back into the agent loop. |
 | `ClickyProxyHealthChecker.swift` | ~55 | GET /health probe — courses fail fast when the proxy is offline. |
-| `VoiceBackgroundAgentTrigger.swift` | ~50 | Parses voice trigger phrases ("agent,", "background agent", etc.) and returns the stripped task prompt for background agent dispatch. |
-| `BackgroundAgentSideDockWindow.swift` | ~280 | Side-docked Teachy mascot shown during background agent runs. Hover expands a progress card with status, task prompt, and tool step log. |
+| `BackgroundAgentSideDockWindow.swift` | ~590 | Side-docked Teachy mascot shown during a live Composio sync prompt (background-agent progress card removed as dead UI — the mascot dock, sync card, and their animations are still live). |
 | `BackgroundAgentManager.swift` | ~470 | OpenRouter tool-calling agent loop. OpenRouter server tools for web search/fetch; Mac-native tools + browser cookie sessions + App Connectors run locally. |
 | `AppConnectorManager.swift` | ~320 | Discovers `~/.teachy/connectors/*.json`, loads OpenAPI or Teachy HTTP connections, registers dynamic agent tools. |
 | `AppConnectorManifest.swift` | ~175 | Connection manifest types, tool naming (`connector_id__tool_name`), seed manifest for Plant Maint demo. |
@@ -105,8 +132,6 @@ npm run harness                      # validate all routes
 | `ChromiumBrowserCookieReader.swift` | ~370 | Decrypts cookies from Chrome, Brave, Arc, and Edge. |
 | `SafariBinaryCookiesReader.swift` | ~150 | Reads Safari Cookies.binarycookies. |
 | `BrowserSessionStore.swift` | ~200 | Unified browser cookie access for authenticated_fetch. |
-| `VoiceBackgroundAgentTrigger.swift` | ~55 | Parses explicit "agent," voice prefixes for background agent dispatch. |
-| `VoiceAutomationTrigger.swift` | ~95 | Parses natural-language build/automate/open requests (no "agent," prefix required). |
 | `AgentMacNativeTools.swift` | ~400 | run_applescript, open_browser_tab, ui_action, capture_screen tools. |
 | `AgentBrowserTools.swift` | ~120 | authenticated_fetch and list_browser_sessions tools. |
 | `OpenRouterModelOptions.swift` | ~75 | Curated OpenRouter model list + `ClickyWorkerConfiguration` (proxy URL from Info.plist). |
@@ -117,9 +142,16 @@ npm run harness                      # validate all routes
 | `ClickyAudioSpectrumView.swift` | ~180 | Closed-notch spectrum bars + idle blinking face. |
 | `ClickyNotchRootView.swift` | ~400 | Root notch UI — black shape, live activity, header, spring open height. |
 | `NotchWindowManager.swift` | ~220 | Fixed-size floating `NSPanel`, hover-to-open, click-outside collapse. |
-| `NotchPanelView.swift` | ~1970 | Expanded body — Learn / Settings; permissions + multi-step Teachy product tour before tabs. |
+| `NotchPanelView.swift` | ~70 | Thin notch panel shell — tab enum + router delegating to the per-tab `Notch*TabView` structs below. |
+| `NotchPanelColors.swift` | ~20 | Shared color tokens (`NotchPanelColors`) for the notch panel UI; also referenced directly by `CourseLessonHUDWindow.swift`. |
+| `NotchPanelSharedComponents.swift` | ~135 | Dependency-free shared views/helpers: `KeyboardKeyLabel`, `FlowLayout`, and the free-function `openRouterModelPickerRow`. |
+| `NotchHomeTabView.swift` | ~265 | Home tab — push-to-talk instructions, trust copy, software updates, cursor color, model picker, feedback link. |
+| `NotchSetupOnboardingView.swift` | ~720 | Permissions list, API key setup, and the in-panel Teachy product tour (`TeachyOnboardingPage`). |
+| `NotchCoursesTabView.swift` | ~910 | Courses tab — catalog, active course session, Teachy Academy install/featured sections, custom course builder entry point. |
+| `NotchPortfolioTabView.swift` | ~245 | Portfolio tab — shareable artifacts captured from completed course goals. |
+| `NotchSkillsTabView.swift` | ~365 | Skills tab — learner model proficiency, retention review, at-risk skills, domain breakdown, streaks. |
+| `NotchCustomCourseBuilderSheet.swift` | ~115 | Sheet for describing a custom course and generating a plan via the Teachy proxy. |
 | `MenuBarPanelManager.swift` | ~103 | NSStatusItem lifecycle. Menu bar icon toggles the notch panel. |
-| `CompanionPanelView.swift` | ~933 | Legacy menu bar dropdown panel content (retained; notch UI uses NotchPanelView instead). |
 | `OverlayWindow.swift` | ~881 | Full-screen transparent overlay hosting the blue cursor, response text, waveform, and spinner. Handles cursor animation, element pointing with bezier arcs, multi-monitor coordinate mapping, and fade-out transitions. |
 | `CompanionResponseOverlay.swift` | ~217 | SwiftUI view for the response text bubble and waveform displayed next to the cursor in the overlay. |
 | `CompanionScreenCaptureUtility.swift` | ~132 | Multi-monitor screenshot capture using ScreenCaptureKit. Returns labeled image data for each connected display. |

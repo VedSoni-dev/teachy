@@ -10,12 +10,23 @@ class ClaudeAPI {
     private static let tlsWarmupLock = NSLock()
     private static var hasStartedTLSWarmup = false
 
-    private let apiURL: URL
-    var model: String
+    private let proxyURL: String
     private let session: URLSession
+    var model: String
+
+    /// When true, calls OpenRouter directly with the user's API key (no proxy).
+    private var useDirectAPI: Bool { TeachyAPIKeyStore.isConfigured }
+
+    /// The effective URL — OpenRouter direct or proxy.
+    private var effectiveURL: URL {
+        if useDirectAPI {
+            return URL(string: "https://openrouter.ai/api/v1/chat/completions")!
+        }
+        return URL(string: proxyURL)!
+    }
 
     init(proxyURL: String, model: String = "claude-sonnet-4-6") {
-        self.apiURL = URL(string: proxyURL)!
+        self.proxyURL = proxyURL
         self.model = model
 
         // Use .default instead of .ephemeral so TLS session tickets are cached.
@@ -37,11 +48,107 @@ class ClaudeAPI {
     }
 
     private func makeAPIRequest() -> URLRequest {
-        var request = URLRequest(url: apiURL)
+        var request = URLRequest(url: effectiveURL)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        if useDirectAPI, let apiKey = TeachyAPIKeyStore.apiKey {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("https://teachy.app", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("Teachy", forHTTPHeaderField: "X-Title")
+        }
+
         return request
+    }
+
+    // MARK: - Anthropic → OpenAI format conversion (for direct API)
+
+    /// Converts an Anthropic-format request body to OpenAI Chat Completions format.
+    private func convertToOpenAIFormat(
+        anthropicBody: [String: Any]
+    ) -> [String: Any] {
+        let model = anthropicBody["model"] as? String ?? self.model
+        let maxTokens = anthropicBody["max_tokens"] as? Int ?? 1024
+        let stream = anthropicBody["stream"] as? Bool ?? true
+        let systemPrompt = anthropicBody["system"] as? String
+        let anthropicMessages = anthropicBody["messages"] as? [[String: Any]] ?? []
+
+        var openAIMessages: [[String: Any]] = []
+
+        // System prompt → system message
+        if let systemPrompt, !systemPrompt.isEmpty {
+            openAIMessages.append(["role": "system", "content": systemPrompt])
+        }
+
+        // Convert each message
+        for message in anthropicMessages {
+            let role = message["role"] as? String ?? "user"
+            let content = message["content"]
+
+            if let textContent = content as? String {
+                // Simple text message
+                openAIMessages.append(["role": role, "content": textContent])
+            } else if let contentBlocks = content as? [[String: Any]] {
+                // Multi-block content (images + text)
+                var openAIContent: [[String: Any]] = []
+                for block in contentBlocks {
+                    guard let type = block["type"] as? String else { continue }
+                    if type == "text", let text = block["text"] as? String {
+                        openAIContent.append(["type": "text", "text": text])
+                    } else if type == "image", let source = block["source"] as? [String: Any],
+                              let data = source["data"] as? String,
+                              let mediaType = source["media_type"] as? String {
+                        openAIContent.append([
+                            "type": "image_url",
+                            "image_url": ["url": "data:\(mediaType);base64,\(data)"]
+                        ])
+                    }
+                }
+                // Flatten single-text content to a string for OpenAI compatibility
+                if openAIContent.count == 1, let first = openAIContent.first,
+                   first["type"] as? String == "text" {
+                    openAIMessages.append(["role": role, "content": first["text"] as? String ?? ""])
+                } else {
+                    openAIMessages.append(["role": role, "content": openAIContent])
+                }
+            }
+        }
+
+        // Resolve model for OpenRouter
+        let resolvedModel = resolveOpenRouterModelID(model, hasImages: anthropicMessages.contains { msg in
+            if let blocks = msg["content"] as? [[String: Any]] {
+                return blocks.contains { ($0["type"] as? String) == "image" }
+            }
+            return false
+        })
+
+        var body: [String: Any] = [
+            "model": resolvedModel,
+            "max_tokens": maxTokens,
+            "stream": stream,
+            "messages": openAIMessages,
+        ]
+        return body
+    }
+
+    /// Resolves model ID for direct OpenRouter calls.
+    private func resolveOpenRouterModelID(_ requestedModel: String, hasImages: Bool) -> String {
+        // If the model already has a provider prefix (e.g. "google/gemini-2.5-flash"), use it directly
+        if requestedModel.contains("/") {
+            // For text-only models with images, upgrade to vision-capable
+            if hasImages && !requestedModel.contains("gemini") && !requestedModel.contains("gemma")
+                && !requestedModel.contains("qwen") && !requestedModel.contains("vision") {
+                return "google/gemini-2.5-flash"
+            }
+            return requestedModel
+        }
+        // Legacy Anthropic model names → OpenRouter equivalents
+        if requestedModel.contains("claude") {
+            return "anthropic/claude-sonnet-4"
+        }
+        // Default
+        return "google/gemini-2.5-flash"
     }
 
     /// Detects the MIME type of image data by inspecting the first bytes.
@@ -73,7 +180,7 @@ class ClaudeAPI {
 
         guard shouldStartTLSWarmup else { return }
 
-        guard var warmupURLComponents = URLComponents(url: apiURL, resolvingAgainstBaseURL: false) else {
+        guard var warmupURLComponents = URLComponents(url: effectiveURL, resolvingAgainstBaseURL: false) else {
             return
         }
 
@@ -109,7 +216,7 @@ class ClaudeAPI {
 
         var request = makeAPIRequest()
 
-        // Build messages array
+        // Build Anthropic-format messages
         var messages: [[String: Any]] = []
 
         for (userPlaceholder, assistantResponse) in conversationHistory {
@@ -117,7 +224,6 @@ class ClaudeAPI {
             messages.append(["role": "assistant", "content": assistantResponse])
         }
 
-        // Build current message with all labeled images + prompt
         var contentBlocks: [[String: Any]] = []
         for image in images {
             contentBlocks.append([
@@ -139,13 +245,21 @@ class ClaudeAPI {
         ])
         messages.append(["role": "user", "content": contentBlocks])
 
-        let body: [String: Any] = [
+        let anthropicBody: [String: Any] = [
             "model": model,
             "max_tokens": 1024,
             "stream": true,
             "system": systemPrompt,
             "messages": messages
         ]
+
+        // Convert to OpenAI format when calling OpenRouter directly
+        let body: [String: Any]
+        if useDirectAPI {
+            body = convertToOpenAIFormat(anthropicBody: anthropicBody)
+        } else {
+            body = anthropicBody
+        }
 
         let bodyData = try JSONSerialization.data(withJSONObject: body)
         request.httpBody = bodyData
@@ -177,33 +291,41 @@ class ClaudeAPI {
             )
         }
 
-        // Parse SSE stream — each event is "data: {json}\n\n"
+        // Parse SSE stream
         var accumulatedResponseText = ""
 
         for try await line in byteStream.lines {
-            // SSE lines look like: "data: {...}"
             guard line.hasPrefix("data: ") else { continue }
-            let jsonString = String(line.dropFirst(6)) // Drop "data: " prefix
+            let jsonString = String(line.dropFirst(6))
 
-            // End of stream marker
             guard jsonString != "[DONE]" else { break }
 
             guard let jsonData = jsonString.data(using: .utf8),
-                  let eventPayload = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                  let eventType = eventPayload["type"] as? String else {
+                  let eventPayload = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
                 continue
             }
 
-            // We care about content_block_delta events that contain text chunks
-            if eventType == "content_block_delta",
-               let delta = eventPayload["delta"] as? [String: Any],
-               let deltaType = delta["type"] as? String,
-               deltaType == "text_delta",
-               let textChunk = delta["text"] as? String {
-                accumulatedResponseText += textChunk
-                // Send the accumulated text so far to the UI for progressive rendering
-                let currentAccumulatedText = accumulatedResponseText
-                await onTextChunk(currentAccumulatedText)
+            if useDirectAPI {
+                // OpenAI SSE format: {"choices":[{"delta":{"content":"..."}}]}
+                if let choices = eventPayload["choices"] as? [[String: Any]],
+                   let delta = choices.first?["delta"] as? [String: Any],
+                   let textChunk = delta["content"] as? String {
+                    accumulatedResponseText += textChunk
+                    let currentAccumulatedText = accumulatedResponseText
+                    await onTextChunk(currentAccumulatedText)
+                }
+            } else {
+                // Anthropic SSE format: {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
+                guard let eventType = eventPayload["type"] as? String else { continue }
+                if eventType == "content_block_delta",
+                   let delta = eventPayload["delta"] as? [String: Any],
+                   let deltaType = delta["type"] as? String,
+                   deltaType == "text_delta",
+                   let textChunk = delta["text"] as? String {
+                    accumulatedResponseText += textChunk
+                    let currentAccumulatedText = accumulatedResponseText
+                    await onTextChunk(currentAccumulatedText)
+                }
             }
         }
 
@@ -228,7 +350,6 @@ class ClaudeAPI {
             messages.append(["role": "assistant", "content": assistantResponse])
         }
 
-        // Build current message with all labeled images + prompt
         var contentBlocks: [[String: Any]] = []
         for image in images {
             contentBlocks.append([
@@ -250,15 +371,20 @@ class ClaudeAPI {
         ])
         messages.append(["role": "user", "content": contentBlocks])
 
-        // Must set stream:false — the proxy defaults stream to true, and this
-        // path parses a single Anthropic-format JSON body (used by course pointing/verify).
-        let body: [String: Any] = [
+        let anthropicBody: [String: Any] = [
             "model": model,
             "max_tokens": 256,
             "stream": false,
             "system": systemPrompt,
             "messages": messages
         ]
+
+        let body: [String: Any]
+        if useDirectAPI {
+            body = convertToOpenAIFormat(anthropicBody: anthropicBody)
+        } else {
+            body = anthropicBody
+        }
 
         let bodyData = try JSONSerialization.data(withJSONObject: body)
         request.httpBody = bodyData
@@ -278,17 +404,104 @@ class ClaudeAPI {
         }
 
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let content = json?["content"] as? [[String: Any]],
-              let textBlock = content.first(where: { ($0["type"] as? String) == "text" }),
-              let text = textBlock["text"] as? String else {
+
+        if useDirectAPI {
+            // OpenAI format: {"choices":[{"message":{"content":"..."}}]}
+            guard let choices = json?["choices"] as? [[String: Any]],
+                  let message = choices.first?["message"] as? [String: Any],
+                  let text = message["content"] as? String else {
+                throw NSError(
+                    domain: "ClaudeAPI",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "Invalid response format"]
+                )
+            }
+            let duration = Date().timeIntervalSince(startTime)
+            return (text: text, duration: duration)
+        } else {
+            // Anthropic format: {"content":[{"type":"text","text":"..."}]}
+            guard let content = json?["content"] as? [[String: Any]],
+                  let textBlock = content.first(where: { ($0["type"] as? String) == "text" }),
+                  let text = textBlock["text"] as? String else {
+                throw NSError(
+                    domain: "ClaudeAPI",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "Invalid response format"]
+                )
+            }
+            let duration = Date().timeIntervalSince(startTime)
+            return (text: text, duration: duration)
+        }
+    }
+
+    /// Simple text-only completion (no images, no streaming). Used for course plan generation.
+    func generateText(
+        systemPrompt: String,
+        userPrompt: String,
+        maxTokens: Int = 2048
+    ) async throws -> String {
+        var request = makeAPIRequest()
+
+        let messages: [[String: Any]] = [
+            ["role": "user", "content": userPrompt]
+        ]
+
+        let anthropicBody: [String: Any] = [
+            "model": model,
+            "max_tokens": maxTokens,
+            "stream": false,
+            "system": systemPrompt,
+            "messages": messages
+        ]
+
+        let body: [String: Any]
+        if useDirectAPI {
+            body = convertToOpenAIFormat(anthropicBody: anthropicBody)
+        } else {
+            body = anthropicBody
+        }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let errorBody = String(data: data, encoding: .utf8) ?? "unknown"
             throw NSError(
                 domain: "ClaudeAPI",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid response format"]
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "API Error (\(statusCode)): \(errorBody)"]
             )
         }
 
-        let duration = Date().timeIntervalSince(startTime)
-        return (text: text, duration: duration)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(
+                domain: "ClaudeAPI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid JSON response"]
+            )
+        }
+
+        // OpenAI format: {"choices":[{"message":{"content":"..."}}]}
+        if let choices = json["choices"] as? [[String: Any]],
+           let first = choices.first,
+           let message = first["message"] as? [String: Any],
+           let content = message["content"] as? String {
+            return content
+        }
+        // Anthropic format: {"content":[{"type":"text","text":"..."}]}
+        if let content = json["content"] as? [[String: Any]],
+           let textBlock = content.first(where: { ($0["type"] as? String) == "text" }),
+           let text = textBlock["text"] as? String {
+            return text
+        }
+
+        throw NSError(
+            domain: "ClaudeAPI",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "Unexpected response format"]
+        )
     }
 }

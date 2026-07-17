@@ -54,6 +54,10 @@ final class NotchWindowManager: NSObject, ObservableObject {
         window?.orderFrontRegardless()
     }
 
+    func makePanelKey() {
+        window?.makeKey()
+    }
+
     func hide() {
         hoverOpenTask?.cancel()
         hoverCloseTask?.cancel()
@@ -132,7 +136,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
             .utilityWindow,
             .hudWindow,
         ]
-        let window = NSPanel(
+        let window = KeyablePanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: styleMask,
             backing: .buffered,
@@ -216,4 +220,9 @@ final class NotchWindowManager: NSObject, ObservableObject {
             clickOutsideMonitor = nil
         }
     }
+}
+
+/// NSPanel subclass that allows becoming key window (needed for TextFields in setup).
+private class KeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
 }

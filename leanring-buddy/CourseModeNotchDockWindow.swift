@@ -140,16 +140,16 @@ private struct CourseModeNotchDockView: View {
             HStack(spacing: 8) {
                 Image(systemName: teachingPhase.systemImageName)
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(NotchPanelColors.courseAccent)
+                    .foregroundColor(DS.Colors.learnAccent)
                     .opacity(isAwaitingUser ? awaitingUserPulseOpacity : 1)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(teachingPhase.displayLabel)
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(NotchPanelColors.courseAccent)
+                        .foregroundColor(DS.Colors.learnAccent)
                     Text(stepSummary(for: session))
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(NotchPanelColors.textSecondary)
+                        .foregroundColor(DS.Colors.textSecondary)
                         .lineLimit(1)
                 }
 
@@ -166,7 +166,7 @@ private struct CourseModeNotchDockView: View {
                 }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(NotchPanelColors.textTertiary)
+                        .foregroundColor(DS.Colors.textTertiary)
                         .frame(width: 18, height: 18)
                         .background(Circle().fill(Color.white.opacity(0.08)))
                 }
@@ -177,11 +177,11 @@ private struct CourseModeNotchDockView: View {
             .padding(.vertical, 6)
             .background(
                 Capsule(style: .continuous)
-                    .fill(NotchPanelColors.courseBackground.opacity(0.96))
+                    .fill(DS.Colors.surface1.opacity(0.96))
                     .overlay(
                         Capsule(style: .continuous)
                             .stroke(
-                                NotchPanelColors.courseAccent.opacity(isAwaitingUser ? 0.7 : 0.45),
+                                DS.Colors.learnAccent.opacity(isAwaitingUser ? 0.7 : 0.45),
                                 lineWidth: isAwaitingUser ? 1.5 : 1
                             )
                     )

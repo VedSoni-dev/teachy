@@ -28,6 +28,9 @@ export const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 export const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 export const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 export const ASSEMBLYAI_API_KEY = process.env.ASSEMBLYAI_API_KEY || '';
+export const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || '';
+export const ELEVENLABS_VOICE_ID =
+  process.env.ELEVENLABS_VOICE_ID || 'kPzsL2i3teMYv0FxEYQ6';
 
 // ─── Provider Detection ──────────────────────────────────────────────────────
 

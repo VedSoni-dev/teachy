@@ -113,6 +113,13 @@ final class CompanionManager: ObservableObject {
     @Published var onboardingPromptOpacity: Double = 0.0
     @Published var showOnboardingPrompt: Bool = false
 
+    /// When true, shows the custom course builder input sheet.
+    @Published var showCustomCourseBuilder: Bool = false
+    /// Description entered by the user for custom course generation.
+    @Published var customCourseDescription: String = ""
+    /// Loading state for custom course generation.
+    @Published var isGeneratingCustomCourse: Bool = false
+
     // MARK: - Onboarding Music
 
     private var onboardingMusicPlayer: AVAudioPlayer?
@@ -132,6 +139,7 @@ final class CompanionManager: ObservableObject {
     let courseLessonHUDManager = CourseLessonHUDManager()
     let composioConnectionManager = ComposioConnectionManager()
     let coursesManager = CoursesManager()
+    let teachyEngine = TeachyEngine()
     // Response text is now displayed inline on the cursor overlay via
     // streamingResponseText, so no separate response overlay manager is needed.
 
@@ -165,9 +173,6 @@ final class CompanionManager: ObservableObject {
     /// OpenRouter model for voice agent. Persisted to UserDefaults.
     @Published var selectedModel: String = companionManagerInitialModelID()
 
-    /// The stripped task prompt for an in-flight background agent run (shown in the side dock).
-    @Published private(set) var activeBackgroundAgentTaskPrompt: String?
-
     var isBackgroundAgentActivelyRunning: Bool {
         switch backgroundAgentManager.status {
         case .reasoning, .running:
@@ -191,12 +196,6 @@ final class CompanionManager: ObservableObject {
     /// The currently running AI response task, if any. Cancelled when the user
     /// speaks again so a new response can begin immediately.
     private var currentResponseTask: Task<Void, Never>?
-
-    /// Observes a background agent run and speaks the result when it finishes.
-    private var backgroundAgentCompletionMonitorTask: Task<Void, Never>?
-
-    /// Clears the side dock after a completed or failed agent run.
-    private var backgroundAgentSideDockHideTask: Task<Void, Never>?
 
     private var shortcutTransitionCancellable: AnyCancellable?
     private var voiceStateCancellable: AnyCancellable?
@@ -295,6 +294,7 @@ final class CompanionManager: ObservableObject {
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
+        coursesManager.syncToEngineLearnerModel(teachyEngine)
         // Eagerly touch the Claude API so its TLS warmup handshake completes
         // well before the onboarding demo fires at ~40s into the video.
         _ = claudeAPI
@@ -543,13 +543,8 @@ final class CompanionManager: ObservableObject {
 
         currentResponseTask?.cancel()
         currentResponseTask = nil
-        backgroundAgentCompletionMonitorTask?.cancel()
-        backgroundAgentCompletionMonitorTask = nil
-        backgroundAgentSideDockHideTask?.cancel()
-        backgroundAgentSideDockHideTask = nil
         backgroundAgentSideDockManager.hide()
         backgroundAgentManager.cancelTask()
-        activeBackgroundAgentTaskPrompt = nil
         shortcutTransitionCancellable?.cancel()
         voiceStateCancellable?.cancel()
         audioPowerCancellable?.cancel()
@@ -799,19 +794,20 @@ final class CompanionManager: ObservableObject {
     // MARK: - AI Response Pipeline
 
     private static let companionVoiceResponseSystemPrompt = """
-    you're teachy — a little blue buddy in their menu bar. same vibes as the intro: warm, playful, lightly cheeky, always in their corner.
-    they just talked to you and you can see their screen. your reply gets spoken out loud, so sound like a real person talking — not a help doc, not siri, not a corporate tutor.
+    You are Teachy — a real person sitting next to them at their Mac, looking at the same screen.
+    They just talked to you. Your reply is spoken out loud, so talk like a human coach in the room —
+    warm, clear, a little playful, never like Siri, never like a help article, never like a corporate bot.
 
-    voice:
-    - one sentence is usually enough. two max unless they asked for detail.
-    - lowercase, casual, a little playful. like texting a smart friend.
-    - no emojis, no lists, no markdown, no bullet points.
-    - never say "simply", "just", or "certainly".
-    - if something's on their screen, name it specifically and point with [POINT:...] when it helps.
-    - don't read code aloud — say what it does in plain words.
-    - skip filler like "i'd be happy to help" or "great question".
-    - celebrate small wins; gently steer when they're lost.
-    - if they want more depth, then go longer. otherwise stay tight.
+    How you sound (spoken aloud):
+    - Natural sentences. Contractions. Short pauses implied with commas, not stage directions.
+    - Usually 1–2 short sentences. Three only if they asked for detail.
+    - Specific to WHAT YOU SEE on screen — name the real button, tab, or window.
+    - No emojis, no markdown, no bullet lists, no "as an AI".
+    - Never say "simply", "certainly", "I'd be happy to help", or "great question".
+    - Don't read code aloud — say what it does in plain words.
+    - If something's confusing, empathize in half a breath, then give the next move.
+    - When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there.
+    - Feel like a sharp friend who actually wants them to get it — not a lecture.
 
     \(ScreenGridAnnotationUtility.modelInstructions)
     """
@@ -1005,6 +1001,8 @@ final class CompanionManager: ObservableObject {
 
             guard let session = coursesManager.startCourse(courseID: courseID) else { return }
 
+            _ = teachyEngine.startSession(adapterID: "macos", courseID: courseID)
+
             applyVoiceKeytermsForActiveCourse()
             // Keep the notch panel open — the course lesson view lives inside it now.
             // Switch to courses tab so the user sees the lesson immediately.
@@ -1034,6 +1032,7 @@ final class CompanionManager: ObservableObject {
         lessonPlayer.stop()
         skipCurriculumVideo()
         coursesManager.exitCourse()
+        teachyEngine.endSession()
         courseLessonHUDManager.hide()
         courseModeNotchDockManager.hide()
         clearCoursePresenceBubble()
@@ -1191,6 +1190,9 @@ final class CompanionManager: ObservableObject {
     }
 
     func handleLessonPlayerCourseFinished() {
+        if let courseID = coursesManager.activeSession?.course.id {
+            Task { _ = await teachyEngine.processEvent(.courseCompleted(courseID: courseID)) }
+        }
         courseLessonHUDManager.hide()
         courseModeNotchDockManager.hide()
         applyVoiceKeytermsForActiveCourse()
@@ -1365,143 +1367,6 @@ final class CompanionManager: ObservableObject {
             || errorDescription.contains("network")
     }
 
-    /// Dispatches a long-running background agent task. Speaks a quick acknowledgment,
-    /// returns to idle immediately, and announces the result when the agent finishes.
-    private enum AgentTaskTriggerKind {
-        case explicitAgent
-        case naturalLanguageAutomation
-    }
-
-    private func dispatchBackgroundAgentTask(
-        taskPrompt: String,
-        triggerKind: AgentTaskTriggerKind = .explicitAgent
-    ) {
-        backgroundAgentCompletionMonitorTask?.cancel()
-        backgroundAgentManager.cancelTask()
-        speechSynthesizer.stopPlayback()
-
-        switch triggerKind {
-        case .explicitAgent:
-            ClickyAnalytics.trackAgentTaskDispatched(taskPrompt: taskPrompt, trigger: "explicit_agent")
-        case .naturalLanguageAutomation:
-            ClickyAnalytics.trackAgentTaskDispatched(taskPrompt: taskPrompt, trigger: "automation")
-        }
-
-        backgroundAgentCompletionMonitorTask = Task {
-            voiceState = .processing
-
-            let outlineGlobalPoints = mouseOutlineTracker.consumeFinalizedOutlinePoints()
-            let hasMouseOutlineContext = !outlineGlobalPoints.isEmpty
-
-            if hasMouseOutlineContext {
-                do {
-                    let screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
-                    guard !Task.isCancelled else { return }
-
-                    let mouseOutlineContext: CompanionMouseOutlineContext?
-                    if let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) {
-                        mouseOutlineContext = CompanionMouseOutlineContext.build(
-                            globalOutlinePoints: outlineGlobalPoints,
-                            screenCapture: cursorScreenCapture
-                        )
-                    } else {
-                        mouseOutlineContext = nil
-                    }
-
-                    backgroundAgentManager.runTask(
-                        transcript: taskPrompt,
-                        screenCaptures: screenCaptures,
-                        mouseOutlineContext: mouseOutlineContext
-                    )
-                } catch {
-                    print("⚠️ Background agent screen capture failed: \(error.localizedDescription)")
-                    if WindowPositionManager.handleScreenCaptureFailure(error) {
-                        refreshAllPermissions()
-                    }
-                    speakErrorMessage(Self.screenCaptureFailureUtterance())
-                    voiceState = .idle
-                    scheduleTransientHideIfNeeded()
-                    return
-                }
-            } else {
-                backgroundAgentManager.runTask(
-                    transcript: taskPrompt,
-                    screenCaptures: [],
-                    mouseOutlineContext: nil
-                )
-            }
-
-            guard !Task.isCancelled else { return }
-
-            showBackgroundAgentSideDock(taskPrompt: taskPrompt)
-
-            let acknowledgmentText = Self.backgroundAgentAcknowledgmentUtterance(
-                for: taskPrompt,
-                triggerKind: triggerKind
-            )
-            voiceState = .responding
-            do {
-                try await speechSynthesizer.speakText(acknowledgmentText)
-            } catch {
-                print("⚠️ Background agent acknowledgment TTS error: \(error)")
-            }
-
-            voiceState = .idle
-            scheduleTransientHideIfNeeded()
-
-            await monitorBackgroundAgentUntilCompletion()
-        }
-    }
-
-    private func monitorBackgroundAgentUntilCompletion() async {
-        let agentProxy = backgroundAgentManager
-
-        while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 300_000_000)
-
-            switch agentProxy.status {
-            case .completed(let result):
-                if let screenCaptures = try? await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(),
-                   let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) {
-                    applyPointingFromResponse(result, screenCapture: cursorScreenCapture)
-                }
-
-                let spokenText = BackgroundAgentManager.formatFinalResponseForSpeech(result)
-                if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    voiceState = .responding
-                    do {
-                        try await speechSynthesizer.speakText(spokenText)
-                    } catch {
-                        print("⚠️ Background agent completion TTS error: \(error)")
-                    }
-                }
-                voiceState = .idle
-                scheduleTransientHideIfNeeded()
-                scheduleBackgroundAgentSideDockHide(after: 14)
-                return
-
-            case .failed(let error):
-                speakErrorMessage(companionAPIErrorUtterance(for: NSError(
-                    domain: "BackgroundAgent",
-                    code: -1,
-                    userInfo: [NSLocalizedDescriptionKey: error]
-                )))
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                voiceState = .idle
-                scheduleTransientHideIfNeeded()
-                scheduleBackgroundAgentSideDockHide(after: 18)
-                return
-
-            case .idle:
-                hideBackgroundAgentSideDockImmediately()
-                return
-
-            case .reasoning, .running:
-                continue
-            }
-        }
-    }
-
     private func buildLabeledAnnotatedImages(
         screenCaptures: [CompanionScreenCapture],
         mouseOutlineContext: CompanionMouseOutlineContext?
@@ -1514,7 +1379,7 @@ final class CompanionManager: ObservableObject {
                 ? (mouseOutlineContext?.touchedGridCellLabels ?? [])
                 : []
 
-            var dimensionInfo = " (image dimensions: \(screenCapture.screenshotWidthInPixels)x\(screenCapture.screenshotHeightInPixels) pixels, grid overlay: columns A-T, rows 1-12)"
+            var dimensionInfo = " (image dimensions: \(screenCapture.screenshotWidthInPixels)x\(screenCapture.screenshotHeightInPixels) pixels, grid overlay: columns A-X, rows 1-16; prefer [POINT:x,y:label] pixels or [POINT:cell:label])"
             if let spatialContextLabel = mouseOutlineContext?.spatialContextLabel,
                screenCapture.isCursorScreen {
                 dimensionInfo += "; \(spatialContextLabel)"
@@ -1530,63 +1395,6 @@ final class CompanionManager: ObservableObject {
 
             return (data: annotatedImageData, label: screenCapture.label + dimensionInfo)
         }
-    }
-
-    private static func backgroundAgentAcknowledgmentUtterance(
-        for taskPrompt: String,
-        triggerKind: AgentTaskTriggerKind
-    ) -> String {
-        let normalizedTaskPrompt = taskPrompt.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-        if normalizedTaskPrompt.contains("build")
-            || normalizedTaskPrompt.contains("create")
-            || normalizedTaskPrompt.contains("make")
-            || normalizedTaskPrompt.contains("scaffold")
-            || normalizedTaskPrompt.contains("generate") {
-            return "on it, i'll build that for you and tell you when it's ready."
-        }
-
-        if normalizedTaskPrompt.contains("open")
-            || normalizedTaskPrompt.contains("tab")
-            || normalizedTaskPrompt.contains("navigate") {
-            return "on it, opening that now."
-        }
-
-        if normalizedTaskPrompt.contains("research")
-            || normalizedTaskPrompt.contains("look up")
-            || normalizedTaskPrompt.contains("find out") {
-            return "on it, i'll research that in the background and tell you when i'm done."
-        }
-
-        switch triggerKind {
-        case .naturalLanguageAutomation:
-            return "on it, i'll handle that for you and tell you when i'm done."
-        case .explicitAgent:
-            return "on it, i'll work on that in the background and tell you when i'm done."
-        }
-    }
-
-    private func showBackgroundAgentSideDock(taskPrompt: String) {
-        backgroundAgentSideDockHideTask?.cancel()
-        backgroundAgentSideDockHideTask = nil
-        activeBackgroundAgentTaskPrompt = taskPrompt
-        backgroundAgentSideDockManager.show(companionManager: self)
-    }
-
-    private func scheduleBackgroundAgentSideDockHide(after delaySeconds: TimeInterval) {
-        backgroundAgentSideDockHideTask?.cancel()
-        backgroundAgentSideDockHideTask = Task {
-            try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            hideBackgroundAgentSideDockImmediately()
-        }
-    }
-
-    private func hideBackgroundAgentSideDockImmediately() {
-        backgroundAgentSideDockHideTask?.cancel()
-        backgroundAgentSideDockHideTask = nil
-        backgroundAgentSideDockManager.hide()
-        activeBackgroundAgentTaskPrompt = nil
     }
 
     /// If the cursor is in transient mode (user toggled "Show Teachy" off),
@@ -2184,4 +1992,5 @@ final class CompanionManager: ObservableObject {
             }
         }
     }
+
 }

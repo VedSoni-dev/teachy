@@ -148,6 +148,8 @@ final class LessonPlayer: ObservableObject {
         guard !trimmed.isEmpty else { return }
         guard let continuation = placementAnswerContinuation else { return }
         placementAnswerContinuation = nil
+        coursesManager.detectMoodFromUserResponse(trimmed)
+        host?.teachyEngine.detectMood(from: trimmed)
         continuation.resume(returning: trimmed)
     }
 
@@ -157,6 +159,8 @@ final class LessonPlayer: ObservableObject {
         guard !trimmed.isEmpty else { return }
         guard let continuation = understandingAnswerContinuation else { return }
         understandingAnswerContinuation = nil
+        coursesManager.detectMoodFromUserResponse(trimmed)
+        host?.teachyEngine.detectMood(from: trimmed)
         continuation.resume(returning: trimmed)
     }
 
@@ -168,7 +172,6 @@ final class LessonPlayer: ObservableObject {
 
         if !didRunPlacementCheck, let session = coursesManager.activeSession {
             didRunPlacementCheck = true
-            // Only run intake when starting at the first goal (not resume mid-path).
             if session.currentStepIndex == 0 {
                 await runPlacementCheck(session: session)
             }
@@ -195,7 +198,6 @@ final class LessonPlayer: ObservableObject {
         }
     }
 
-    /// Ask what they already know; optional AI skip-ahead.
     private func runPlacementCheck(session: ClickyCourseSession) async {
         guard let host else { return }
 
@@ -267,7 +269,6 @@ final class LessonPlayer: ObservableObject {
         guard let host else { return false }
         let goal = session.currentGoal
 
-        // Soft start once per course — open a homepage URL if provided (not a UI contract).
         if !didOpenStartURL, let startURL = session.course.startURL {
             setPhase(.settingUp)
             await CourseUIGrounder.openSetupURLIfNeeded(startURL)
@@ -276,7 +277,6 @@ final class LessonPlayer: ObservableObject {
             try? await Task.sleep(for: .milliseconds(1400))
         }
 
-        // Optional course-level long-form intro, beside Teachy — once per session.
         if !didPlayCourseIntroVideo,
            let courseIntroVideoURL = session.course.resolvedCourseTeacherVideoURL {
             didPlayCourseIntroVideo = true
@@ -288,7 +288,6 @@ final class LessonPlayer: ObservableObject {
             guard !Task.isCancelled, coursesManager.activeSession != nil else { return false }
         }
 
-        // Optional per-goal teacher clip before coaching — same beside-cursor player.
         if let goalTeacherVideoURL = goal.resolvedTeacherVideoURL {
             setPhase(.watchingVideo)
             let credit = goal.resolvedTeacherCredit(courseTeacherName: session.course.teacherName)
@@ -305,11 +304,9 @@ final class LessonPlayer: ObservableObject {
             }
         } else if let notes = goal.teacherVideoNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !notes.isEmpty {
-            // Author shipped notes without a stream URL — still useful teaching context.
             coursesManager.setActiveTeacherVideoNotes(notes)
         }
 
-        // First teach: allow light actions (open/setup) + memory + pointing.
         let promptChipCue: String = {
             let chips = TeachyPromptChips.chips(forGoalID: goal.id)
             guard !chips.isEmpty else { return "" }
@@ -333,7 +330,7 @@ final class LessonPlayer: ObservableObject {
 
         var didOfferHint = false
         while !Task.isCancelled, coursesManager.activeSession != nil {
-            let turnPrompt = "your turn — \(goal.title). hold ctrl+option, or say “next step” when you’ve got it."
+            let turnPrompt = "your turn — \(goal.title). hold ctrl+option, or say \"next step\" when you've got it."
             yourTurnPrompt = turnPrompt
             setPhase(.yourTurn(prompt: turnPrompt))
             coursesManager.setCourseInteractionRunning(false)
@@ -392,7 +389,7 @@ final class LessonPlayer: ObservableObject {
                 host.setCourseVoiceStateProcessing()
 
                 do {
-                    let verifyResult = try await CourseVerifier.verify(
+                    let structuredResult = await CourseVerifier.verifyStructured(
                         criteria: CourseSuccessCriteria(
                             visionDescription: goal.doneWhen ?? goal.goal,
                             urlContains: nil,
@@ -402,10 +399,23 @@ final class LessonPlayer: ObservableObject {
                         treatAsUserAdvance: true
                     )
 
-                    if verifyResult.passed {
+                    Task { _ = await host.teachyEngine.processEvent(.goalAttempted(
+                        goalID: goal.id,
+                        attemptDescription: structuredResult.status.rawValue
+                    )) }
+
+                    switch structuredResult.status {
+                    case .pass:
+                        if goal.artifactDelta != nil, session.course.artifact != nil {
+                            coursesManager.appendArtifactSnapshotFromVerifyResult(
+                                goalID: goal.id,
+                                result: structuredResult
+                            )
+                        }
                         let understood = await runUnderstandingBeatIfNeeded(
                             session: session,
                             goal: goal,
+                            verifyResult: structuredResult,
                             host: host
                         )
                         guard understood else {
@@ -417,24 +427,95 @@ final class LessonPlayer: ObservableObject {
                         setPhase(.celebrating)
                         try? await Task.sleep(for: .milliseconds(900))
                         return true
-                    }
 
-                    setPhase(.failed(hint: nil))
-                    host.setCourseVoiceStateResponding()
-                    try? await host.speechSynthesizer.speakText(
-                        "not quite yet — i'll help you finish this."
-                    )
-                    let retryAsk = """
-                    They tried to move on but this goal isn't done: \(goal.goal). \
-                    Help them finish — point at what still matters, or do a small action if they're stuck.
-                    """
-                    _ = await runCoachAsk(
-                        session: session,
-                        ask: retryAsk,
-                        host: host,
-                        allowActions: true
-                    )
-                    didOfferHint = true
+                    case .partial:
+                        if goal.artifactDelta != nil, session.course.artifact != nil {
+                            coursesManager.appendArtifactSnapshotFromVerifyResult(
+                                goalID: goal.id,
+                                result: structuredResult
+                            )
+                        }
+                        let missingDetail: String
+                        if let missing = structuredResult.whatsMissing {
+                            missingDetail = "What's still missing: \(missing)"
+                        } else {
+                            missingDetail = "Something specific is incomplete — look closely."
+                        }
+                        let nextAction: String
+                        if let action = structuredResult.suggestedNextAction {
+                            nextAction = "Suggested next move: \(action)"
+                        } else {
+                            nextAction = "Point them at the one remaining piece."
+                        }
+                        setPhase(.coaching)
+                        host.setCourseVoiceStateResponding()
+                        try? await host.speechSynthesizer.speakText(
+                            "you're close — here's what's still needed."
+                        )
+                        let partialAsk = """
+                        The screen check came back PARTIAL for "\(goal.title)".
+                        What they got right: \(structuredResult.whatsGood)
+                        \(missingDetail)
+                        \(nextAction)
+                        Acknowledge what they did right first, then guide them to the ONE missing piece. \
+                        Point at it. Don't re-teach what already worked.
+                        """
+                        _ = await runCoachAsk(
+                            session: session,
+                            ask: partialAsk,
+                            host: host,
+                            allowActions: true
+                        )
+                        didOfferHint = true
+
+                    case .offTrack:
+                        let failureCount = coursesManager.incrementFailureCount(forGoalID: goal.id)
+
+                        if failureCount >= 2, let remediationGoalID = goal.remediationGoalID {
+                            let jumped = await runRemediationGoal(
+                                session: session,
+                                remediationGoalID: remediationGoalID,
+                                originalGoal: goal,
+                                host: host
+                            )
+                            if jumped {
+                                didOfferHint = true
+                                continue
+                            }
+                        }
+
+                        setPhase(.failed(hint: nil))
+                        host.setCourseVoiceStateResponding()
+                        try? await host.speechSynthesizer.speakText(
+                            "not quite yet — let me help you finish this."
+                        )
+                        let offTrackAsk: String
+                        if failureCount >= 2, goal.toolPolicy == .canDoForThem || goal.toolPolicy == .helpWhenStuck {
+                            offTrackAsk = """
+                            They've tried this goal "\(goal.title)" multiple times and are still off track.
+                            What they got right: \(structuredResult.whatsGood)
+                            What's missing: \(structuredResult.whatsMissing ?? "the goal isn't done yet")
+                            They seem frustrated. Since tool policy allows it, offer to do the specific \
+                            automatable part for them — then explain what you did so they still learn. \
+                            Be direct and kind.
+                            """
+                        } else {
+                            offTrackAsk = """
+                            They tried to move on but this goal isn't done: \(goal.goal).
+                            What they got right: \(structuredResult.whatsGood)
+                            What's missing: \(structuredResult.whatsMissing ?? "the goal isn't done yet")
+                            Acknowledge what they did right, then help them finish — point at what still matters, \
+                            or do a small action if they're stuck.
+                            """
+                        }
+                        _ = await runCoachAsk(
+                            session: session,
+                            ask: offTrackAsk,
+                            host: host,
+                            allowActions: true
+                        )
+                        didOfferHint = true
+                    }
                 } catch {
                     print("⚠️ LessonPlayer verify error: \(error)")
                     host.speakCourseError(error)
@@ -478,7 +559,6 @@ final class LessonPlayer: ObservableObject {
             }
 
             setPhase(.speaking)
-            // Pull memory tags from both streams — TTS formatting may drop some brackets.
             _ = coursesManager.ingestCoachMemoryTags(from: turn.fullResponseText)
             let cleanedForSpeech = coursesManager.ingestCoachMemoryTags(from: turn.spokenText)
             let coachParts = CourseCoachMessageParts.parse(from: cleanedForSpeech)
@@ -502,10 +582,12 @@ final class LessonPlayer: ObservableObject {
         }
     }
 
-    /// Soft teach-back after vision success. Returns true if they can advance.
+    // MARK: - Adaptive teach-back (up to 3 turns)
+
     private func runUnderstandingBeatIfNeeded(
         session: ClickyCourseSession,
         goal: CourseLearningGoal,
+        verifyResult: CourseVerificationResult,
         host: CompanionManager
     ) async -> Bool {
         guard goal.shouldRunTeachBack else {
@@ -517,53 +599,82 @@ final class LessonPlayer: ObservableObject {
             return true
         }
 
-        let question = goal.teachingContext?.teachBackPrompt?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let prompt = (question?.isEmpty == false)
-            ? question!
-            : "quick check — in your words, what did we just do?"
-
-        setPhase(.coaching)
-        coursesManager.setCourseInteractionRunning(true)
-        _ = await runCoachAsk(
-            session: session,
-            ask: """
-            The screen check passed for "\(goal.title)". Before we move on, run a 10-second understanding beat.
-            Ask them this (warm, lowercase): \(prompt)
-            Use [INFO] with the question vibe and [TODO] telling them to hold ctrl+option and answer, or tap “I get it” if they’re sure.
-            Do not advance them yourself — just ask.
-            """,
-            host: host,
-            allowActions: false
+        let initialQuestion = buildTeachBackQuestion(
+            goal: goal,
+            verifyResult: verifyResult,
+            session: session
         )
-        guard !Task.isCancelled, coursesManager.activeSession != nil else { return false }
 
-        setPhase(.understanding(prompt: prompt))
-        coursesManager.setCourseInteractionRunning(false)
-        host.setCourseVoiceStateIdle()
-        NotificationCenter.default.post(name: .clickySwitchToCoursesTab, object: nil)
+        var previousAnswers: [String] = []
 
-        let answer = await waitForUnderstandingAnswer()
-        guard !Task.isCancelled, coursesManager.activeSession != nil else { return false }
+        for turnIndex in 0..<3 {
+            guard !Task.isCancelled, coursesManager.activeSession != nil else { return false }
 
-        setPhase(.checking)
-        coursesManager.setCourseInteractionRunning(true)
-        host.setCourseVoiceStateProcessing()
+            setPhase(.coaching)
+            coursesManager.setCourseInteractionRunning(true)
 
-        do {
-            let result = try await CourseUnderstandingVerifier.assessTeachBack(
-                goal: goal,
-                learnerAnswer: answer,
-                claudeAPI: host.claudeAPI
+            let coachPrompt: String
+            if turnIndex == 0 {
+                coachPrompt = """
+                The screen check passed for "\(goal.title)". Before we move on, run a 10-second understanding beat.
+                Ask them this (warm, lowercase): \(initialQuestion)
+                Use [INFO] with the question vibe and [TODO] telling them to hold ctrl+option and answer, or tap "I get it" if they're sure.
+                Do not advance them yourself — just ask.
+                """
+            } else {
+                coachPrompt = """
+                Follow up on the teach-back for "\(goal.title)".
+                Previous answers: \(previousAnswers.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n"))
+                Ask ONE focused follow-up question that helps them self-correct — don't re-explain the whole goal. \
+                Use [INFO] to name what they got right, then [TODO] with one question.
+                """
+            }
+
+            _ = await runCoachAsk(
+                session: session,
+                ask: coachPrompt,
+                host: host,
+                allowActions: false
             )
-            for concept in result.learnedConcepts {
+            guard !Task.isCancelled, coursesManager.activeSession != nil else { return false }
+
+            setPhase(.understanding(prompt: initialQuestion))
+            coursesManager.setCourseInteractionRunning(false)
+            host.setCourseVoiceStateIdle()
+            NotificationCenter.default.post(name: .clickySwitchToCoursesTab, object: nil)
+
+            let answer = await waitForUnderstandingAnswer()
+            guard !Task.isCancelled, coursesManager.activeSession != nil else { return false }
+            previousAnswers.append(answer)
+
+            setPhase(.checking)
+            coursesManager.setCourseInteractionRunning(true)
+            host.setCourseVoiceStateProcessing()
+
+            let assessment: CourseUnderstandingResult
+            do {
+                assessment = try await CourseUnderstandingVerifier.assessTeachBack(
+                    goal: goal,
+                    learnerAnswer: answer,
+                    previousAnswers: previousAnswers,
+                    claudeAPI: host.claudeAPI
+                )
+            } catch {
+                print("⚠️ LessonPlayer teach-back assessment error: \(error)")
+                host.setCourseVoiceStateIdle()
+                setPhase(.coaching)
+                break
+            }
+            for concept in assessment.learnedConcepts {
                 coursesManager.noteLearnerKnows(concept)
             }
-            for item in result.remainingConfusion {
+            for item in assessment.remainingConfusion {
                 coursesManager.noteLearnerConfusedBy(item)
             }
 
-            if result.understood {
+            Task { _ = await host.teachyEngine.processEvent(.teachBackResponse(responseText: answer)) }
+
+            if assessment.understood {
                 if let concepts = goal.teachingContext?.concepts {
                     for concept in concepts.prefix(2) {
                         coursesManager.noteLearnerKnows(concept)
@@ -571,37 +682,116 @@ final class LessonPlayer: ObservableObject {
                 }
                 coursesManager.rememberAcrossGoals("understood: \(goal.title)")
                 host.setCourseVoiceStateResponding()
-                try? await host.speechSynthesizer.speakText("love that — you actually get it.")
+                let affirmation = assessment.learnedConcepts.first.map { concept in
+                    "nice — you clearly get \(concept)."
+                } ?? "love that — you actually get it."
+                try? await host.speechSynthesizer.speakText(affirmation)
                 host.setCourseVoiceStateIdle()
                 return true
             }
 
-            coursesManager.noteLearnerConfusedBy(goal.title)
+            if turnIndex < 2 {
+                coursesManager.noteLearnerConfusedBy(goal.title)
+                host.setCourseVoiceStateResponding()
+                try? await host.speechSynthesizer.speakText("almost — let me tighten that up.")
+            }
+        }
+
+        coursesManager.rememberAcrossGoals("teach-back soft-passed after 3 turns: \(goal.title)")
+        host.setCourseVoiceStateResponding()
+        try? await host.speechSynthesizer.speakText("alright — let's keep moving, you'll solidify this as we go.")
+        host.setCourseVoiceStateIdle()
+        return true
+    }
+
+    private func buildTeachBackQuestion(
+        goal: CourseLearningGoal,
+        verifyResult: CourseVerificationResult,
+        session: ClickyCourseSession
+    ) -> String {
+        if verifyResult.status == .partial, let missing = verifyResult.whatsMissing {
+            return "you got partway there — can you walk me through what's still needed to finish \(goal.title)?"
+        }
+
+        let relatedConfusion = goal.teachingContext?.concepts?.filter { concept in
+            coursesManager.learnerProfile.confusedBy.contains { confused in
+                confused.localizedCaseInsensitiveContains(concept)
+            }
+        } ?? []
+
+        if let confusedConcept = relatedConfusion.first {
+            return "you mentioned being shaky on \(confusedConcept) earlier — how does it connect to what we just did?"
+        }
+
+        let authored = goal.teachingContext?.teachBackPrompt?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let authored, !authored.isEmpty {
+            return authored
+        }
+
+        return "quick check — in your words, what did we just do and why did it work?"
+    }
+
+    // MARK: - Remediation
+
+    private func runRemediationGoal(
+        session: ClickyCourseSession,
+        remediationGoalID: String,
+        originalGoal: CourseLearningGoal,
+        host: CompanionManager
+    ) async -> Bool {
+        guard let remediationGoal = session.course.goals.first(where: { $0.id == remediationGoalID }) else {
+            return false
+        }
+
+        coursesManager.rememberAcrossGoals("entering remediation: \(remediationGoal.title) for \(originalGoal.title)")
+        host.setCourseVoiceStateResponding()
+        try? await host.speechSynthesizer.speakText(
+            "let me walk you through this part step by step."
+        )
+        host.setCourseVoiceStateIdle()
+
+        let remediationCoached = await runCoachAsk(
+            session: session,
+            ask: """
+            \(remediationGoal.coachAsk)
+
+            This is a focused remediation for a goal they're struggling with: \(originalGoal.goal).
+            Be extra concrete. Show them exactly what to do, step by step. \
+            Use [POINT:cell:label] aggressively. Respect TOOL POLICY.
+            """,
+            host: host,
+            allowActions: true
+        )
+        guard remediationCoached else { return false }
+
+        setPhase(.yourTurn(prompt: "follow the steps above — then say \"next step\""))
+        coursesManager.setCourseInteractionRunning(false)
+        host.setCourseVoiceStateIdle()
+
+        let action = await waitForYourTurnAction()
+        host.clearCoursePresenceBubble()
+
+        switch action {
+        case .confirm, .skip:
+            coursesManager.rememberAcrossGoals("completed remediation: \(remediationGoal.title)")
             host.setCourseVoiceStateResponding()
-            try? await host.speechSynthesizer.speakText(
-                "almost — let me tighten that up real quick."
-            )
-            _ = await runCoachAsk(
+            try? await host.speechSynthesizer.speakText("alright — now let's get back to the main goal.")
+            host.setCourseVoiceStateIdle()
+            return true
+        case .cancel:
+            return false
+        case .hint, .doItForMe:
+            return await runRemediationGoal(
                 session: session,
-                ask: """
-                Their teach-back didn't show understanding yet for "\(goal.title)".
-                They said: \(answer)
-                Reason: \(result.reason)
-                Re-teach the ONE missing idea in plain words using [INFO], then [TODO] asking them to try one more short explanation \
-                or tap “I get it” if they can restate it. Keep them on this goal.
-                """,
-                host: host,
-                allowActions: true
+                remediationGoalID: remediationGoalID,
+                originalGoal: originalGoal,
+                host: host
             )
-            // Soft pass after one re-teach so we don't soft-lock.
-            coursesManager.rememberAcrossGoals("retaught then soft-passed: \(goal.title)")
-            return true
-        } catch {
-            print("⚠️ Teach-back assess error: \(error)")
-            // Don't block progress on assess failure.
-            return true
         }
     }
+
+    // MARK: - Waiting
 
     private func waitForUnderstandingAnswer() async -> String {
         await withCheckedContinuation { continuation in
@@ -619,7 +809,7 @@ final class LessonPlayer: ObservableObject {
         Don't wander into other goals. If they're ready to move on, tell them to say "next step".
         """
         _ = await runCoachAsk(session: session, ask: ask, host: host, allowActions: true)
-        yourTurnPrompt = "your turn — \(session.currentGoal.title). hold ctrl+option to ask, or say “next step” when done."
+        yourTurnPrompt = "your turn — \(session.currentGoal.title). hold ctrl+option to ask, or say \"next step\" when done."
         setPhase(.yourTurn(prompt: yourTurnPrompt))
         coursesManager.setCourseInteractionRunning(false)
         host.setCourseVoiceStateIdle()
@@ -634,6 +824,11 @@ final class LessonPlayer: ObservableObject {
             stepIndex: session.currentStepIndex,
             voiceInitiated: true
         )
+
+        Task { _ = await host.teachyEngine.processEvent(.goalCompleted(
+            goalID: session.currentGoal.id,
+            verificationSummary: "completed: \(session.currentGoal.title)"
+        )) }
 
         if coursesManager.advanceToNextStep() != nil {
             host.setCourseVoiceStateResponding()

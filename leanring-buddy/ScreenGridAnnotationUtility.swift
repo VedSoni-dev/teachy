@@ -12,20 +12,23 @@ import AppKit
 import Foundation
 
 enum ScreenGridAnnotationUtility {
-    static let columnCount = 20
-    static let rowCount = 12
+    /// Denser grid → tighter pointing (was 20×12). Columns A–X, rows 1–16.
+    static let columnCount = 24
+    static let rowCount = 16
 
-    /// Regex fragment for a single grid cell label (columns A–T, rows 1–12).
-    static let gridCellRegexFragment = #"[A-T](?:1[0-2]|[1-9])"#
+    /// Regex fragment for a single grid cell label (columns A–X, rows 1–16).
+    static let gridCellRegexFragment = #"[A-X](?:1[0-6]|[1-9])"#
 
     /// Instructions appended to system prompts so models know how to use the grid.
     static let modelInstructions = """
-    SCREEN POINTING (invisible grid on screenshots):
-    - Every screenshot has a hidden grid burned in — columns A–T, rows 1–12. The user cannot see it.
-    - To point at something, end your response with [POINT:E4:short label] for the cell that best contains the target. Example: [POINT:M6:search bar]
-    - Prefer grid cells over raw pixel coordinates.
-    - Use [POINT:none] when there's nothing useful to point at.
-    - Only add a POINT tag when it would actually help them find something.
+    SCREEN POINTING (invisible grid on screenshots — user cannot see it):
+    - Grid: columns A–X (24), rows 1–16 (row 1 = top). Pick the cell whose CENTER is closest to the control.
+    - Preferred: [POINT:cell:short label] e.g. [POINT:M7:New button]
+    - Even better when sure: pixel coords from the image size in the label, top-left origin:
+      [POINT:842,310:New button]  (x,y in screenshot pixels)
+    - Be precise — aim at the actual clickable control, not empty space nearby.
+    - One POINT tag max per reply. Use [POINT:none] if nothing useful to point at.
+    - Only POINT when it helps them find something on screen.
 
     USER MOUSE OUTLINE:
     - A yellow chalk stroke means they circled that area while asking.
@@ -72,7 +75,8 @@ enum ScreenGridAnnotationUtility {
             imageHeight: imageSize.height
         )
 
-        let gridLineColor = NSColor(calibratedRed: 1.0, green: 0.0, blue: 1.0, alpha: 0.42)
+        // Higher contrast so vision models land on the right cell more often.
+        let gridLineColor = NSColor(calibratedRed: 1.0, green: 0.15, blue: 0.95, alpha: 0.55)
         gridLineColor.setStroke()
 
         for columnIndex in 0...columnCount {
@@ -80,7 +84,7 @@ enum ScreenGridAnnotationUtility {
             let verticalLine = NSBezierPath()
             verticalLine.move(to: NSPoint(x: xPosition, y: 0))
             verticalLine.line(to: NSPoint(x: xPosition, y: imageSize.height))
-            verticalLine.lineWidth = 1.0
+            verticalLine.lineWidth = 1.25
             verticalLine.stroke()
         }
 
@@ -89,17 +93,34 @@ enum ScreenGridAnnotationUtility {
             let horizontalLine = NSBezierPath()
             horizontalLine.move(to: NSPoint(x: 0, y: yPosition))
             horizontalLine.line(to: NSPoint(x: imageSize.width, y: yPosition))
-            horizontalLine.lineWidth = 1.0
+            horizontalLine.lineWidth = 1.25
             horizontalLine.stroke()
         }
 
-        let labelFont = NSFont.monospacedSystemFont(ofSize: 8, weight: .bold)
-        let labelColor = NSColor(calibratedRed: 0.0, green: 1.0, blue: 1.0, alpha: 0.88)
+        // Small crosshair at each cell center — models latch onto centers better.
+        let crossColor = NSColor(calibratedRed: 0.0, green: 1.0, blue: 0.85, alpha: 0.5)
+        crossColor.setStroke()
+        for rowIndex in 0..<rowCount {
+            for columnIndex in 0..<columnCount {
+                let cx = (CGFloat(columnIndex) + 0.5) * cellWidth
+                let cy = imageSize.height - (CGFloat(rowIndex) + 0.5) * cellHeight
+                let cross = NSBezierPath()
+                cross.move(to: NSPoint(x: cx - 3, y: cy))
+                cross.line(to: NSPoint(x: cx + 3, y: cy))
+                cross.move(to: NSPoint(x: cx, y: cy - 3))
+                cross.line(to: NSPoint(x: cx, y: cy + 3))
+                cross.lineWidth = 1.0
+                cross.stroke()
+            }
+        }
+
+        let labelFont = NSFont.monospacedSystemFont(ofSize: 9, weight: .bold)
+        let labelColor = NSColor(calibratedRed: 0.05, green: 1.0, blue: 0.95, alpha: 0.95)
         let labelAttributes: [NSAttributedString.Key: Any] = [
             .font: labelFont,
             .foregroundColor: labelColor,
-            .strokeColor: NSColor.black.withAlphaComponent(0.6),
-            .strokeWidth: -2.0
+            .strokeColor: NSColor.black.withAlphaComponent(0.75),
+            .strokeWidth: -2.5
         ]
 
         for rowIndex in 0..<rowCount {

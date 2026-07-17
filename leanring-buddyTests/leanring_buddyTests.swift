@@ -137,62 +137,6 @@ struct leanring_buddyTests {
         #expect(outlineContext?.touchedGridCellLabels.isEmpty == false)
     }
 
-    @Test func backgroundAgentTriggerParsesAgentPrefix() async throws {
-        let taskPrompt = VoiceBackgroundAgentTrigger.parseBackgroundAgentTask(
-            from: "agent, research my competitors in private equity"
-        )
-
-        #expect(taskPrompt == "research my competitors in private equity")
-    }
-
-    @Test func backgroundAgentTriggerParsesLongerPrefixes() async throws {
-        let taskPrompt = VoiceBackgroundAgentTrigger.parseBackgroundAgentTask(
-            from: "hey clicky start a background agent to summarize my inbox"
-        )
-
-        #expect(taskPrompt == "to summarize my inbox")
-    }
-
-    @Test func backgroundAgentTriggerIgnoresNormalChat() async throws {
-        let taskPrompt = VoiceBackgroundAgentTrigger.parseBackgroundAgentTask(
-            from: "what's on my screen right now?"
-        )
-
-        #expect(taskPrompt == nil)
-    }
-
-    @Test func automationTriggerParsesBuildRequest() async throws {
-        let taskPrompt = VoiceAutomationTrigger.parseAutomationTask(
-            from: "build me a basic Spotify Mac app player"
-        )
-
-        #expect(taskPrompt == "build me a basic Spotify Mac app player")
-    }
-
-    @Test func automationTriggerParsesOpenTabRequest() async throws {
-        let taskPrompt = VoiceAutomationTrigger.parseAutomationTask(
-            from: "open a tab to github.com"
-        )
-
-        #expect(taskPrompt == "open a tab to github.com")
-    }
-
-    @Test func automationTriggerIgnoresHowToQuestions() async throws {
-        let taskPrompt = VoiceAutomationTrigger.parseAutomationTask(
-            from: "how do I build a Spotify Mac app player"
-        )
-
-        #expect(taskPrompt == nil)
-    }
-
-    @Test func automationTriggerIgnoresNormalChat() async throws {
-        let taskPrompt = VoiceAutomationTrigger.parseAutomationTask(
-            from: "what's on my screen right now?"
-        )
-
-        #expect(taskPrompt == nil)
-    }
-
     @Test func appConnectorToolNamingPrefixesConnectorID() async throws {
         let registeredName = AppConnectorToolNaming.registeredToolName(
             connectorID: "plant-maint",

@@ -91,6 +91,11 @@ enum ClickyWorkerConfiguration {
         "\(workerBaseURL)/transcribe-token"
     }
 
+    /// Cloud TTS (ElevenLabs / OpenAI). Returns audio when the proxy has a key configured.
+    static var ttsEndpointURL: String {
+        "\(workerBaseURL)/tts"
+    }
+
     static var composioConnectionsEndpointURL: String {
         "\(workerBaseURL)/composio/connections"
     }

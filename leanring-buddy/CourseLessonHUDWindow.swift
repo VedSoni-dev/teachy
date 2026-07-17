@@ -171,31 +171,45 @@ private struct CourseLessonHUDView: View {
                 if isPlacement {
                     Text("Before we start")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(NotchPanelColors.textPrimary)
+                        .foregroundColor(DS.Colors.textPrimary)
                         .lineLimit(2)
 
                     Text("What do you already know?")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(NotchPanelColors.courseAccent.opacity(0.95))
+                        .foregroundColor(DS.Colors.learnAccent.opacity(0.95))
                 } else if isUnderstanding {
                     Text("Quick check")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(NotchPanelColors.textPrimary)
+                        .foregroundColor(DS.Colors.textPrimary)
                         .lineLimit(2)
 
                     Text("Say it in your words")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(NotchPanelColors.courseAccent.opacity(0.95))
+                        .foregroundColor(DS.Colors.learnAccent.opacity(0.95))
                 } else {
                     Text(session.currentStep.title)
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(NotchPanelColors.textPrimary)
+                        .foregroundColor(DS.Colors.textPrimary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
 
+                    // Show the relevant learning outcome next to the goal.
+                    if let outcome = relevantLearningOutcome(for: session) {
+                        Text(outcome)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(DS.Colors.textTertiary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    // Show artifact state if available.
+                    if let artifact = session.course.artifact, !session.artifactHistory.isEmpty {
+                        artifactPreview(session: session, artifact: artifact)
+                    }
+
                     Text("Step \(session.currentStepIndex + 1) of \(session.course.stepCount)")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(NotchPanelColors.courseAccent.opacity(0.95))
+                        .foregroundColor(DS.Colors.learnAccent.opacity(0.95))
                         .lineLimit(1)
 
                     progressBar(fraction: session.progressFraction)
@@ -207,14 +221,14 @@ private struct CourseLessonHUDView: View {
 
                 Text(subtitleText(session: session, phase: phase))
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(NotchPanelColors.textSecondary)
+                    .foregroundColor(DS.Colors.textSecondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if isHovering, let latestTool = coursesManager.courseToolStepLog.last {
                     Text("did: \(latestTool.toolName)")
                         .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(NotchPanelColors.textTertiary)
+                        .foregroundColor(DS.Colors.textTertiary)
                         .lineLimit(1)
                 }
 
@@ -223,7 +237,7 @@ private struct CourseLessonHUDView: View {
                         if let credit = companionManager.besideCursorVideoCredit, !credit.isEmpty {
                             Text(credit)
                                 .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(NotchPanelColors.courseAccent)
+                                .foregroundColor(DS.Colors.learnAccent)
                                 .lineLimit(1)
                         }
                         hudActionButton(title: "Skip video", emphasized: true) {
@@ -231,7 +245,7 @@ private struct CourseLessonHUDView: View {
                         }
                         Text("or say \"skip\"")
                             .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(NotchPanelColors.textTertiary)
+                            .foregroundColor(DS.Colors.textTertiary)
                         Spacer(minLength: 0)
                     }
                 } else if isPlacement {
@@ -243,13 +257,22 @@ private struct CourseLessonHUDView: View {
                         }
                     )
                 } else if isUnderstanding {
+                    // Contextual teach-back chips based on the current goal's tool policy
+                    let goalToolPolicy = session.currentGoal.toolPolicy
+                    let teachBackChips = teachBackChips(for: goalToolPolicy)
+                    if !teachBackChips.isEmpty {
+                        promptChipRow(chips: teachBackChips, header: "try one") { chip in
+                            copyPromptChip(chip)
+                        }
+                    }
+
                     HStack(spacing: 6) {
                         hudActionButton(title: "I get it", emphasized: true) {
                             companionManager.submitCourseUnderstandingAnswer("i get it — we did the goal")
                         }
                         Text("or hold ctrl+option")
                             .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(NotchPanelColors.textTertiary)
+                            .foregroundColor(DS.Colors.textTertiary)
                         Spacer(minLength: 0)
                     }
                 } else if isYourTurn {
@@ -301,12 +324,12 @@ private struct CourseLessonHUDView: View {
         HStack(spacing: 8) {
             Image(systemName: phase.systemImageName)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundColor(NotchPanelColors.courseAccent)
+                .foregroundColor(DS.Colors.learnAccent)
                 .opacity(isYourTurn ? yourTurnPulseOpacity : 1)
 
             Text(session.course.title)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(NotchPanelColors.textSecondary)
+                .foregroundColor(DS.Colors.textSecondary)
                 .lineLimit(1)
 
             Spacer(minLength: 4)
@@ -322,7 +345,7 @@ private struct CourseLessonHUDView: View {
             }) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(NotchPanelColors.textTertiary)
+                    .foregroundColor(DS.Colors.textTertiary)
                     .frame(width: 18, height: 18)
                     .background(Circle().fill(Color.white.opacity(0.08)))
             }
@@ -339,8 +362,8 @@ private struct CourseLessonHUDView: View {
                     .fill(
                         LinearGradient(
                             colors: [
-                                NotchPanelColors.courseAccent,
-                                NotchPanelColors.courseAccent.opacity(0.7),
+                                DS.Colors.learnAccent,
+                                DS.Colors.learnAccent.opacity(0.7),
                             ],
                             startPoint: .leading,
                             endPoint: .trailing
@@ -358,17 +381,17 @@ private struct CourseLessonHUDView: View {
             .environment(\.colorScheme, .dark)
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(NotchPanelColors.courseBackground.opacity(0.72))
+                    .fill(DS.Colors.surface1.opacity(0.72))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(
-                        NotchPanelColors.courseAccent.opacity(isYourTurn ? 0.75 : 0.35),
+                        DS.Colors.learnAccent.opacity(isYourTurn ? 0.75 : 0.35),
                         lineWidth: isYourTurn ? 1.5 : 1
                     )
             )
             .shadow(
-                color: NotchPanelColors.courseAccent.opacity(isYourTurn ? 0.22 : 0.08),
+                color: DS.Colors.learnAccent.opacity(isYourTurn ? 0.22 : 0.08),
                 radius: isYourTurn ? 16 : 10,
                 x: 0,
                 y: 4
@@ -416,7 +439,7 @@ private struct CourseLessonHUDView: View {
                     coachKindBlock(
                         kindLabel: "Your move",
                         text: todoText,
-                        accent: NotchPanelColors.courseAccent,
+                        accent: DS.Colors.learnAccent,
                         lineLimit: expanded ? 4 : 2
                     )
                 }
@@ -425,7 +448,7 @@ private struct CourseLessonHUDView: View {
                     coachKindBlock(
                         kindLabel: "Your move",
                         text: message.spokenText,
-                        accent: NotchPanelColors.courseAccent,
+                        accent: DS.Colors.learnAccent,
                         lineLimit: expanded ? 4 : 2
                     )
                 }
@@ -434,7 +457,7 @@ private struct CourseLessonHUDView: View {
             coachKindBlock(
                 kindLabel: "Your move",
                 text: coursesManager.lastCoachSpokenText,
-                accent: NotchPanelColors.courseAccent,
+                accent: DS.Colors.learnAccent,
                 lineLimit: expanded ? 4 : 2
             )
         }
@@ -454,7 +477,7 @@ private struct CourseLessonHUDView: View {
 
             Text(text)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(NotchPanelColors.textPrimary.opacity(0.94))
+                .foregroundColor(DS.Colors.textPrimary.opacity(0.94))
                 .lineLimit(lineLimit)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -476,6 +499,52 @@ private struct CourseLessonHUDView: View {
         return chips.isEmpty ? nil : chips
     }
 
+    private func teachBackChips(for toolPolicy: CourseToolPolicy?) -> [String] {
+        switch toolPolicy {
+        case .canDoForThem:
+            return ["You do it, then teach me", "Show me step by step"]
+        case .helpWhenStuck:
+            return ["I'm stuck, show me", "What's the next move?"]
+        case .pointOnly, .preferPointing, .none:
+            return ["I think I get it", "Can you explain that differently?"]
+        }
+    }
+
+    private func relevantLearningOutcome(for session: ClickyCourseSession) -> String? {
+        let goal = session.currentGoal
+        let outcome = goal.outcome ?? goal.goal
+        return outcome
+    }
+
+    private func artifactPreview(
+        session: ClickyCourseSession,
+        artifact: CourseArtifactSpec
+    ) -> some View {
+        let latestSnapshot = session.artifactHistory.last
+        let description = latestSnapshot?.stateDescription ?? artifact.previewIfNoProgress
+        return HStack(spacing: 6) {
+            Image(systemName: artifact.icon)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(DS.Colors.learnAccent)
+            Text(description)
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(DS.Colors.textSecondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DS.Colors.learnAccent.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(DS.Colors.learnAccent.opacity(0.25), lineWidth: 1)
+                )
+        )
+    }
+
     private func promptChipRow(
         chips: [String],
         header: String,
@@ -484,7 +553,7 @@ private struct CourseLessonHUDView: View {
         VStack(alignment: .leading, spacing: 5) {
             Text(header)
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(NotchPanelColors.textTertiary)
+                .foregroundColor(DS.Colors.textTertiary)
 
             FlowChipLayout(spacing: 5) {
                 ForEach(chips, id: \.self) { chip in
@@ -493,7 +562,7 @@ private struct CourseLessonHUDView: View {
                     } label: {
                         Text(chip)
                             .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(NotchPanelColors.textPrimary)
+                            .foregroundColor(DS.Colors.textPrimary)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                             .padding(.horizontal, 8)
@@ -503,7 +572,7 @@ private struct CourseLessonHUDView: View {
                                     .fill(Color.white.opacity(0.1))
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .stroke(NotchPanelColors.courseAccent.opacity(0.4), lineWidth: 1)
+                                            .stroke(DS.Colors.learnAccent.opacity(0.4), lineWidth: 1)
                                     )
                             )
                     }
@@ -528,13 +597,13 @@ private struct CourseLessonHUDView: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(emphasized ? Color.black.opacity(0.85) : NotchPanelColors.textPrimary)
+                .foregroundColor(emphasized ? Color.black.opacity(0.85) : DS.Colors.textPrimary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(
                     Capsule().fill(
                         emphasized
-                            ? NotchPanelColors.courseAccent
+                            ? DS.Colors.learnAccent
                             : Color.white.opacity(0.1)
                     )
                 )

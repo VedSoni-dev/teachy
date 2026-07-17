@@ -22,6 +22,15 @@ enum ClickyProxyHealthChecker {
     }
 
     static func fetchHealth() async -> HealthResult {
+        // Direct API mode — user has configured their own key, no proxy needed
+        if TeachyAPIKeyStore.isConfigured {
+            return HealthResult(
+                isReachable: true,
+                isOpenRouterConfigured: true,
+                serviceName: "openrouter-direct"
+            )
+        }
+
         guard let healthURL = URL(string: "\(ClickyWorkerConfiguration.workerBaseURL)/health") else {
             return .unreachable
         }

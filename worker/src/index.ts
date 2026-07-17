@@ -173,40 +173,95 @@ async function handleTranscribeToken(env: Env): Promise<Response> {
 }
 
 async function handleTTS(request: Request, env: Env): Promise<Response> {
-  if (!env.ELEVENLABS_API_KEY || !env.ELEVENLABS_VOICE_ID) {
-    return jsonResponse({ ok: true, note: "TTS not configured — app uses local speech" });
+  let payload: {
+    text?: string;
+    model_id?: string;
+    voice_settings?: Record<string, unknown>;
+  } = {};
+  try {
+    payload = (await request.json()) as typeof payload;
+  } catch {
+    // Fall through — may still fail validation below
   }
 
-  const body = await request.text();
-  const voiceId = env.ELEVENLABS_VOICE_ID;
+  const text = (payload.text || "").trim();
+  if (!text) {
+    return jsonResponse({ error: "missing text" }, 400);
+  }
 
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-    {
+  // Prefer ElevenLabs (most human). Fallback: OpenAI TTS. Else stub → app uses local neural speech.
+  if (env.ELEVENLABS_API_KEY && env.ELEVENLABS_VOICE_ID) {
+    const voiceId = env.ELEVENLABS_VOICE_ID;
+    const elevenBody = {
+      text,
+      model_id: payload.model_id || "eleven_turbo_v2_5",
+      voice_settings: payload.voice_settings || {
+        stability: 0.4,
+        similarity_boost: 0.8,
+        style: 0.4,
+        use_speaker_boost: true,
+      },
+    };
+
+    const response = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
+      {
+        method: "POST",
+        headers: {
+          "xi-api-key": env.ELEVENLABS_API_KEY,
+          "content-type": "application/json",
+          accept: "audio/mpeg",
+        },
+        body: JSON.stringify(elevenBody),
+      }
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`[/tts] ElevenLabs API error ${response.status}: ${errorBody}`);
+      // Try OpenAI before failing hard
+    } else {
+      return new Response(response.body, {
+        status: 200,
+        headers: {
+          "content-type": response.headers.get("content-type") || "audio/mpeg",
+          ...corsHeaders(),
+        },
+      });
+    }
+  }
+
+  if (env.OPENAI_API_KEY) {
+    const response = await fetch("https://api.openai.com/v1/audio/speech", {
       method: "POST",
       headers: {
-        "xi-api-key": env.ELEVENLABS_API_KEY,
+        authorization: `Bearer ${env.OPENAI_API_KEY}`,
         "content-type": "application/json",
-        accept: "audio/mpeg",
       },
-      body,
-    }
-  );
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error(`[/tts] ElevenLabs API error ${response.status}: ${errorBody}`);
-    return new Response(errorBody, {
-      status: response.status,
-      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o-mini-tts",
+        voice: "nova",
+        input: text,
+        response_format: "mp3",
+      }),
     });
+
+    if (response.ok) {
+      return new Response(response.body, {
+        status: 200,
+        headers: {
+          "content-type": "audio/mpeg",
+          ...corsHeaders(),
+        },
+      });
+    }
+
+    const errorBody = await response.text();
+    console.error(`[/tts] OpenAI TTS error ${response.status}: ${errorBody}`);
   }
 
-  return new Response(response.body, {
-    status: response.status,
-    headers: {
-      "content-type": response.headers.get("content-type") || "audio/mpeg",
-      ...corsHeaders(),
-    },
+  return jsonResponse({
+    ok: true,
+    note: "TTS not configured — app uses local neural speech (AVSpeech / NSSpeech)",
   });
 }

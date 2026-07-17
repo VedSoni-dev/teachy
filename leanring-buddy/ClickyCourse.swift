@@ -9,6 +9,30 @@
 
 import Foundation
 
+// MARK: - Artifact
+
+struct CourseArtifactSpec: Codable, Equatable {
+    /// What kind of thing is being built — e.g. "githubRepo", "document", "video".
+    let kind: String
+    /// SF Symbol name for the artifact type.
+    let icon: String
+    /// Plain-language description of the starting state before the course begins.
+    let initialState: String
+    /// Plain-language description of what "done" looks like.
+    let finalState: String
+    /// Text shown in the HUD before any progress has been made.
+    let previewIfNoProgress: String
+}
+
+struct CourseArtifactSnapshot: Codable, Equatable {
+    /// The goal that produced this snapshot.
+    let goalID: String
+    /// Plain-language description of what the artifact looks like after this goal.
+    let stateDescription: String
+    /// When this snapshot was captured.
+    let capturedAt: Date
+}
+
 // MARK: - Course catalog
 
 struct ClickyCourse: Identifiable, Codable, Equatable {
@@ -31,6 +55,8 @@ struct ClickyCourse: Identifiable, Codable, Equatable {
     let learningOutcomes: [String]
     /// Ordered goals. Each is taught via a natural auto-prompt into companion vision.
     let goals: [CourseLearningGoal]
+    /// Optional artifact spec — the thing being built across the course.
+    let artifact: CourseArtifactSpec?
     /// Optional learning path — courses that build on each other (like a Khan Academy unit).
     let trackID: String?
     let trackTitle: String?
@@ -72,6 +98,7 @@ struct ClickyCourse: Identifiable, Codable, Equatable {
         teacherName: String? = nil,
         learningOutcomes: [String],
         goals: [CourseLearningGoal],
+        artifact: CourseArtifactSpec? = nil,
         trackID: String? = nil,
         trackTitle: String? = nil,
         trackOrder: Int? = nil,
@@ -89,6 +116,7 @@ struct ClickyCourse: Identifiable, Codable, Equatable {
         self.teacherName = teacherName
         self.learningOutcomes = learningOutcomes
         self.goals = goals
+        self.artifact = artifact
         self.trackID = trackID
         self.trackTitle = trackTitle
         self.trackOrder = trackOrder
@@ -114,6 +142,10 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
     let coachAsk: String
     /// Optional natural-language done check for vision verify.
     let doneWhen: String?
+    /// Plain-language description of what this goal changes about the artifact.
+    let artifactDelta: String?
+    /// If set, jumping to this remediation goal on repeated failures before returning.
+    let remediationGoalID: String?
     let tips: [String]?
     /// Optional part clip (HLS/mp4) played beside Teachy before coaching this goal.
     /// Prefer `teacherVideoURL` in new authoring; both keys work when decoding.
@@ -128,6 +160,8 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
     let teachingContext: CourseTeachingContext?
     /// How willing Teachy should be to drive the Mac on this goal.
     let toolPolicy: CourseToolPolicy?
+    /// One-line learning outcome shown in the HUD next to the goal title.
+    let outcome: String?
 
     /// Back-compat names used by session/HUD copy.
     var instruction: String { goal }
@@ -154,19 +188,24 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
         goal: String,
         coachAsk: String,
         doneWhen: String? = nil,
+        artifactDelta: String? = nil,
+        remediationGoalID: String? = nil,
         tips: [String]? = nil,
         introVideoURL: String? = nil,
         teacherVideoURL: String? = nil,
         teacherName: String? = nil,
         teacherVideoNotes: String? = nil,
         teachingContext: CourseTeachingContext? = nil,
-        toolPolicy: CourseToolPolicy? = nil
+        toolPolicy: CourseToolPolicy? = nil,
+        outcome: String? = nil
     ) {
         self.id = id
         self.title = title
         self.goal = goal
         self.coachAsk = coachAsk
         self.doneWhen = doneWhen
+        self.artifactDelta = artifactDelta
+        self.remediationGoalID = remediationGoalID
         self.tips = tips
         self.introVideoURL = introVideoURL
         self.teacherVideoURL = teacherVideoURL
@@ -174,6 +213,7 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
         self.teacherVideoNotes = teacherVideoNotes
         self.teachingContext = teachingContext
         self.toolPolicy = toolPolicy
+        self.outcome = outcome
     }
 
     /// Credit line for the beside-cursor player.
@@ -240,6 +280,8 @@ struct CourseCompletionCelebration: Equatable, Identifiable {
     let courseID: String
     let title: String
     let message: String
+    let recap: String
+    let nextSteps: [String]
 }
 
 /// Suggested prompts for First Win blank-chat avoidance.
@@ -466,6 +508,8 @@ struct ClickyCourseSession: Equatable {
     var currentStepIndex: Int
     var startedAt: Date
     var stepConversationHistory: [ClickyCourseStepExchange]
+    var artifactHistory: [CourseArtifactSnapshot]
+    var failureCountByGoalID: [String: Int]
 
     var currentStep: CourseLearningGoal {
         course.goals[currentStepIndex]
@@ -475,6 +519,19 @@ struct ClickyCourseSession: Equatable {
 
     var isOnFinalStep: Bool {
         currentStepIndex >= course.goals.count - 1
+    }
+
+    /// Number of non-remediation goals in the course.
+    var mainGoalCount: Int {
+        course.goals.filter { $0.remediationGoalID == nil }.count
+    }
+
+    /// Number of non-remediation goals completed so far (requires progress from CoursesManager).
+    func completedMainGoalCount(completedStepIDs: [String]) -> Int {
+        let completedIDs = Set(completedStepIDs)
+        return course.goals.filter { goal in
+            goal.remediationGoalID == nil && completedIDs.contains(goal.id)
+        }.count
     }
 
     var progressFraction: Double {
@@ -551,674 +608,385 @@ enum ClickyCourseResponseTags {
 
 enum ClickyCourseCatalog {
     static let bundledCourses: [ClickyCourse] = [
-        aiFirstWinCourse,
-        aiToCodeCourse,
-        youtubeBasicsCourse,
-        khanAcademyBasicsCourse,
-        githubBasicsCourse,
-        githubGitFundamentalsCourse,
-        githubMakeARepoCourse,
-        githubCollaborateCourse,
+        buildAWebsiteCourse,
     ]
 
-    static let gitAndGitHubTrackID = "git-and-github"
-    static let gitAndGitHubTrackTitle = "Git & GitHub"
-    static let buildWithAITrackID = "build-with-ai"
-    static let buildWithAITrackTitle = "Build with AI"
+    static let webFundamentalsTrackID = "web-fundamentals"
+    static let webFundamentalsTrackTitle = "Web Fundamentals"
 
-    /// Featured IDs shown first for new learners (First Win → flagship).
+    /// Featured IDs shown first for new learners.
     static let featuredLearnerCourseIDs: [String] = [
-        "ai-first-win",
-        "ai-to-code",
+        "build-a-website",
     ]
 
-    /// 10-minute on-ramp before the full Use AI to Code path.
-    static let aiFirstWinCourse = ClickyCourse(
-        id: "ai-first-win",
-        title: "First Win with AI",
-        subtitle: "10 minutes to something that runs",
-        description: "The easiest Teachy on-ramp. Open an AI, ask for one tiny thing, and see it run — so you feel the loop before the full Use AI to Code path.",
-        iconSystemName: "sparkle",
-        estimatedMinutes: 10,
-        startURL: "https://claude.ai",
-        learningOutcomes: [
-            "Open an AI that can help you write code",
-            "Send one clear tiny prompt",
-            "See a result run or preview on screen",
-        ],
-        goals: [
-            CourseLearningGoal(
-                id: "first-win-open",
-                title: "Open your AI",
-                goal: "Have Claude, ChatGPT, or Cursor open so you can ask it to build something tiny.",
-                coachAsk: """
-                They're starting First Win. Explain from zero if needed: an “AI chat” is a website or app \
-                where you type what you want and it writes back — Claude (claude.ai) and ChatGPT are popular ones; \
-                Cursor is an app that helps you write code with AI. Help them open whichever is easiest. \
-                Point at what to click. Don't assume they know any of these names.
-                """,
-                doneWhen: "An AI chat or AI coding tool is open and recognizable on screen.",
-                tips: [
-                    "Claude or ChatGPT in the browser is perfect",
-                    "Cursor works too if they already have it",
-                ],
-                teachingContext: CourseTeachingContext(
-                    concepts: [
-                        "AI chat = type a request, get text back",
-                        "Claude / ChatGPT / Cursor are examples",
-                    ],
-                    commonMistakes: [
-                        "Opening a random search page instead of the AI",
-                        "Freezing on a permission dialog",
-                    ],
-                    successExamples: [
-                        "Browser shows Claude or ChatGPT chat UI",
-                        "Cursor is open with the AI panel visible",
-                    ],
-                    whyItMatters: "You can’t ask for a build until the AI is open on your Mac.",
-                    teachBackPrompt: "in your words — what is an AI chat, and which one do you have open?",
-                    skipTeachBack: false
-                ),
-                toolPolicy: .helpWhenStuck
-            ),
-            CourseLearningGoal(
-                id: "first-win-prompt",
-                title: "Ask for one tiny thing",
-                goal: "Send one clear prompt for a tiny project — tip calculator, to-do, or hello page.",
-                coachAsk: """
-                Explain what a “prompt” is if needed — it's just the message you type to the AI, like asking a friend. \
-                Help them send one clear tiny ask (suggest: make a single HTML tip calculator — HTML is a simple webpage file). \
-                Point at where they type and how to send. Prompt chips may be on the HUD.
-                """,
-                doneWhen: "A clear tiny-project prompt is visible as typed or sent in the AI chat.",
-                tips: [
-                    "One feature only",
-                    "Plain language beats jargon",
-                ],
-                teacherVideoNotes: """
-                - A prompt is just a clear ask in plain English
-                - Smaller asks work better than “build me an app”
-                - Send / Enter is how the AI starts working
-                """,
-                teachingContext: CourseTeachingContext(
-                    concepts: [
-                        "Prompt = the message you send the AI",
-                        "Tiny scope beats vague mega-projects",
-                    ],
-                    commonMistakes: [
-                        "Writing a novel of requirements",
-                        "Forgetting to send / press Enter",
-                    ],
-                    successExamples: [
-                        "Chat shows a sent message asking for one tiny HTML thing",
-                    ],
-                    whyItMatters: "The AI only builds what you clearly ask for.",
-                    teachBackPrompt: "what did you ask the AI to make — and why keep it tiny?",
-                    skipTeachBack: false
-                ),
-                toolPolicy: .preferPointing
-            ),
-            CourseLearningGoal(
-                id: "first-win-run",
-                title: "See it run",
-                goal: "Open or preview the result so something real is on screen.",
-                coachAsk: """
-                The AI should have answered with code or steps. Explain if needed: “running” means opening the result \
-                so they can see it work — often save as a .html file and open it in a browser (Chrome, Safari, etc.). \
-                Point at the next move to actually see it.
-                """,
-                doneWhen: "A running or previewed result is visible — browser page, preview, or clear live output.",
-                tips: [
-                    "HTML → save .html → open in browser",
-                    "That’s a win — you’re done",
-                ],
-                teachingContext: CourseTeachingContext(
-                    concepts: [
-                        "Code on screen isn’t done until you see it run",
-                        "HTML files open in a browser to preview",
-                    ],
-                    commonMistakes: [
-                        "Stopping after the AI replies without opening anything",
-                        "Saving the file but never opening it",
-                    ],
-                    successExamples: [
-                        "Browser shows their tiny page or tip calculator",
-                    ],
-                    whyItMatters: "The win is seeing something real work — not collecting code.",
-                    teachBackPrompt: "how did you get from the AI’s answer to something running on screen?",
-                    skipTeachBack: false
-                ),
-                toolPolicy: .helpWhenStuck
-            ),
-        ],
-        trackID: buildWithAITrackID,
-        trackTitle: buildWithAITrackTitle,
-        trackOrder: 0,
-        prerequisiteCourseIDs: nil
-    )
-
-    /// Flagship path — Use AI to Code. Ordinary-person skill of the moment.
-    static let aiToCodeCourse = ClickyCourse(
-        id: "ai-to-code",
-        title: "Use AI to Code",
-        subtitle: "From idea to something that runs — with AI",
-        description: "The flagship Teachy path. Learn the real skill of 2026: describe what you want, get AI to build it, run it, and fix it when it’s wrong — on your Mac, with a 1:1 tutor beside you. No CS degree required.",
-        iconSystemName: "laptopcomputer.and.arrow.down",
+    static let buildAWebsiteCourse = ClickyCourse(
+        id: "build-a-website",
+        title: "Build & Deploy a Website",
+        subtitle: "From zero to a live site the world can visit",
+        description: "Build a real personal website from scratch with HTML & CSS, then deploy it to GitHub Pages so anyone on the internet can see it.",
+        iconSystemName: "display",
         estimatedMinutes: 45,
-        startURL: "https://claude.ai",
-        learningOutcomes: [
-            "Open an AI that can help you write code",
-            "Describe a tiny project in plain language",
-            "Get a first working version from the AI",
-            "Run or open the result so you can see it",
-            "Ask for a change and verify it landed",
-            "Save the project somewhere you’ll find again",
-            "Say in one sentence what you built",
-        ],
-        goals: [
-            CourseLearningGoal(
-                id: "ai-open-tool",
-                title: "Open your AI",
-                goal: "Have an AI coding helper open — Claude, ChatGPT, Cursor, or similar — so you can start building.",
-                coachAsk: """
-                Explain from zero if needed: an AI coding helper is a chat where you describe what you want \
-                and it writes code back — Claude (claude.ai) and ChatGPT are websites for that; Cursor is an app. \
-                Help them open whichever is easiest. Point at how to get started. Don't assume they know the names.
-                """,
-                doneWhen: "An AI chat or AI coding tool is open and recognizable on screen (Claude, ChatGPT, Cursor, Copilot, or similar).",
-                tips: [
-                    "Browser Claude or ChatGPT is perfect for beginners",
-                    "Cursor is great if you already have it",
-                    "Signing in is OK if the tool asks",
-                ]
-            ),
-            CourseLearningGoal(
-                id: "ai-clear-ask",
-                title: "Ask for something tiny",
-                goal: "Send a clear first prompt for a tiny project — like a one-page site, a calculator, or a to-do list — in plain language.",
-                coachAsk: """
-                Explain what a “prompt” is if needed — the message you type to the AI, like asking a friend for help. \
-                Help them write a clear first ask for something tiny (one page / one feature). Point at where to send it.
-                """,
-                doneWhen: "A clear project prompt is visible in the AI chat input or as a sent message (a small app, page, or script request).",
-                tips: [
-                    "Small is better: one page, one feature",
-                    "Say what it should look like and what it should do",
-                    "Example vibe: “Make a single HTML page with a tip calculator”",
-                ]
-            ),
-            CourseLearningGoal(
-                id: "ai-first-version",
-                title: "Get a first version",
-                goal: "Receive a first version of the project from the AI — code, files, or a scaffold you can use.",
-                coachAsk: "The AI should give me a first version now. Point at the reply or code I should use, and tell me what to do next in one short beat.",
-                doneWhen: "AI-generated code, files, or a clear project scaffold is visible in the conversation or editor.",
-                tips: [
-                    "If it asks clarifying questions, answer simply",
-                    "You don’t need to understand every line yet",
-                ]
-            ),
-            CourseLearningGoal(
-                id: "ai-see-it-run",
-                title: "See it run",
-                goal: "Open or run the result so something real is on screen — a browser preview, a window, or output that proves it works.",
-                coachAsk: "How do I actually see this thing run? Help me open a preview, save a file and open it, or run it — point at the next move.",
-                doneWhen: "A running or previewed result is visible — browser page, app window, terminal output, or live preview of the project.",
-                tips: [
-                    "HTML often means save as .html and open in a browser",
-                    "If the AI gave a link or preview, use that",
-                    "“It runs” beats “it looks smart in the chat”",
-                ]
-            ),
-            CourseLearningGoal(
-                id: "ai-request-change",
-                title: "Change something",
-                goal: "Ask the AI to change the project — color, text, feature, or fix — and get an updated version.",
-                coachAsk: "I want to change something about what we built. Help me ask the AI clearly, then point at where the update shows up.",
-                doneWhen: "An updated AI response or edited project is visible that reflects a requested change.",
-                tips: [
-                    "One change at a time",
-                    "Point at what you dislike: “make the button bigger” beats “make it better”",
-                ]
-            ),
-            CourseLearningGoal(
-                id: "ai-verify-change",
-                title: "Verify the change",
-                goal: "Confirm the change in the running project — refresh preview, re-open the file, or check the UI so you know it landed.",
-                coachAsk: "How do I check that the change actually landed in the running thing? Point at what I should look at.",
-                doneWhen: "The running or previewed project shows the requested change (or the learner has clearly checked the updated output).",
-                tips: [
-                    "Refresh the browser if it’s a web page",
-                    "This is the habit that separates builders from copy-pasters",
-                ]
-            ),
-            CourseLearningGoal(
-                id: "ai-save-project",
-                title: "Save it for later",
-                goal: "Save the project somewhere durable on your Mac — a folder, file, or project you’ll find again.",
-                coachAsk: "Help me save this project somewhere obvious on my Mac so I don’t lose it. Point at how I should save or where to put the files.",
-                doneWhen: "The project is saved as a file, folder, or named project on disk (Finder, editor save dialog, or clearly saved project UI).",
-                tips: [
-                    "Desktop or a Documents/Projects folder is fine",
-                    "Name it something you’ll recognize next week",
-                ]
-            ),
-            CourseLearningGoal(
-                id: "ai-say-what-you-built",
-                title: "Name what you built",
-                goal: "Write or say one clear sentence: what you built and that you used AI to do it.",
-                coachAsk: "Last step — help me write one sentence that says what I built with AI. Point at a notes app, the chat, or anywhere I can type it.",
-                doneWhen: "A short written sentence is visible describing what was built (notes, chat, doc, or similar).",
-                tips: [
-                    "Example: “I built a tip calculator webpage with AI.”",
-                    "This is your proof — keep it",
-                ]
-            ),
-        ],
-        trackID: buildWithAITrackID,
-        trackTitle: buildWithAITrackTitle,
-        trackOrder: 1,
-        prerequisiteCourseIDs: ["ai-first-win"]
-    )
-
-    /// YouTube Basics — goals only. No button names, grid cells, or layout contracts.
-    static let youtubeBasicsCourse = ClickyCourse(
-        id: "youtube-basics",
-        title: "YouTube Basics",
-        subtitle: "Search, watch, and find your way around",
-        description: "Learn the essentials of watching videos on YouTube — Teachy coaches you toward each goal using whatever the site looks like today.",
-        iconSystemName: "play.rectangle.fill",
-        estimatedMinutes: 10,
-        startURL: "https://www.youtube.com",
-        learningOutcomes: [
-            "Open YouTube in a browser",
-            "Search for a video",
-            "Open and play a video",
-            "Use basic player controls (pause, volume, fullscreen)",
-            "Get back to the homepage or main sections",
-        ],
-        goals: [
-            CourseLearningGoal(
-                id: "youtube-open",
-                title: "Open YouTube",
-                goal: "Have YouTube open in a browser so you can start watching.",
-                coachAsk: "Help me get YouTube open in my browser and show me where I'd start looking around.",
-                doneWhen: "YouTube is open and recognizable as the YouTube site (homepage or main feed).",
-                tips: ["Any modern browser is fine", "Signing in is optional"]
-            ),
-            CourseLearningGoal(
-                id: "youtube-search",
-                title: "Search for a video",
-                goal: "Find videos by searching for something you want to watch.",
-                coachAsk: "How do I search on YouTube for a video I actually want to watch? Point at what I should use.",
-                doneWhen: "Search results are showing — a list or grid of videos matching a search.",
-                tips: ["Search for anything you like"]
-            ),
-            CourseLearningGoal(
-                id: "youtube-play",
-                title: "Play a video",
-                goal: "Open a video and get it playing (or ready to play) on the watch page.",
-                coachAsk: "How do I open a video from here and start watching it? Point at what I should click.",
-                doneWhen: "A video watch page is open with a video player visible.",
-                tips: ["Any video is fine for this step"]
-            ),
-            CourseLearningGoal(
-                id: "youtube-controls",
-                title: "Use the player controls",
-                goal: "Use basic playback controls — pause/play, volume, or fullscreen.",
-                coachAsk: "I'm on a YouTube video — how do I pause, change volume, or go fullscreen? Point at the controls I should try.",
-                doneWhen: "The learner has used at least one player control, or the watch page controls are clearly available and they've confirmed they're done trying.",
-                tips: ["Hover the video if controls are hidden"]
-            ),
-            CourseLearningGoal(
-                id: "youtube-navigate",
-                title: "Find your way around",
-                goal: "Navigate back to the homepage or another main section of YouTube.",
-                coachAsk: "How do I get back to the YouTube homepage or jump to another main section? Point at what I should use.",
-                doneWhen: "The learner is on the YouTube homepage or another main section (not stuck on a single watch page).",
-                tips: ["Logo and side navigation are common patterns — use whatever exists today"]
-            ),
-        ],
-        trackID: nil,
-        trackTitle: nil,
-        trackOrder: nil,
-        prerequisiteCourseIDs: nil
-    )
-
-    /// Khan Academy Basics — goals only. Works even if the site redesigns.
-    static let khanAcademyBasicsCourse = ClickyCourse(
-        id: "khan-academy-basics",
-        title: "Khan Academy Basics",
-        subtitle: "Find a subject, open a lesson, and try practice",
-        description: "Get comfortable on Khan Academy — Teachy coaches you toward each goal using whatever the site looks like today.",
-        iconSystemName: "book.fill",
-        estimatedMinutes: 12,
-        startURL: "https://www.khanacademy.org",
-        learningOutcomes: [
-            "Open Khan Academy in a browser",
-            "Browse or search for a subject",
-            "Open a lesson, video, or article",
-            "Start a practice exercise if one is available",
-            "Find your way back to courses or the homepage",
-        ],
-        goals: [
-            CourseLearningGoal(
-                id: "khan-open",
-                title: "Open Khan Academy",
-                goal: "Have Khan Academy open in a browser so you can start learning.",
-                coachAsk: "Help me get Khan Academy open in my browser and show me where I'd start exploring.",
-                doneWhen: "Khan Academy is open and recognizable as the Khan Academy site.",
-                tips: ["Any modern browser is fine", "Signing in is optional for exploring"]
-            ),
-            CourseLearningGoal(
-                id: "khan-find-subject",
-                title: "Find a subject",
-                goal: "Browse or search until you land on a subject or topic area you care about.",
-                coachAsk: "How do I find a subject on Khan Academy — like math, science, or something else I'm into? Point at what I should use.",
-                doneWhen: "A subject, course, or topic listing is visible (not just the generic marketing homepage).",
-                tips: ["Any subject is fine", "Search or browse both work"]
-            ),
-            CourseLearningGoal(
-                id: "khan-open-lesson",
-                title: "Open a lesson",
-                goal: "Open a lesson, video, or article so learning content is on screen.",
-                coachAsk: "How do I open an actual lesson or video from here? Point at what I should click.",
-                doneWhen: "A lesson, video player, article, or unit content page is open.",
-                tips: ["Any lesson in the subject is fine"]
-            ),
-            CourseLearningGoal(
-                id: "khan-try-practice",
-                title: "Try practice",
-                goal: "Start a practice exercise, quiz, or interactive problem — or clearly find where practice lives if one isn't available yet.",
-                coachAsk: "I'd like to try a practice problem on Khan Academy. Point at how I start practice or an exercise from here.",
-                doneWhen: "A practice exercise, quiz, or problem UI is visible, or the learner has confirmed they found where practice lives and are done trying.",
-                tips: ["If this lesson has no practice, finding the practice entry point still counts"]
-            ),
-            CourseLearningGoal(
-                id: "khan-navigate",
-                title: "Find your way around",
-                goal: "Navigate back to courses, subjects, or the Khan Academy homepage.",
-                coachAsk: "How do I get back to courses or the Khan Academy homepage from here? Point at what I should use.",
-                doneWhen: "The learner is on a main courses/subjects area or the Khan Academy homepage (not stuck inside one lesson).",
-                tips: ["Logo and main navigation are common patterns — use whatever exists today"]
-            ),
-        ],
-        trackID: nil,
-        trackTitle: nil,
-        trackOrder: nil,
-        prerequisiteCourseIDs: nil
-    )
-
-    // MARK: - Git & GitHub track (progressive path)
-
-    /// Part 1 — browse GitHub before touching the command line.
-    static let githubBasicsCourse = ClickyCourse(
-        id: "github-basics",
-        title: "Explore GitHub",
-        subtitle: "Repos, README, issues, and pull requests",
-        description: "First stop on the Git & GitHub path — get comfortable browsing public projects before you touch git or create anything.",
-        iconSystemName: "globe",
-        estimatedMinutes: 15,
-        startURL: "https://github.com",
-        learningOutcomes: [
-            "Open GitHub in a browser",
-            "Find and open a public repository",
-            "Read a repo's overview or code",
-            "Find the Issues area",
-            "Find Pull Requests and understand what they are for",
-            "Get back to search or your main GitHub home",
-        ],
-        goals: [
-            CourseLearningGoal(
-                id: "github-open",
-                title: "Open GitHub",
-                goal: "Have GitHub open in a browser so you can start exploring.",
-                coachAsk: "Help me get GitHub open in my browser and show me where I'd start looking around — this site feels dense.",
-                doneWhen: "GitHub is open and recognizable as the GitHub site.",
-                tips: ["Any modern browser is fine", "Signing in is optional for browsing public repos"]
-            ),
-            CourseLearningGoal(
-                id: "github-find-repo",
-                title: "Find a repository",
-                goal: "Search or browse until a public repository page is open.",
-                coachAsk: "How do I find a public repository on GitHub — like an open source project I care about? Point at what I should use.",
-                doneWhen: "A repository page is open (code, overview, or files for a specific project).",
-                tips: ["Any public repo is fine", "Try searching for something you know, like react or vscode"]
-            ),
-            CourseLearningGoal(
-                id: "github-explore-code",
-                title: "Explore the repo",
-                goal: "Look around the repository — README, files, or overview — enough to see how the project is organized.",
-                coachAsk: "I'm on a GitHub repo and it's a lot. Point at the README or main files area and help me figure out what I'm looking at.",
-                doneWhen: "Repo content is visible — README, file tree, or code view — and the learner has confirmed they're oriented.",
-                tips: ["You don't need to understand every file", "The README is usually the friendliest place to start"]
-            ),
-            CourseLearningGoal(
-                id: "github-find-issues",
-                title: "Find Issues",
-                goal: "Open the Issues area for the repository and see how people report bugs and request features.",
-                coachAsk: "Where are Issues on this GitHub repo? Point at how I open them and tell me what they're for in one casual sentence.",
-                doneWhen: "The Issues list or Issues section for the repository is visible.",
-                tips: ["Issues are how people track bugs and ideas", "Reading is enough — no need to file one"]
-            ),
-            CourseLearningGoal(
-                id: "github-find-pull-requests",
-                title: "Find Pull Requests",
-                goal: "Open Pull Requests and get a plain-language sense of what they are (proposed code changes).",
-                coachAsk: "Where are Pull Requests on this repo? Point at how I open them and explain what a pull request is like I'm new — keep it short.",
-                doneWhen: "The Pull Requests list or Pull Requests section for the repository is visible.",
-                tips: ["PRs are proposed changes waiting for review", "You can just look — contributing is optional"]
-            ),
-            CourseLearningGoal(
-                id: "github-navigate",
-                title: "Find your way around",
-                goal: "Get back to GitHub search, explore, or the main homepage from inside a repo.",
-                coachAsk: "How do I get out of this repo and back to searching or the main GitHub home? Point at what I should use.",
-                doneWhen: "The learner is on GitHub search, explore, dashboard, or homepage — not stuck inside one repository.",
-                tips: ["Logo and search are common escape hatches — use whatever exists today"]
-            ),
-        ],
-        trackID: gitAndGitHubTrackID,
-        trackTitle: gitAndGitHubTrackTitle,
-        trackOrder: 1,
-        prerequisiteCourseIDs: nil
-    )
-
-    /// Part 2 — real git on the Mac (Terminal), not just the website.
-    static let githubGitFundamentalsCourse = ClickyCourse(
-        id: "github-git-fundamentals",
-        title: "Git on Your Mac",
-        subtitle: "Clone, status, commit — in Terminal",
-        description: "Part 2 of Git & GitHub — leave the website and use git locally. Teachy coaches you through Terminal using whatever's on your screen.",
-        iconSystemName: "terminal",
-        estimatedMinutes: 20,
-        startURL: nil,
-        learningOutcomes: [
-            "Open Terminal (or another shell) on your Mac",
-            "Confirm git is installed (or know how to get it)",
-            "Clone a public repository to your computer",
-            "Check status and see what changed",
-            "Make a small edit and create a local commit",
-        ],
-        goals: [
-            CourseLearningGoal(
-                id: "git-open-terminal",
-                title: "Open Terminal",
-                goal: "Have a terminal window ready so you can run git commands.",
-                coachAsk: "Help me open Terminal on my Mac and get to a prompt where I can type commands. Point at what I should use if I'm looking at the screen.",
-                doneWhen: "A terminal or shell window is open and ready for typing.",
-                tips: ["Terminal.app, iTerm, or Warp all work", "You just need a command prompt"]
-            ),
-            CourseLearningGoal(
-                id: "git-check-installed",
-                title: "Check that git works",
-                goal: "Run a command that shows git is installed (or clearly see how to install it).",
-                coachAsk: "How do I check whether git is installed on my Mac? Walk me through the command and point if something on screen helps.",
-                doneWhen: "Terminal shows git version output, or the learner has started an install path and confirmed they're unblocked.",
-                tips: ["git --version is the usual check", "macOS may prompt to install developer tools — that's okay"]
-            ),
-            CourseLearningGoal(
-                id: "git-clone-repo",
-                title: "Clone a repository",
-                goal: "Clone a public GitHub repo onto your Mac so you have a local copy.",
-                coachAsk: "Help me clone a public GitHub repository to my computer with git. I can pick any small public repo — guide me through clone and where the folder ends up.",
-                doneWhen: "A clone completed successfully, or a local repo folder from the clone is visible in Terminal / Finder.",
-                tips: ["Any small public repo is fine", "Pick a folder you're comfortable downloading into"]
-            ),
-            CourseLearningGoal(
-                id: "git-status",
-                title: "Check git status",
-                goal: "Inside the cloned repo, run status (or equivalent) and understand what it's telling you.",
-                coachAsk: "I'm in a cloned repo — how do I check git status and what does a clean vs dirty tree mean? Help me run it.",
-                doneWhen: "git status (or clear status output) has been shown in the terminal for that repo.",
-                tips: ["cd into the cloned folder first", "Clean usually means nothing to commit"]
-            ),
-            CourseLearningGoal(
-                id: "git-make-commit",
-                title: "Make a local commit",
-                goal: "Change a file, stage it, and create a local commit with a message — no push required yet.",
-                coachAsk: "Help me make a tiny edit in this repo, stage it, and create a local git commit. Keep it beginner-friendly and don't push yet.",
-                doneWhen: "A new local commit exists (git log / status shows the commit), or the learner confirmed they completed commit.",
-                tips: ["Editing README with a typo fix is perfect", "Push comes in the next course"]
-            ),
-        ],
-        trackID: gitAndGitHubTrackID,
-        trackTitle: gitAndGitHubTrackTitle,
-        trackOrder: 2,
-        prerequisiteCourseIDs: ["github-basics"]
-    )
-
-    /// Part 3 — create your own repo and get code onto GitHub.
-    static let githubMakeARepoCourse = ClickyCourse(
-        id: "github-make-a-repo",
-        title: "Make a Repo & Push",
-        subtitle: "Create on GitHub, connect remote, push",
-        description: "Part 3 of Git & GitHub — create your own repository, wire up a remote, and push commits so your work lives on GitHub.",
-        iconSystemName: "plus.rectangle.on.folder",
-        estimatedMinutes: 25,
         startURL: "https://github.com/new",
         learningOutcomes: [
-            "Create a new repository on GitHub",
-            "Get a local project ready for git (init or existing folder)",
-            "Connect the local repo to the GitHub remote",
-            "Push commits so they appear on GitHub",
-            "Confirm the code is visible on the GitHub repo page",
+            "Understand how websites work (HTML structure, CSS styling, browser rendering)",
+            "Write real HTML with headings, paragraphs, links, images, and navigation",
+            "Style a site with CSS — colors, fonts, spacing, and responsive layout",
+            "Use Git to track changes and push code to GitHub",
+            "Deploy a live website to GitHub Pages with a public URL",
+            "Share a real link that anyone in the world can open",
         ],
         goals: [
             CourseLearningGoal(
-                id: "repo-create-on-github",
-                title: "Create a repository",
-                goal: "Create a new repository on GitHub (empty is fine).",
-                coachAsk: "Help me create a new repository on GitHub. I'm signed in or ready to sign in — point at how to start a new repo and what to fill in at a high level.",
-                doneWhen: "A new GitHub repository page exists (can be empty), or the create-repo form was completed.",
-                tips: ["Public is fine for learning", "You can skip README if you already have local files"]
+                id: "plan-your-site",
+                title: "Plan your site",
+                goal: "Decide what your website is about and what content goes on it — even a rough sketch is enough.",
+                coachAsk: "Help me plan a personal website. I'm not sure where to start — what should I think about before writing any code?",
+                doneWhen: "The learner can describe in one sentence what their site is about and roughly what will be on it.",
+                artifactDelta: "Site planned",
+                tips: [
+                    "A personal site only needs one page to start",
+                    "Think: who is this for? what do they need to see?",
+                    "Keep it simple — you can always add more later",
+                ],
+                teachingContext: CourseTeachingContext(
+                    concepts: [
+                        "what a website actually is (files a browser reads)",
+                        "the difference between HTML (structure) and CSS (style)",
+                        "pages, navigation, and content hierarchy",
+                    ],
+                    commonMistakes: [
+                        "trying to plan every pixel before writing any code",
+                        "making it too complicated — multiple pages, forms, databases",
+                        "not choosing a topic and getting stuck in analysis paralysis",
+                    ],
+                    successExamples: [
+                        "I want a simple page about my cat with a photo, a bio, and a contact email",
+                        "I want a portfolio with my name, what I do, and three project cards",
+                    ],
+                    whyItMatters: "A clear plan means every line of code has a purpose — no wasted effort.",
+                    teachBackPrompt: "what is your site about, and who is it for?",
+                    skipTeachBack: false
+                ),
+                toolPolicy: .pointOnly,
+                outcome: "You know what your site is called, what it's about, and roughly what goes on the page."
             ),
             CourseLearningGoal(
-                id: "repo-local-ready",
-                title: "Prepare a local project",
-                goal: "Have a local folder that is a git repo (git init or an existing project) ready to connect.",
-                coachAsk: "Help me get a local folder ready as a git repo — either init a new one with a simple file, or use a project I already have. No push yet.",
-                doneWhen: "A local directory is a git repository with at least one commit (or clearly ready to connect).",
-                tips: ["A folder with a single README is enough", "You can reuse work from Git on Your Mac"]
+                id: "create-html-file",
+                title: "Create your first HTML file",
+                goal: "Set up a project folder and write a valid HTML file that opens in a browser.",
+                coachAsk: "Help me create my first HTML file. I have a plan for my site — now I need to set up a folder and write the code. Open Terminal or Finder and walk me through it.",
+                doneWhen: "A file named index.html exists in a project folder and opens in a browser showing visible content.",
+                artifactDelta: "HTML file created",
+                remediationGoalID: "plan-your-site",
+                tips: [
+                    "index.html is the standard name for a homepage",
+                    "You can open any .html file by double-clicking it",
+                    "Don't worry about making it pretty yet — just get text on screen",
+                ],
+                teachingContext: CourseTeachingContext(
+                    concepts: [
+                        "HTML document skeleton (doctype, html, head, body)",
+                        "what goes in head (title, charset, viewport) vs body (visible content)",
+                        "opening the file in a browser to preview",
+                    ],
+                    commonMistakes: [
+                        "forgetting the closing body or html tags",
+                        "putting visible content inside head instead of body",
+                        "naming the file something other than index.html and getting confused later",
+                    ],
+                    successExamples: [
+                        "Double-click index.html and you see your text in the browser",
+                        "The browser tab shows your page title",
+                    ],
+                    whyItMatters: "Every website starts with a single HTML file — this is the foundation everything else builds on.",
+                    teachBackPrompt: "what are the main parts of an HTML document and what goes in each?",
+                    skipTeachBack: false
+                ),
+                toolPolicy: .helpWhenStuck,
+                outcome: "A file called index.html that opens in your browser and shows some text."
             ),
             CourseLearningGoal(
-                id: "repo-add-remote",
-                title: "Connect the remote",
-                goal: "Add the GitHub repo as the remote for your local project.",
-                coachAsk: "How do I connect my local git repo to the GitHub repo I just created? Walk me through adding the remote — look at my screen for Terminal or GitHub's suggested commands.",
-                doneWhen: "A remote pointing at the GitHub repo is configured (e.g. git remote -v shows it), or the learner confirmed it's set.",
-                tips: ["GitHub often shows the exact commands after create", "HTTPS or SSH both work — pick what you can auth with"]
+                id: "add-content",
+                title: "Add real content",
+                goal: "Fill the page with actual content — a heading, paragraphs, a link, and an image.",
+                coachAsk: "My HTML file exists but it's mostly empty. Help me add real content — a heading, some paragraphs, maybe a link and an image.",
+                doneWhen: "The page has at least a heading, a paragraph, one link, and one image (or clear placeholder).",
+                artifactDelta: "Content added",
+                remediationGoalID: "create-html-file",
+                tips: [
+                    "Use h1 for the main title, h2 for section headings",
+                    "Images need both a file and alt text",
+                    "Links use a tag with href",
+                ],
+                teachingContext: CourseTeachingContext(
+                    concepts: [
+                        "heading hierarchy (h1 through h6 — don't skip levels)",
+                        "paragraphs with p",
+                        "anchor links with a href",
+                        "images with img src and alt text",
+                        "what alt text is for (accessibility plus broken image fallback)",
+                    ],
+                    commonMistakes: [
+                        "using headings just to make text big (use CSS for that)",
+                        "forgetting alt text on images",
+                        "putting block content inside inline elements",
+                        "using absolute URLs for local images that won't work when deployed",
+                    ],
+                    successExamples: [
+                        "The page clearly tells a story: title, intro, details, link",
+                        "Images load and have descriptive alt text",
+                    ],
+                    whyItMatters: "Content is why people visit your site. Without real content, it is just an empty frame.",
+                    teachBackPrompt: "what content does your page have and why did you choose those elements?",
+                    skipTeachBack: false
+                ),
+                toolPolicy: .preferPointing,
+                outcome: "The page has a title, some text about you or your topic, a clickable link, and an image."
             ),
             CourseLearningGoal(
-                id: "repo-push",
+                id: "style-with-css",
+                title: "Style with CSS",
+                goal: "Make the page look intentional with colors, fonts, spacing, and layout.",
+                coachAsk: "My page has content but it looks like a plain document. Help me add CSS to make it look like a real website — colors, fonts, and layout.",
+                doneWhen: "The page has custom colors, fonts, spacing, and at least one layout technique (centering, flexbox, or grid).",
+                artifactDelta: "CSS styles applied",
+                remediationGoalID: "add-content",
+                tips: [
+                    "A style tag in head is the fastest way to start",
+                    "body with font-family: system-ui gives you a modern font for free",
+                    "margin: 0 auto centers content; max-width keeps it readable",
+                ],
+                teachingContext: CourseTeachingContext(
+                    concepts: [
+                        "CSS selectors (element, class, id)",
+                        "the box model (margin, border, padding, content)",
+                        "flexbox for layout (display: flex, justify-content, align-items)",
+                        "responsive units (rem, percent, max-width) vs fixed pixels",
+                        "color: hex vs named colors vs rgb",
+                    ],
+                    commonMistakes: [
+                        "using !important to fix specificity issues instead of learning selectors",
+                        "hardcoding pixel widths that break on different screens",
+                        "putting CSS inline instead of in a stylesheet or style block",
+                        "not testing at different browser widths",
+                    ],
+                    successExamples: [
+                        "The page looks clean and intentional at desktop width",
+                        "Content is centered and has breathing room",
+                        "Fonts are readable and consistent",
+                    ],
+                    whyItMatters: "CSS is the difference between a document and a designed experience. It is what makes people stay.",
+                    teachBackPrompt: "what is the box model and how does flexbox help you layout a page?",
+                    skipTeachBack: false
+                ),
+                toolPolicy: .helpWhenStuck,
+                outcome: "The page has a background color, readable fonts, proper spacing, and looks designed rather than raw."
+            ),
+            CourseLearningGoal(
+                id: "make-it-responsive",
+                title: "Make it responsive",
+                goal: "Ensure the site looks good on phones, tablets, and desktops.",
+                coachAsk: "My site looks good on my laptop but probably breaks on a phone. Help me make it responsive so it works everywhere.",
+                doneWhen: "The site looks usable at 320px width (phone) and 1200px plus (desktop) with no horizontal scrolling.",
+                artifactDelta: "Responsive layout",
+                remediationGoalID: "style-with-css",
+                tips: [
+                    "The viewport meta tag is required",
+                    "max-width: 100% on images prevents overflow",
+                    "Media queries change styles at different breakpoints",
+                ],
+                teachingContext: CourseTeachingContext(
+                    concepts: [
+                        "the viewport meta tag (without it, phones render at 960px)",
+                        "mobile-first design (style for small screens first, add complexity for large)",
+                        "media queries (min-width breakpoints)",
+                        "flexible units (percent, vw, rem) vs fixed pixels",
+                        "flex-wrap for multi-item layouts",
+                    ],
+                    commonMistakes: [
+                        "forgetting the viewport meta tag entirely",
+                        "using fixed pixel widths on containers",
+                        "designing for desktop first and bolting on mobile later",
+                        "not testing on an actual phone or narrow browser window",
+                    ],
+                    successExamples: [
+                        "Open the site on your phone and it looks like it was made for it",
+                        "Resize the browser window and content reflows smoothly",
+                        "No horizontal scrollbar at any width",
+                    ],
+                    whyItMatters: "Over half of web traffic is mobile. A site that only works on desktop is broken for most people.",
+                    teachBackPrompt: "what is the viewport meta tag and why is it the first thing you need for mobile?",
+                    skipTeachBack: false
+                ),
+                toolPolicy: .preferPointing,
+                outcome: "The site adapts to different screen sizes — text is readable, nothing overflows, images scale."
+            ),
+            CourseLearningGoal(
+                id: "add-more-pages",
+                title: "Add more pages",
+                goal: "Create a second page and link between pages with a consistent navigation menu.",
+                coachAsk: "My one page looks great. Help me add a second page — like an About or Projects page — and link them together so visitors can navigate.",
+                doneWhen: "A second .html file exists with real content, and a nav element on both pages links between them.",
+                artifactDelta: "Multi-page site",
+                remediationGoalID: "make-it-responsive",
+                tips: [
+                    "Copy index.html as a starting point for the new page",
+                    "Keep the nav identical on both pages (same links, same order)",
+                    "Use relative links — not absolute paths",
+                ],
+                teachingContext: CourseTeachingContext(
+                    concepts: [
+                        "relative vs absolute paths",
+                        "consistent navigation across pages",
+                        "the nav semantic element",
+                        "copy-paste as a starting point (DRY comes later)",
+                    ],
+                    commonMistakes: [
+                        "using different nav structures on different pages",
+                        "broken links because of wrong file paths",
+                        "putting the nav inside the wrong element",
+                        "copying the page but forgetting to update the title",
+                    ],
+                    successExamples: [
+                        "Clicking About in the nav takes you to about.html and back",
+                        "Both pages share the same visual style and nav layout",
+                        "The browser tab title is different on each page",
+                    ],
+                    whyItMatters: "A website with one page is a flyer. Multiple pages with navigation is a site.",
+                    teachBackPrompt: "what is the difference between relative and absolute paths in links?",
+                    skipTeachBack: false
+                ),
+                toolPolicy: .preferPointing,
+                outcome: "At least two pages exist (e.g. index.html plus about.html) with a nav that links between them."
+            ),
+            CourseLearningGoal(
+                id: "push-to-github",
                 title: "Push to GitHub",
-                goal: "Push your local commits so they land on GitHub.",
-                coachAsk: "Help me push my local commits to GitHub. If auth pops up, coach me through whatever's on screen without assuming one login method.",
-                doneWhen: "Push succeeded, or GitHub shows the commits/files from the local repo.",
-                tips: ["Auth prompts are normal the first time", "If push fails, read the error together — don't panic"]
+                goal: "Initialize a Git repo and push your site to GitHub so it is backed up and ready to deploy.",
+                coachAsk: "My site is done locally. Help me put it on GitHub so it is saved online and ready to deploy.",
+                doneWhen: "A GitHub repository exists with all site files committed and pushed.",
+                artifactDelta: "Code on GitHub",
+                remediationGoalID: "add-more-pages",
+                tips: [
+                    "git init then git add . then git commit then git push",
+                    "Add a .gitignore with just .DS_Store to keep macOS junk out",
+                    "Name the repo something simple like my-website",
+                ],
+                teachingContext: CourseTeachingContext(
+                    concepts: [
+                        "Git tracks changes to files over time",
+                        "git init, git add, git commit, git push — the core loop",
+                        "GitHub is where your Git repo lives online",
+                        "README.md is the file GitHub shows on the repo homepage",
+                    ],
+                    commonMistakes: [
+                        "running git commands in the wrong directory",
+                        "committing before adding files (git add first)",
+                        "forgetting to create the GitHub repo before pushing",
+                        "pushing to main vs main branch naming confusion",
+                    ],
+                    successExamples: [
+                        "git status shows nothing to commit and git remote -v shows your GitHub URL",
+                        "Opening github.com/YOU/repo-name shows all your files",
+                    ],
+                    whyItMatters: "Git is your safety net — you can always go back. GitHub is where your code lives before it goes live.",
+                    teachBackPrompt: "what are the four git commands in the core workflow and what does each one do?",
+                    skipTeachBack: false
+                ),
+                toolPolicy: .helpWhenStuck,
+                outcome: "Your site code is on GitHub in a repository with all your files committed."
             ),
             CourseLearningGoal(
-                id: "repo-confirm-online",
-                title: "Confirm it's online",
-                goal: "Open the GitHub repo page and see your files or latest commit there.",
-                coachAsk: "Show me how to confirm my code is actually on GitHub — point at the repo page proof that the push worked.",
-                doneWhen: "The GitHub repository page shows the pushed files or commit.",
-                tips: ["Refresh the repo page if it still looks empty", "You're done when you can see your stuff online"]
+                id: "deploy-to-github-pages",
+                title: "Deploy to GitHub Pages",
+                goal: "Turn your GitHub repo into a live website with a public URL anyone can visit.",
+                coachAsk: "My code is on GitHub. Help me deploy it to GitHub Pages so I can share a live link with anyone.",
+                doneWhen: "The GitHub Pages URL loads in a browser and shows the deployed site.",
+                artifactDelta: "Live on the internet",
+                remediationGoalID: "push-to-github",
+                tips: [
+                    "Settings then Pages then Source: main branch then Save",
+                    "It takes 1-2 minutes to deploy the first time",
+                    "If it 404s, check that your main file is named index.html",
+                ],
+                teachingContext: CourseTeachingContext(
+                    concepts: [
+                        "GitHub Pages serves your repo as a website for free",
+                        "Settings then Pages then choose your branch",
+                        "the deployment URL format: username.github.io/repo-name",
+                        "pushing a new commit triggers automatic redeployment",
+                    ],
+                    commonMistakes: [
+                        "forgetting to enable GitHub Pages in Settings",
+                        "selecting the wrong branch (use main, not a feature branch)",
+                        "naming the file something other than index.html",
+                        "not waiting long enough for the first deploy",
+                    ],
+                    successExamples: [
+                        "The URL loads and shows your site exactly as it looks locally",
+                        "You can share the link and someone else can open it",
+                        "Pushing a change to GitHub updates the live site within minutes",
+                    ],
+                    whyItMatters: "This is the moment your work becomes real — a URL you can put in your bio, share with friends, or add to a resume.",
+                    teachBackPrompt: "what is GitHub Pages and how does pushing a commit update the live site?",
+                    skipTeachBack: false
+                ),
+                toolPolicy: .preferPointing,
+                outcome: "Your site is live at a public URL anyone can visit."
+            ),
+            CourseLearningGoal(
+                id: "share-your-site",
+                title: "Share your site",
+                goal: "Open your live site, verify everything works, and share the link.",
+                coachAsk: "My site is deployed! Help me open it, check that everything looks right, and grab the link so I can share it.",
+                doneWhen: "The learner has opened their live site, verified the content and navigation work, and can state their URL.",
+                artifactDelta: "Site shared",
+                tips: [
+                    "Open in a private/incognito window to see the fresh version",
+                    "Test every link and page",
+                    "Copy the URL — you earned it",
+                ],
+                teachingContext: CourseTeachingContext(
+                    concepts: [
+                        "cache busting (hard refresh or incognito for fresh deploys)",
+                        "testing navigation across pages on the live version",
+                        "what to share: the URL in a bio, message, or social post",
+                    ],
+                    commonMistakes: [
+                        "checking the cached old version and thinking deploy failed",
+                        "forgetting to test links on the live site (not just locally)",
+                        "not saving the URL",
+                    ],
+                    successExamples: [
+                        "The live site loads with correct content, styling, and navigation",
+                        "All links work on the live version",
+                        "You have the URL copied and ready to share",
+                    ],
+                    whyItMatters: "Building something is great. Sharing it is what makes it matter.",
+                    teachBackPrompt: "what is the URL of your site and how would you describe it to someone?",
+                    skipTeachBack: false
+                ),
+                toolPolicy: .pointOnly,
+                outcome: "You can open your live site, confirm it looks right, and share the URL with anyone."
             ),
         ],
-        trackID: gitAndGitHubTrackID,
-        trackTitle: gitAndGitHubTrackTitle,
-        trackOrder: 3,
-        prerequisiteCourseIDs: ["github-git-fundamentals"]
-    )
-
-    /// Part 4 — collaboration: branches, PRs, and contributing.
-    static let githubCollaborateCourse = ClickyCourse(
-        id: "github-collaborate",
-        title: "Branches & Pull Requests",
-        subtitle: "Branch, push, open a PR",
-        description: "Part 4 of Git & GitHub — the collaboration loop: branch off main, push your branch, and open a pull request like real teams do.",
-        iconSystemName: "arrow.triangle.branch",
-        estimatedMinutes: 25,
-        startURL: "https://github.com",
-        learningOutcomes: [
-            "Create a new git branch for a change",
-            "Commit work on that branch",
-            "Push the branch to GitHub",
-            "Open a pull request",
-            "Understand merge vs keeping the PR open for review",
-        ],
-        goals: [
-            CourseLearningGoal(
-                id: "collab-create-branch",
-                title: "Create a branch",
-                goal: "Create and switch to a new branch for a small change.",
-                coachAsk: "Help me create a new git branch for a small change and switch to it. Keep the name simple — look at my Terminal if it's open.",
-                doneWhen: "A new branch is checked out (git branch / status shows it).",
-                tips: ["Something like fix-readme is a great name", "Stay off main/master for the experiment"]
-            ),
-            CourseLearningGoal(
-                id: "collab-commit-on-branch",
-                title: "Commit on the branch",
-                goal: "Make a small change and commit it on your branch.",
-                coachAsk: "Help me make a tiny change on this branch and commit it — same idea as before, just on the feature branch.",
-                doneWhen: "At least one commit exists on the new branch.",
-                tips: ["A README tweak is perfect"]
-            ),
-            CourseLearningGoal(
-                id: "collab-push-branch",
-                title: "Push the branch",
-                goal: "Push your branch to GitHub so it exists remotely.",
-                coachAsk: "Help me push this branch to GitHub so I can open a pull request next.",
-                doneWhen: "The branch exists on the GitHub remote (push succeeded or branch visible on GitHub).",
-                tips: ["First push of a branch often needs -u / upstream setup — coach whatever the tool suggests"]
-            ),
-            CourseLearningGoal(
-                id: "collab-open-pr",
-                title: "Open a pull request",
-                goal: "Open a pull request from your branch into the default branch.",
-                coachAsk: "Help me open a pull request on GitHub from my branch. Point at what I should use and explain what the PR is asking for in one casual sentence.",
-                doneWhen: "A pull request page or create-PR flow is open for the branch.",
-                tips: ["GitHub often shows a Compare & pull request banner after push", "Draft PRs are fine for learning"]
-            ),
-            CourseLearningGoal(
-                id: "collab-understand-next",
-                title: "Know what happens next",
-                goal: "Understand merge vs leaving the PR open — and optionally merge if it's your own practice repo.",
-                coachAsk: "I've got a pull request open — briefly explain merge vs leaving it for review, and point at the merge control if I want to finish on my own practice repo.",
-                doneWhen: "The learner confirmed they understand the next step, or they merged the practice PR.",
-                tips: ["On a throwaway practice repo, merging is fine", "On someone else's project, don't merge without permission"]
-            ),
-        ],
-        trackID: gitAndGitHubTrackID,
-        trackTitle: gitAndGitHubTrackTitle,
-        trackOrder: 4,
-        prerequisiteCourseIDs: ["github-make-a-repo"]
+        artifact: CourseArtifactSpec(
+            kind: "website",
+            icon: "globe",
+            initialState: "no files, no site, nothing exists yet",
+            finalState: "a live personal website deployed on GitHub Pages with a public URL",
+            previewIfNoProgress: "No website yet — let's build one"
+        ),
+        trackID: webFundamentalsTrackID,
+        trackTitle: webFundamentalsTrackTitle,
+        trackOrder: nil,
+        prerequisiteCourseIDs: nil
     )
 
     static func courseCoachSystemPrompt(
         for session: ClickyCourseSession,
         learnerProfile: CourseLearnerProfile = CourseLearnerProfile(),
+        globalLearnerProfile: CourseLearnerProfile? = nil,
         activeTeacherVideoNotes: String? = nil
     ) -> String {
         let course = session.course
@@ -1247,19 +1015,49 @@ enum ClickyCourseCatalog {
 
         let lessonBrief = goal.teachingBriefPromptSection(activeTeacherVideoNotes: activeTeacherVideoNotes)
         let learnerSection = learnerProfile.promptSection
+        let globalLearnerSection: String
+        if let globalProfile = globalLearnerProfile, globalProfile != CourseLearnerProfile() {
+            globalLearnerSection = globalProfile.globalPromptSection
+        } else {
+            globalLearnerSection = ""
+        }
+
+        let artifactSection: String
+        if let artifact = course.artifact {
+            let historySnippet: String
+            if !session.artifactHistory.isEmpty {
+                let recent = session.artifactHistory.suffix(3)
+                historySnippet = recent.map { "  - after \($0.goalID): \($0.stateDescription)" }.joined(separator: "\n")
+            } else {
+                historySnippet = "  - starting state: \(artifact.initialState)"
+            }
+            artifactSection = """
+
+            ARTIFACT (\(artifact.kind)):
+            Starting state: \(artifact.initialState)
+            Final state: \(artifact.finalState)
+            Progress so far:
+            \(historySnippet)
+            \(goal.artifactDelta.map { "This goal should change the artifact: \($0)" } ?? "")
+            """
+        } else {
+            artifactSection = ""
+        }
 
         return """
-        you're teachy — a little blue buddy who lives in their menu bar. same energy as the intro: warm, playful, a little cheeky, always on their side.
-        you're a 1:1 tutor on the mac. not a manual. not a lecture. not a corporate chatbot.
-        you sit beside their cursor, look at their screen, and get THIS goal done — together.
+        You are Teachy — sitting right next to them at their computer, looking at the same screen.
+        You are not a manual, not a lecture, not a chatbot. You are a calm, sharp human coach
+        helping them get THIS goal done by doing it on their real Mac.
 
-        voice (this is you):
-        - lowercase, casual, short. sound like texting a smart friend who actually cares.
-        - one clear beat at a time. never a TED talk. never "certainly" / "simply" / "just".
-        - celebrate tiny wins like they matter. roast confusion gently, never mock them.
-        - specific > vague. if something's on screen, name it and POINT.
-        - when stuck: empathy in half a breath, then the next move.
-        - personality > polish. you'd rather be fun and clear than formal and "correct".
+        Teachy IS AI fluency: teaching people to use real AI tools and to actually ship work —
+        ChatGPT, Claude, agents, Wispr Flow, websites, whatever is on their screen — by practice, not videos.
+
+        How you talk (this is spoken out loud — sound human):
+        - Warm, natural full sentences. Contractions. Like a friend who knows their stuff.
+        - One clear beat at a time. Never a TED talk. Never "certainly" / "simply" / robotic filler.
+        - Specific > vague. If it's on screen, name it and POINT at the real control.
+        - Celebrate real tiny wins. When they're lost: half a breath of empathy, then the next move.
+        - Personality never overrides clarity. Stuck? Drop the jokes and be plainly specific.
 
         COURSE: \(course.title)
         By the end they should be able to:
@@ -1269,16 +1067,18 @@ enum ClickyCourseCatalog {
         CURRENT GOAL (\(session.currentStepIndex + 1) of \(course.stepCount)): \(goal.title)
         Success looks like: \(goal.goal)\(tipsSection)
         \(lessonBrief)
+        \(artifactSection)
         \(learnerSection)
+        \(globalLearnerSection)
 
         \(TeachyCourseCapabilityCard.text)
 
         NEVER ASSUME THEY KNOW JARGON:
-        - don't assume they know what Claude, ChatGPT, Cursor, HTML, a prompt, a browser tab, or a “chat” is.
-        - introduce tools in one plain sentence the FIRST time you mention them
-          (e.g. “Claude is a free AI website — you type what you want, and it writes back.”).
-        - if learner model says they already know something, skip that explanation.
-        - if they're advanced, stay short — don't lecture people who already get it.
+        - Don't assume they know Claude, ChatGPT, Cursor, HTML, a prompt, a browser tab, or "chat".
+        - Introduce tools in one plain sentence the FIRST time
+          (e.g. "Claude is an AI website — you type what you want, and it writes back.").
+        - If the learner model says they already know something, skip that explanation.
+        - If they're advanced, stay short — don't lecture people who already get it.
 
         HOW YOU FORMAT EVERY REPLY (required):
         Always use BOTH tags so the app can style them differently:
@@ -1286,21 +1086,35 @@ enum ClickyCourseCatalog {
         [TODO] one concrete action they should do next — the do-this-now beat [/TODO]
         - INFO = teaching / clarifying (not a button to click yet)
         - TODO = their move (click, type, open, paste, send)
-        - one INFO + one TODO only. lowercase, warm. no markdown outside the tags.
-        - still include [POINT:cell:label] when they should click something on screen (usually with TODO).
-        - optionally append invisible memory tags (never speak them): [MEMORY:knows:short fact] or [MEMORY:confused:short fact]
+        - one INFO + one TODO only. Warm spoken English. No markdown outside the tags.
+        - Include [POINT:cell:label] or better [POINT:x,y:label] when they should click something.
+        - Optionally append invisible memory tags (never speak them): [MEMORY:knows:…] or [MEMORY:confused:…]
 
-        how you teach:
-        - look at their screen RIGHT NOW. uis change — never assume old buttons or menus.
-        - remember this session + learner model. don't re-explain what they just did or already know.
-        - always leave them with ONE concrete next move in [TODO] — never two options, never a list.
-        - urge them forward: if they're staring, off-track, or chatting idly, gently steer back to this goal.
-        - default: [POINT:cell:label] at the real control and tell THEM to click it inside [TODO].
-        - respect TOOL POLICY above when deciding whether to USE TOOLS.
-        - never dump the curriculum. never say "simply" or "just".
-        - if the goal is already done on screen, celebrate in [INFO] and tell them in [TODO] to say "next step".
-        - when answering side questions: short [INFO] answer, then [TODO] that points them back to THIS goal.
-        - if teacher clip notes are present, reference one beat from them — don't ignore the human teacher.
+        How you teach:
+        - Look at their screen RIGHT NOW. UIs change — never assume old buttons or menus.
+        - Remember this session + learner model. Don't re-explain what they just did.
+        - Always leave them with ONE concrete next move in [TODO] — never two options, never a list.
+        - Default: POINT at the real control and tell THEM to click it inside [TODO].
+        - Respect TOOL POLICY when deciding whether to USE TOOLS / do it for them.
+        - If the goal is already done on screen, celebrate in [INFO] and [TODO] say "next step".
+        - Side questions: short [INFO], then [TODO] back to THIS goal.
+
+        Non-negotiable:
+        - Default socratic, not answers — unless toolPolicy is canDoForThem or they asked twice.
+        - Acknowledge before correcting (name what they got right first).
+        - Use the learner profile — skip what they already know; address confusions.
+        - One question at a time in teach-back.
+        - No fake praise — only specific real things they did.
+        - After 2 failed attempts, offer to do the automatable part if policy allows.
+
+        MOOD:
+        - frustrated: warm, concrete, one action, offer help sooner.
+        - bored: faster, skip the obvious, add a challenge.
+        - confused: slower, simpler words, one tiny check.
+        - engaged: match energy, keep moving.
+
+        MULTI-STEP tasks: map steps in [INFO], then one step at a time with POINT + TODO.
+        Keep the step count honest.
 
         \(ScreenGridAnnotationUtility.modelInstructions)
         """
@@ -1309,65 +1123,17 @@ enum ClickyCourseCatalog {
     static func voiceKeyterms(forCourseID courseID: String) -> [String] {
         let sharedAdvance = ["next step", "exit course", "i did it"]
         switch courseID {
-        case youtubeBasicsCourse.id:
+        case buildAWebsiteCourse.id:
             return [
-                "YouTube",
-                "search",
-                "fullscreen",
-                "subscribe",
-                "pause",
-                "play",
-            ] + sharedAdvance
-        case khanAcademyBasicsCourse.id:
-            return [
-                "Khan Academy",
-                "Khan",
-                "subject",
-                "lesson",
-                "practice",
-                "exercise",
-                "math",
-            ] + sharedAdvance
-        case githubBasicsCourse.id:
-            return [
+                "website",
+                "HTML",
+                "CSS",
+                "deploy",
                 "GitHub",
-                "repository",
-                "repo",
-                "issues",
-                "pull request",
-                "pull requests",
-                "README",
-                "search",
-            ] + sharedAdvance
-        case githubGitFundamentalsCourse.id:
-            return [
-                "git",
-                "GitHub",
-                "Terminal",
-                "clone",
-                "commit",
-                "status",
-                "repository",
-            ] + sharedAdvance
-        case githubMakeARepoCourse.id:
-            return [
-                "git",
-                "GitHub",
-                "repository",
-                "remote",
-                "push",
-                "commit",
-                "Terminal",
-            ] + sharedAdvance
-        case githubCollaborateCourse.id:
-            return [
-                "git",
-                "GitHub",
-                "branch",
-                "pull request",
-                "merge",
-                "push",
-                "commit",
+                "page",
+                "code",
+                "browser",
+                "responsive",
             ] + sharedAdvance
         default:
             return sharedAdvance

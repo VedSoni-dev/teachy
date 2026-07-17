@@ -26,6 +26,8 @@ final class CoursesManager: ObservableObject {
     @Published private(set) var courseRollingMemory: [String] = []
     /// Richer durable learner model for the active course (knows / confused / prefs).
     @Published private(set) var learnerProfile: CourseLearnerProfile = CourseLearnerProfile()
+    /// Persistent global learner profile — carries knowledge across all courses.
+    @Published private(set) var globalLearnerProfile: CourseLearnerProfile = CourseLearnerProfile()
     /// Notes from the teacher clip that just played — injected into the next coach turns.
     @Published private(set) var activeTeacherVideoNotes: String?
     /// Courses installed from the academy / a URL (not bundled).
@@ -45,6 +47,7 @@ final class CoursesManager: ObservableObject {
     private static let courseSourcesFileName = "sources.json"
     private static let learnerMemoryUserDefaultsKey = "clickyCourseLearnerMemoryByCourseID"
     private static let learnerProfileUserDefaultsKey = "teachyCourseLearnerProfileByCourseID"
+    private static let globalLearnerProfileUserDefaultsKey = "teachyGlobalLearnerProfile"
     private static let simplifiedCatalogUserDefaultsKey = "teachyPreferSimplifiedCatalog"
     private static let bundledCourseIDs: Set<String> = Set(ClickyCourseCatalog.bundledCourses.map(\.id))
 
@@ -54,6 +57,7 @@ final class CoursesManager: ObservableObject {
         loadProgressFromDisk()
         loadInstalledCourseSourcesFromDisk()
         preferSimplifiedCatalog = UserDefaults.standard.object(forKey: Self.simplifiedCatalogUserDefaultsKey) as? Bool ?? true
+        globalLearnerProfile = Self.loadGlobalLearnerProfile()
         reloadCourseCatalog()
     }
 
@@ -75,6 +79,13 @@ final class CoursesManager: ObservableObject {
         }
     }
 
+    /// Adds a dynamically generated course to the catalog (in-memory only).
+    func addCustomCourse(_ course: ClickyCourse) {
+        if !availableCourses.contains(where: { $0.id == course.id }) {
+            availableCourses.append(course)
+        }
+    }
+
     /// Continue target — most recently accessed incomplete course, else First Win / flagship.
     var continueCourse: ClickyCourse? {
         let candidates = availableCourses.compactMap { course -> (ClickyCourse, Date)? in
@@ -87,11 +98,8 @@ final class CoursesManager: ObservableObject {
         if let best = candidates.max(by: { $0.1 < $1.1 }) {
             return best.0
         }
-        if progress(forCourseID: "ai-first-win")?.isFullyCompleted != true {
-            return course(withID: "ai-first-win")
-        }
-        if progress(forCourseID: "ai-to-code")?.isFullyCompleted != true {
-            return course(withID: "ai-to-code")
+        if progress(forCourseID: "build-a-website")?.isFullyCompleted != true {
+            return course(withID: "build-a-website")
         }
         return nil
     }
@@ -188,17 +196,38 @@ final class CoursesManager: ObservableObject {
     }
 
     func presentCompletionCelebration(for course: ClickyCourse) {
+        let conceptsLearned = globalLearnerProfile.knows.suffix(5)
+        let recap: String
+        if !conceptsLearned.isEmpty {
+            recap = "You learned: \(conceptsLearned.joined(separator: ", "))."
+        } else {
+            recap = "You completed all \(course.stepCount) goals in this course."
+        }
+
+        let nextSteps: [String]
+        if course.id == "build-a-website" {
+            nextSteps = [
+                "add more pages to your site",
+                "try a different course to learn something new",
+                "build something from scratch without guidance"
+            ]
+        } else {
+            nextSteps = [
+                "apply what you learned to a real project",
+                "teach someone else what you just learned",
+                "explore the next course in this track"
+            ]
+        }
+
         completionCelebration = CourseCompletionCelebration(
             courseID: course.id,
             title: course.title,
-            message: course.id == "ai-first-win"
-                ? "You built something with AI. Next up: Use AI to Code."
-                : "You finished \(course.title). That’s a real outcome — keep going."
+            message: course.id == "build-a-website"
+                ? "You built and deployed a real website. That's a real outcome — keep going."
+                : "You finished \(course.title). That's a real outcome — keep going.",
+            recap: recap,
+            nextSteps: nextSteps
         )
-        if course.id == "ai-first-win" {
-            // After first win, gently open the full catalog.
-            setPreferSimplifiedCatalog(false)
-        }
     }
 
     // MARK: - Session lifecycle
@@ -212,7 +241,9 @@ final class CoursesManager: ObservableObject {
             course: course,
             currentStepIndex: startIndex,
             startedAt: Date(),
-            stepConversationHistory: []
+            stepConversationHistory: [],
+            artifactHistory: [],
+            failureCountByGoalID: [:]
         )
         activeSession = session
         courseToolStepLog = []
@@ -248,6 +279,10 @@ final class CoursesManager: ObservableObject {
         activeTeacherVideoNotes = nil
         isCourseInteractionRunning = false
         courseTeachingPhase = .idle
+    }
+
+    func detectMoodFromUserResponse(_ response: String) {
+        learnerProfile.detectMood(from: response)
     }
 
     func setCourseTeachingPhase(_ phase: CourseTeachingPhase) {
@@ -363,6 +398,39 @@ final class CoursesManager: ObservableObject {
 
     func clearActiveTeacherVideoNotes() {
         activeTeacherVideoNotes = nil
+    }
+
+    // MARK: - Failure tracking
+
+    func incrementFailureCount(forGoalID goalID: String) -> Int {
+        guard var session = activeSession else { return 0 }
+        let current = session.failureCountByGoalID[goalID] ?? 0
+        let newCount = current + 1
+        session.failureCountByGoalID[goalID] = newCount
+        activeSession = session
+        return newCount
+    }
+
+    func failureCount(forGoalID goalID: String) -> Int {
+        activeSession?.failureCountByGoalID[goalID] ?? 0
+    }
+
+    // MARK: - Artifact snapshots
+
+    func appendArtifactSnapshot(goalID: String, stateDescription: String) {
+        guard var session = activeSession else { return }
+        let snapshot = CourseArtifactSnapshot(
+            goalID: goalID,
+            stateDescription: stateDescription,
+            capturedAt: Date()
+        )
+        session.artifactHistory.append(snapshot)
+        activeSession = session
+    }
+
+    func appendArtifactSnapshotFromVerifyResult(goalID: String, result: CourseVerificationResult) {
+        guard !result.whatsGood.isEmpty else { return }
+        appendArtifactSnapshot(goalID: goalID, stateDescription: result.whatsGood)
     }
 
     func noteLearnerKnows(_ item: String) {
@@ -490,11 +558,8 @@ final class CoursesManager: ObservableObject {
     // MARK: - Spoken copy
 
     func spokenCourseCompletion(for course: ClickyCourse) -> String {
-        if course.id == "ai-first-win" {
-            return "yo that’s a real win — you made something with AI. next up, Use AI to Code whenever you’re ready."
-        }
-        if course.id == "ai-to-code" {
-            return "you finished Use AI to Code. that’s a real build — i’m hyped for you."
+        if course.id == "build-a-website" {
+            return "yo you just built and deployed a real website — that’s yours now, live on the internet."
         }
         return "nice — you finished \(course.title). that one’s yours now. keep going when you feel it."
     }
@@ -504,6 +569,7 @@ final class CoursesManager: ObservableObject {
         ClickyCourseCatalog.courseCoachSystemPrompt(
             for: session,
             learnerProfile: learnerProfile,
+            globalLearnerProfile: globalLearnerProfile,
             activeTeacherVideoNotes: activeTeacherVideoNotes
         )
     }
@@ -710,5 +776,153 @@ final class CoursesManager: ObservableObject {
         progress.lastAccessedAt = Date()
         progressByCourseID[courseID] = progress
         saveProgressToDisk()
+        mergeCourseProfileIntoGlobal(courseID: courseID)
+    }
+
+    // MARK: - Global learner profile (cross-course memory)
+
+    private static func loadGlobalLearnerProfile() -> CourseLearnerProfile {
+        guard let data = UserDefaults.standard.data(forKey: Self.globalLearnerProfileUserDefaultsKey),
+              let decoded = try? JSONDecoder().decode(CourseLearnerProfile.self, from: data) else {
+            return CourseLearnerProfile()
+        }
+        return decoded
+    }
+
+    private func saveGlobalLearnerProfile() {
+        guard let encoded = try? JSONEncoder().encode(globalLearnerProfile) else { return }
+        UserDefaults.standard.set(encoded, forKey: Self.globalLearnerProfileUserDefaultsKey)
+    }
+
+    private func mergeCourseProfileIntoGlobal(courseID: String) {
+        guard let data = UserDefaults.standard.data(forKey: Self.learnerProfileUserDefaultsKey),
+              let allProfiles = try? JSONDecoder().decode([String: CourseLearnerProfile].self, from: data),
+              let courseProfile = allProfiles[courseID] else { return }
+
+        for concept in courseProfile.knows {
+            globalLearnerProfile.noteKnows(concept)
+        }
+        for concept in courseProfile.confusedBy {
+            globalLearnerProfile.noteConfusedBy(concept)
+        }
+        saveGlobalLearnerProfile()
+        print("🧠 Global learner profile updated with \(courseProfile.knows.count) knows from \(courseID)")
+    }
+
+    // MARK: - Engine LearnerModel bridge
+
+    /// Sync the legacy CourseLearnerProfile into the engine's rich LearnerModel.
+    /// Called on init and when courses complete.
+    func syncToEngineLearnerModel(_ engine: TeachyEngine) {
+        let legacyProfile = globalLearnerProfile
+        if engine.getLearnerModel().skillNodes.isEmpty && (!legacyProfile.knows.isEmpty || !legacyProfile.confusedBy.isEmpty) {
+            let migratedModel = LearnerModel(from: legacyProfile)
+            engine.setLearnerModel(migratedModel)
+            print("🧠 Migrated legacy learner profile to engine LearnerModel (\(migratedModel.skillNodes.count) skills)")
+        }
+    }
+
+    // MARK: - Open-ended course builder
+
+    /// Generates a custom course plan from a user's description using the LLM.
+    func generateCustomCoursePlan(
+        description: String,
+        apiClient: ClaudeAPI
+    ) async throws -> ClickyCourse {
+        let systemPrompt = """
+        You are a curriculum designer for Teachy, a macOS teaching companion.
+        Given a user's description of what they want to learn or build, create a structured course plan.
+
+        Return ONLY a JSON object with this exact structure (no markdown, no explanation):
+        {
+            "title": "Course Title",
+            "subtitle": "One-line description",
+            "description": "What they'll learn",
+            "estimatedMinutes": 30,
+            "learningOutcomes": ["outcome 1", "outcome 2", "outcome 3"],
+            "goals": [
+                {
+                    "id": "goal-1",
+                    "title": "Goal Title",
+                    "goal": "Success looks like: ...",
+                    "coachAsk": "Teaching prompt for this goal",
+                    "doneWhen": "How to verify this goal is done"
+                }
+            ]
+        }
+
+        Rules:
+        - 3-6 goals, each building on the previous
+        - Goals should be concrete and verifiable
+        - coachAsk should be a clear teaching instruction
+        - doneWhen should be a natural language description of completion
+        - Keep it practical — the user is building something, not just learning theory
+        - If they already know something (from global learner profile), skip it or make it optional
+        """
+
+        let learnerContext: String
+        if globalLearnerProfile != CourseLearnerProfile() {
+            learnerContext = "\n\nLearner already knows: \(globalLearnerProfile.knows.joined(separator: "; "))"
+        } else {
+            learnerContext = ""
+        }
+
+        let response = try await apiClient.generateText(
+            systemPrompt: systemPrompt,
+            userPrompt: "Create a course plan for: \(description)\(learnerContext)"
+        )
+
+        // Parse the JSON response
+        guard let data = response.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let title = json["title"] as? String,
+              let subtitle = json["subtitle"] as? String,
+              let description = json["description"] as? String,
+              let estimatedMinutes = json["estimatedMinutes"] as? Int,
+              let learningOutcomes = json["learningOutcomes"] as? [String],
+              let goalsJSON = json["goals"] as? [[String: Any]] else {
+            throw NSError(
+                domain: "CoursesManager",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to parse course plan"]
+            )
+        }
+
+        let goals = goalsJSON.compactMap { goalJSON -> ClickyCourseStep? in
+            guard let id = goalJSON["id"] as? String,
+                  let title = goalJSON["title"] as? String,
+                  let goal = goalJSON["goal"] as? String,
+                  let coachAsk = goalJSON["coachAsk"] as? String,
+                  let doneWhen = goalJSON["doneWhen"] as? String else {
+                return nil
+            }
+            return ClickyCourseStep(
+                id: id,
+                title: title,
+                goal: goal,
+                coachAsk: coachAsk,
+                doneWhen: doneWhen
+            )
+        }
+
+        let courseID = "custom-\(UUID().uuidString.prefix(8))"
+        return ClickyCourse(
+            id: courseID,
+            title: title,
+            subtitle: subtitle,
+            description: description,
+            iconSystemName: "sparkles",
+            estimatedMinutes: estimatedMinutes,
+            startURL: nil,
+            introVideoURL: nil,
+            teacherVideoURL: nil,
+            teacherName: nil,
+            learningOutcomes: learningOutcomes,
+            goals: goals,
+            trackID: nil,
+            trackTitle: nil,
+            trackOrder: nil,
+            prerequisiteCourseIDs: nil
+        )
     }
 }

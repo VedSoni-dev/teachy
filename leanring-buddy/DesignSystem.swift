@@ -73,6 +73,14 @@ enum DS {
         static let learnAccent = Color(hex: "#0F8A6A")
         static let learnAccentSoft = Color(hex: "#0F8A6A").opacity(0.14)
 
+        /// Portfolio tab accent (Apple dark-mode systemOrange).
+        static let portfolioAccent = Color(hex: "#FF9F0A")
+        static let portfolioAccentSoft = Color(hex: "#FF9F0A").opacity(0.14)
+
+        /// Skills tab accent (Apple dark-mode systemPurple).
+        static let skillsAccent = Color(hex: "#BF5AF2")
+        static let skillsAccentSoft = Color(hex: "#BF5AF2").opacity(0.14)
+
         // ── Semantic Colors ──────────────────────────────────────────
 
         /// Destructive/error actions — delete buttons, error messages, close button hover.
@@ -659,6 +667,44 @@ struct DSIconButtonStyle: ButtonStyle {
         } else {
             return DS.Colors.borderSubtle.opacity(0.5)
         }
+    }
+}
+
+// MARK: - Glass Card
+
+/// Native-material card background, two-tier system so the whole panel doesn't
+/// flatten into one undifferentiated blur:
+/// - `prominent: true` — hero cards (`.ultraThinMaterial`, colored tint, glow shadow)
+/// - `prominent: false` — standard list rows (`.regularMaterial`, near-neutral tint, no shadow)
+struct GlassCardModifier: ViewModifier {
+    var cornerRadius: CGFloat = 14
+    var tint: Color = DS.Colors.textPrimary
+    var prominent: Bool = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(prominent ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(.regularMaterial))
+                    .environment(\.colorScheme, .dark)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .fill(tint.opacity(prominent ? 0.10 : 0.03))
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(tint.opacity(prominent ? 0.35 : 0.08), lineWidth: prominent ? 1 : 0.75)
+            )
+            .shadow(color: prominent ? tint.opacity(0.20) : .clear, radius: prominent ? 12 : 0, x: 0, y: 4)
+    }
+}
+
+extension View {
+    /// Applies a native-material glass card background. See `GlassCardModifier`
+    /// for the prominent/standard tier distinction.
+    func glassCard(cornerRadius: CGFloat = 14, tint: Color = DS.Colors.textPrimary, prominent: Bool = false) -> some View {
+        modifier(GlassCardModifier(cornerRadius: cornerRadius, tint: tint, prominent: prominent))
     }
 }
 

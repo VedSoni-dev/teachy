@@ -13,7 +13,6 @@ import SwiftUI
 
 enum ClickySideDockPresentationMode: Equatable {
     case hidden
-    case backgroundAgent
     case composioSync(ComposioSyncPromptState)
 }
 
@@ -26,14 +25,6 @@ final class BackgroundAgentSideDockManager: ObservableObject {
 
     private let expandedPanelWidth: CGFloat = 320
     private let expandedPanelHeight: CGFloat = 380
-
-    func show(companionManager: CompanionManager) {
-        scheduledHideTask?.cancel()
-        scheduledHideTask = nil
-        presentationMode = .backgroundAgent
-        shouldAutoExpandComposioPrompt = false
-        presentPanel(companionManager: companionManager)
-    }
 
     func showComposioSyncPrompt(
         companionManager: CompanionManager,
@@ -229,14 +220,9 @@ struct BackgroundAgentSideDockView: View {
         HStack(alignment: .center, spacing: 0) {
             Spacer(minLength: 0)
 
-            if shouldShowExpandedCard {
-                if isComposioSyncMode, let syncPrompt = composioConnectionManager.activeSyncPrompt {
-                    composioSyncCard(syncPrompt: syncPrompt)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                } else {
-                    progressCard
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
+            if shouldShowExpandedCard, let syncPrompt = composioConnectionManager.activeSyncPrompt {
+                composioSyncCard(syncPrompt: syncPrompt)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
 
             mascotDock
@@ -533,141 +519,6 @@ struct BackgroundAgentSideDockView: View {
         .padding(.trailing, 8)
         .onHover { isHovering in
             isHoveringOverDock = isHovering
-        }
-    }
-
-    private var progressCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 8) {
-                Circle()
-                    .fill(agentStatusColor)
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 4)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Background agent")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(BackgroundAgentSideDockColors.textPrimary)
-
-                    Text(agentStatusText)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(BackgroundAgentSideDockColors.textSecondary)
-                }
-
-                Spacer(minLength: 0)
-
-                if isAgentActivelyWorking {
-                    ProgressView()
-                        .scaleEffect(0.65)
-                }
-            }
-
-            if let taskPrompt = companionManager.activeBackgroundAgentTaskPrompt {
-                Text(taskPrompt)
-                    .font(.system(size: 11))
-                    .foregroundColor(BackgroundAgentSideDockColors.textTertiary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if !backgroundAgentManager.stepLog.isEmpty {
-                Divider()
-                    .background(Color.white.opacity(0.08))
-
-                Text("Steps")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(BackgroundAgentSideDockColors.textTertiary)
-
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(backgroundAgentManager.stepLog.suffix(8)) { step in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    Text(BackgroundAgentSideDockFormatting.formattedToolName(step.toolName))
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(BackgroundAgentSideDockColors.textSecondary)
-                                    Spacer(minLength: 0)
-                                    Text(step.duration, format: .number.precision(.fractionLength(1)))
-                                        .font(.system(size: 10, design: .monospaced))
-                                        .foregroundColor(BackgroundAgentSideDockColors.textTertiary)
-                                    Text("s")
-                                        .font(.system(size: 10))
-                                        .foregroundColor(BackgroundAgentSideDockColors.textTertiary)
-                                }
-
-                                Text(step.result)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundColor(BackgroundAgentSideDockColors.textTertiary)
-                                    .lineLimit(2)
-                            }
-                        }
-                    }
-                }
-                .frame(maxHeight: 180)
-            }
-
-            if case .completed(let result) = backgroundAgentManager.status {
-                Divider()
-                    .background(Color.white.opacity(0.08))
-
-                Text(result.prefix(240))
-                    .font(.system(size: 11))
-                    .foregroundColor(BackgroundAgentSideDockColors.textSecondary)
-                    .lineLimit(5)
-            }
-
-            if case .failed(let error) = backgroundAgentManager.status {
-                Divider()
-                    .background(Color.white.opacity(0.08))
-
-                Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(.orange)
-                    .lineLimit(4)
-            }
-        }
-        .padding(14)
-        .frame(width: 268, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(BackgroundAgentSideDockColors.panelBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-                )
-        )
-        .shadow(color: Color.black.opacity(0.35), radius: 18, x: -4, y: 0)
-        .padding(.trailing, 8)
-        .onHover { isHovering in
-            isHoveringOverDock = isHovering
-        }
-    }
-
-    private var agentStatusColor: Color {
-        switch backgroundAgentManager.status {
-        case .idle:
-            return BackgroundAgentSideDockColors.textTertiary
-        case .reasoning, .running:
-            return BackgroundAgentSideDockColors.accentBlue
-        case .completed:
-            return .green
-        case .failed:
-            return .orange
-        }
-    }
-
-    private var agentStatusText: String {
-        switch backgroundAgentManager.status {
-        case .idle:
-            return "Idle"
-        case .reasoning:
-            return "Thinking..."
-        case .running(let toolName):
-            return "Running \(BackgroundAgentSideDockFormatting.formattedToolName(toolName))..."
-        case .completed:
-            return "Done — hover for answer"
-        case .failed:
-            return "Failed — hover for details"
         }
     }
 

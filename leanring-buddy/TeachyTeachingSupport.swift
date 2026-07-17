@@ -17,7 +17,7 @@ struct CourseTeachingContext: Codable, Equatable {
     var concepts: [String]?
     /// Typical wrong moves / confusion to watch for.
     var commonMistakes: [String]?
-    /// Concrete “you’ll know it worked when…” examples.
+    /// Concrete "you'll know it worked when…" examples.
     var successExamples: [String]?
     /// One-line why this goal matters.
     var whyItMatters: String?
@@ -43,9 +43,9 @@ enum CourseToolPolicy: String, Codable, Equatable {
         case .pointOnly:
             return "TOOL POLICY for this goal: POINT only. Do not click, type, or run tools for them — coach them through it."
         case .preferPointing:
-            return "TOOL POLICY for this goal: prefer POINTING. Use Mac tools only if they ask “do it for me” or are clearly blocked after a hint."
+            return "TOOL POLICY for this goal: prefer POINTING. Use Mac tools only if they ask \"do it for me\" or are clearly blocked after a hint."
         case .helpWhenStuck:
-            return "TOOL POLICY for this goal: if they’re stuck, USE TOOLS (open/click/type) then explain what you did in one short sentence and POINT at the result."
+            return "TOOL POLICY for this goal: if they're stuck, USE TOOLS (open/click/type) then explain what you did in one short sentence and POINT at the result."
         case .canDoForThem:
             return "TOOL POLICY for this goal: if they ask you to do it, cheerfully USE TOOLS, then teach what just happened so they still learn."
         }
@@ -60,6 +60,8 @@ struct CourseLearnerProfile: Codable, Equatable {
     /// true = lean hints; false = lean do-it-for-me; nil = unknown
     var prefersHintsOverAutomation: Bool?
     var rollingNotes: [String] = []
+    /// Detected emotional state from response patterns: "frustrated", "bored", "engaged", "confused", nil
+    var detectedMood: String?
 
     mutating func noteKnows(_ item: String) {
         let trimmed = item.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -87,6 +89,29 @@ struct CourseLearnerProfile: Codable, Equatable {
         rollingNotes = Array(rollingNotes.suffix(16))
     }
 
+    mutating func detectMood(from userResponse: String) {
+        let lower = userResponse.lowercased()
+        let trimmed = userResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wordCount = trimmed.split(separator: " ").count
+
+        // Frustrated: very short confused answers, explicit frustration
+        if wordCount <= 3 && (lower.contains("idk") || lower.contains("i don't know") || lower.contains("no idea") || lower.contains("confused") || lower.contains("lost")) {
+            detectedMood = "frustrated"
+        }
+        // Bored: very short or dismissive
+        else if wordCount <= 2 && (lower == "ok" || lower == "done" || lower == "yes" || lower == "yep" || lower == "sure" || lower == "k") {
+            detectedMood = "bored"
+        }
+        // Engaged: detailed answer or asks a question
+        else if wordCount >= 6 || lower.contains("?") {
+            detectedMood = "engaged"
+        }
+        // Confused: long but uncertain
+        else if lower.contains("maybe") || lower.contains("i think") || lower.contains("not sure") {
+            detectedMood = "confused"
+        }
+    }
+
     var promptSection: String {
         var lines: [String] = []
         if !knows.isEmpty {
@@ -108,10 +133,29 @@ struct CourseLearnerProfile: Codable, Equatable {
                 .joined(separator: "\n")
             lines.append("session notes:\n\(recent)")
         }
+        if let mood = detectedMood {
+            lines.append("current mood: \(mood) — adjust your tone accordingly")
+        }
         guard !lines.isEmpty else { return "" }
         return """
 
         LEARNER MODEL (durable for this course — respect it):
+        \(lines.joined(separator: "\n"))
+        """
+    }
+
+    var globalPromptSection: String {
+        var lines: [String] = []
+        if !knows.isEmpty {
+            lines.append("already knows from other courses: \(knows.joined(separator: "; "))")
+        }
+        if !confusedBy.isEmpty {
+            lines.append("still shaky on from other courses: \(confusedBy.joined(separator: "; "))")
+        }
+        guard !lines.isEmpty else { return "" }
+        return """
+
+        CROSS-COURSE MEMORY (from previous courses — carry this forward):
         \(lines.joined(separator: "\n"))
         """
     }
@@ -164,7 +208,7 @@ enum TeachyCourseCapabilityCard {
     - open_browser_tab: open a URL in their browser
     - bash / read_file / write_file: terminal + files when the goal needs it
     - run_applescript: control native Mac apps
-    - ui_action: click, type, keys in the frontmost app (Accessibility) — last resort for “do it for me”
+    - ui_action: click, type, keys in the frontmost app (Accessibility) — last resort for "do it for me"
     - capture_screen: fresher look mid-turn if the UI changed
     - authenticated_fetch / list_browser_sessions: logged-in web pages via their browser cookies
 
@@ -190,14 +234,25 @@ enum CourseUnderstandingVerifier {
     static func assessTeachBack(
         goal: CourseLearningGoal,
         learnerAnswer: String,
+        previousAnswers: [String] = [],
         claudeAPI: ClaudeAPI
     ) async throws -> CourseUnderstandingResult {
         let concepts = goal.teachingContext?.concepts?.joined(separator: "; ") ?? goal.goal
+        let previousAnswersBlock: String
+        if previousAnswers.count > 1 {
+            let history = previousAnswers.enumerated()
+                .map { "  Turn \($0.offset + 1): \($0.element)" }
+                .joined(separator: "\n")
+            previousAnswersBlock = "\n\nPrevious answers in this teach-back:\n\(history)"
+        } else {
+            previousAnswersBlock = ""
+        }
         let systemPrompt = """
         you check whether a learner understood a Teachy goal. reply with ONLY one JSON object:
         {"understood":true,"reason":"short","knows":["optional"],"confused":["optional"]}
-        be kind but honest — vague “yeah” with no substance → understood false.
+        be kind but honest — vague "yeah" with no substance → understood false.
         if they clearly get the main idea in their own words → true even if wording is messy.
+        when confusedBy has entries, name the specific concept that wasn't understood.
         """
         let userPrompt = """
         Goal title: \(goal.title)
@@ -205,7 +260,7 @@ enum CourseUnderstandingVerifier {
         Key concepts: \(concepts)
         Teach-back question context: \(goal.teachingContext?.teachBackPrompt ?? "what did we just do / why did it work?")
 
-        Learner said: \(learnerAnswer)
+        Learner said: \(learnerAnswer)\(previousAnswersBlock)
         """
 
         let (rawText, _) = try await claudeAPI.analyzeImageStreaming(

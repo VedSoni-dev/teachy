@@ -351,6 +351,8 @@ struct ClickyNotchRootView: View {
             HStack(spacing: 4) {
                 if companionManager.allPermissionsGranted && companionManager.hasCompletedOnboarding {
                     headerTab(.courses, title: "Learn", systemImage: "book.fill")
+                    headerTab(.portfolio, title: "Portfolio", systemImage: "folder.fill")
+                    headerTab(.skills, title: "Skills", systemImage: "chart.tree")
                     headerTab(.home, title: "Settings", systemImage: "slider.horizontal.3")
                 }
             }
@@ -388,27 +390,28 @@ struct ClickyNotchRootView: View {
 
     private func headerTab(_ tab: NotchPanelTab, title: String, systemImage: String) -> some View {
         let isSelected = notchManager.selectedTab == tab
+        let tint = tabAccent(tab)
         return Button {
-            withAnimation(.smooth(duration: 0.28)) {
-                notchManager.selectedTab = tab
-            }
+            withAnimation(.smooth(duration: 0.28)) { notchManager.selectedTab = tab }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 10, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .foregroundStyle(isSelected ? Color.white : Color.gray)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(isSelected ? Color.white.opacity(0.12) : Color.clear)
-            )
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isSelected ? tint : Color.gray)
+                .frame(width: 28, height: 22)
+                .background(Capsule().fill(isSelected ? tint.opacity(0.16) : Color.clear))
         }
         .buttonStyle(.plain)
         .pointerCursor()
+        .nativeTooltip(title)
+    }
+
+    private func tabAccent(_ tab: NotchPanelTab) -> Color {
+        switch tab {
+        case .courses: return DS.Colors.learnAccent       // teal
+        case .portfolio: return DS.Colors.portfolioAccent // orange
+        case .skills: return DS.Colors.skillsAccent       // purple
+        default: return .white                             // Settings/home stays neutral
+        }
     }
 }
 

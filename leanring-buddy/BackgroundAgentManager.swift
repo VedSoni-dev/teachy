@@ -35,6 +35,15 @@ final class BackgroundAgentManager: ObservableObject {
     /// OpenRouter model ID sent on each agent request.
     var selectedModel: String
 
+    /// When user has an API key, calls OpenRouter directly (no proxy needed).
+    private var useDirectAPI: Bool { TeachyAPIKeyStore.isConfigured }
+    private var effectiveURL: URL {
+        if useDirectAPI {
+            return URL(string: "https://openrouter.ai/api/v1/chat/completions")!
+        }
+        return proxyURL
+    }
+
     private static let baseSystemPrompt = """
     You are Teachy, the user's Mac teaching companion. You can execute real tasks by calling tools.
 
@@ -524,10 +533,17 @@ final class BackgroundAgentManager: ObservableObject {
             body["parallel_tool_calls"] = false
         }
 
-        var request = URLRequest(url: proxyURL)
+        var request = URLRequest(url: effectiveURL)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        if useDirectAPI, let apiKey = TeachyAPIKeyStore.apiKey {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("https://teachy.app", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("Teachy", forHTTPHeaderField: "X-Title")
+        }
+
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
