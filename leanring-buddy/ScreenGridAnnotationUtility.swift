@@ -19,13 +19,20 @@ enum ScreenGridAnnotationUtility {
     /// Regex fragment for a single grid cell label (columns A–X, rows 1–16).
     static let gridCellRegexFragment = #"[A-X](?:1[0-6]|[1-9])"#
 
-    /// Instructions appended to system prompts so models know how to use the grid.
+    /// Instructions appended to system prompts so models know how to use the grid and AX elements.
     static let modelInstructions = """
     SCREEN POINTING (invisible grid on screenshots — user cannot see it):
+
+    MOST ACCURATE — use this when the target appears in the on-screen elements list:
+    [POINT:ax:ID:short label]  e.g. [POINT:ax:2:the search bar]
+    The list is provided in the message when available. These resolve to exact element positions.
+
+    FALLBACK — use only when the target is NOT in the elements list (web content, canvas, custom UI):
     - Grid: columns A–X (24), rows 1–16 (row 1 = top). Pick the cell whose CENTER is closest to the control.
-    - Preferred: [POINT:cell:short label] e.g. [POINT:M7:New button]
-    - Even better when sure: pixel coords from the image size in the label, top-left origin:
-      [POINT:842,310:New button]  (x,y in screenshot pixels)
+    - Cell format: [POINT:cell:short label] e.g. [POINT:M7:New button]
+    - Pixel format when confident of exact position (x,y in screenshot pixels, top-left origin):
+      [POINT:842,310:New button]
+
     - Be precise — aim at the actual clickable control, not empty space nearby.
     - One POINT tag max per reply. Use [POINT:none] if nothing useful to point at.
     - Only POINT when it helps them find something on screen.
@@ -512,6 +519,180 @@ enum ScreenGridAnnotationUtility {
             chalkHighlightFillColor.setFill()
             NSBezierPath(rect: cellRect).fill()
         }
+    }
+
+    // MARK: - Region-aware annotation (two-stage zoom fallback)
+
+    /// Crops a region of the original screenshot, upscales it, burns a local grid
+    /// over just that region, and returns the annotated crop along with the crop
+    /// origin in full-image screenshot-pixel space.
+    ///
+    /// The caller uses `cropOriginInFullImagePixels` + the upscale factor to map
+    /// any local coordinate the model returns back to full-image screenshot-pixel
+    /// space, then feeds the result through the normal `globalAppKitCoordinate` path.
+    ///
+    /// - Parameters:
+    ///   - originalJPEGData: The full-resolution screenshot JPEG.
+    ///   - fullImageWidthInPixels: Width of the full screenshot.
+    ///   - fullImageHeightInPixels: Height of the full screenshot.
+    ///   - coarsePointInFullImagePixels: The coarse guess from the first model pass
+    ///     (top-left origin, full-image pixel space).
+    ///   - upscaleFactor: How much to enlarge the crop (default ~2.5×).
+    /// - Returns: A tuple of (annotated JPEG data, crop origin in full-image pixels,
+    ///   crop size in full-image pixels, upscale factor used) or nil on failure.
+    static func annotatedRegionForZoomRefinement(
+        originalJPEGData: Data,
+        fullImageWidthInPixels: Int,
+        fullImageHeightInPixels: Int,
+        coarsePointInFullImagePixels: CGPoint,
+        upscaleFactor: CGFloat = 2.5
+    ) -> (annotatedData: Data, cropOrigin: CGPoint, cropSize: CGSize, usedUpscaleFactor: CGFloat)? {
+        guard let sourceImage = NSImage(data: originalJPEGData) else { return nil }
+
+        // Compute a ~3×3 grid-cell neighborhood around the coarse guess.
+        // 3 cells wide × 3 cells tall = 1/8 of a 24-column screen approximately.
+        let cellWidth = CGFloat(fullImageWidthInPixels) / CGFloat(columnCount)
+        let cellHeight = CGFloat(fullImageHeightInPixels) / CGFloat(rowCount)
+
+        let regionHalfWidth = cellWidth * 1.5
+        let regionHalfHeight = cellHeight * 1.5
+
+        let unclamped = CGRect(
+            x: coarsePointInFullImagePixels.x - regionHalfWidth,
+            y: coarsePointInFullImagePixels.y - regionHalfHeight,
+            width: regionHalfWidth * 2,
+            height: regionHalfHeight * 2
+        )
+
+        // Clamp to full image bounds
+        let clampedOriginX = max(0, unclamped.origin.x)
+        let clampedOriginY = max(0, unclamped.origin.y)
+        let clampedMaxX = min(CGFloat(fullImageWidthInPixels), unclamped.maxX)
+        let clampedMaxY = min(CGFloat(fullImageHeightInPixels), unclamped.maxY)
+
+        let clampedCropRect = CGRect(
+            x: clampedOriginX,
+            y: clampedOriginY,
+            width: max(1, clampedMaxX - clampedOriginX),
+            height: max(1, clampedMaxY - clampedOriginY)
+        )
+
+        // Determine output (upscaled) dimensions
+        let upscaledWidth = clampedCropRect.width * upscaleFactor
+        let upscaledHeight = clampedCropRect.height * upscaleFactor
+        let upscaledSize = NSSize(width: upscaledWidth, height: upscaledHeight)
+
+        // Draw the cropped region upscaled into a new image
+        let upscaledImage = NSImage(size: upscaledSize)
+        upscaledImage.lockFocus()
+
+        // NSImage draw uses bottom-left origin; the sourceImage coordinate system
+        // has (0,0) at top-left in screenshot space. We pass the crop rect in
+        // NSImage's internal coordinate system (bottom-left), so we flip the Y:
+        //   nsImageY = fullImageHeight - cropMaxY
+        let nsImageCropOriginY = CGFloat(fullImageHeightInPixels) - clampedCropRect.maxY
+        let sourceRect = NSRect(
+            x: clampedCropRect.origin.x,
+            y: nsImageCropOriginY,
+            width: clampedCropRect.width,
+            height: clampedCropRect.height
+        )
+        let destRect = NSRect(origin: .zero, size: upscaledSize)
+
+        sourceImage.draw(
+            in: destRect,
+            from: sourceRect,
+            operation: .copy,
+            fraction: 1.0
+        )
+
+        // Burn a local grid (fewer columns/rows for the smaller area)
+        // Use a 6×6 grid over the crop for fine resolution
+        let localColumnCount = 6
+        let localRowCount = 6
+        let localCellWidth = upscaledWidth / CGFloat(localColumnCount)
+        let localCellHeight = upscaledHeight / CGFloat(localRowCount)
+
+        let fineGridColor = NSColor(calibratedRed: 1.0, green: 0.15, blue: 0.95, alpha: 0.65)
+        fineGridColor.setStroke()
+
+        for colIdx in 0...localColumnCount {
+            let xPos = CGFloat(colIdx) * localCellWidth
+            let line = NSBezierPath()
+            line.move(to: NSPoint(x: xPos, y: 0))
+            line.line(to: NSPoint(x: xPos, y: upscaledHeight))
+            line.lineWidth = 1.5
+            line.stroke()
+        }
+        for rowIdx in 0...localRowCount {
+            let yPos = CGFloat(rowIdx) * localCellHeight
+            let line = NSBezierPath()
+            line.move(to: NSPoint(x: 0, y: yPos))
+            line.line(to: NSPoint(x: upscaledWidth, y: yPos))
+            line.lineWidth = 1.5
+            line.stroke()
+        }
+
+        // Label each local cell (a–f for columns, 1–6 for rows, top=row1)
+        let localLabelFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .bold)
+        let localLabelColor = NSColor(calibratedRed: 0.05, green: 1.0, blue: 0.95, alpha: 0.95)
+        let localLabelAttrs: [NSAttributedString.Key: Any] = [
+            .font: localLabelFont,
+            .foregroundColor: localLabelColor,
+            .strokeColor: NSColor.black.withAlphaComponent(0.75),
+            .strokeWidth: -2.5,
+        ]
+        for rowIdx in 0..<localRowCount {
+            for colIdx in 0..<localColumnCount {
+                let colLetter = Character(UnicodeScalar(97 + colIdx)!) // a–f
+                let rowLabel = rowIdx + 1 // 1–6 (top to bottom)
+                let cellLabel = "\(colLetter)\(rowLabel)"
+                let labelX = CGFloat(colIdx) * localCellWidth + 4
+                // NSImage: bottom-left origin, row1 at top → highest y values
+                let labelY = upscaledHeight - CGFloat(rowIdx + 1) * localCellHeight + 4
+                cellLabel.draw(at: NSPoint(x: labelX, y: labelY), withAttributes: localLabelAttrs)
+            }
+        }
+
+        upscaledImage.unlockFocus()
+
+        guard let bitmapRep = NSBitmapImageRep(data: upscaledImage.tiffRepresentation ?? Data()),
+              let annotatedData = bitmapRep.representation(
+                using: .jpeg,
+                properties: [.compressionFactor: 0.85]
+              ) else {
+            return nil
+        }
+
+        return (
+            annotatedData: annotatedData,
+            cropOrigin: CGPoint(x: clampedCropRect.origin.x, y: clampedCropRect.origin.y),
+            cropSize: CGSize(width: clampedCropRect.width, height: clampedCropRect.height),
+            usedUpscaleFactor: upscaleFactor
+        )
+    }
+
+    /// Maps a local coordinate returned by the zoom-refinement model pass back to
+    /// full-image screenshot-pixel space (top-left origin).
+    ///
+    /// - Parameters:
+    ///   - localPoint: The point the model returned within the annotated crop image,
+    ///     in the crop image's coordinate space (top-left origin, scaled up by
+    ///     `upscaleFactor`).
+    ///   - cropOrigin: The top-left of the crop in full-image pixels.
+    ///   - upscaleFactor: The factor the crop was upscaled by.
+    /// - Returns: The corresponding point in full-image screenshot-pixel space.
+    static func fullImagePixelCoordinate(
+        fromLocalZoomPoint localPoint: CGPoint,
+        cropOrigin: CGPoint,
+        upscaleFactor: CGFloat
+    ) -> CGPoint {
+        let localInCropSpaceX = localPoint.x / upscaleFactor
+        let localInCropSpaceY = localPoint.y / upscaleFactor
+        return CGPoint(
+            x: cropOrigin.x + localInCropSpaceX,
+            y: cropOrigin.y + localInCropSpaceY
+        )
     }
 
     private static func drawChalkOutlineOnImage(

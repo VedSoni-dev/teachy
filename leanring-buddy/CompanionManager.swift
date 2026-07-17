@@ -166,6 +166,12 @@ final class CompanionManager: ObservableObject {
         return manager
     }()
 
+    /// The AX element list captured during the most recent pointing turn. Populated in
+    /// `buildLabeledAnnotatedImages` (off-main-thread, concurrent with screenshot). The
+    /// model references elements by their `ax:ID`; `applyPointingFromResponse` looks them
+    /// up here to resolve the true global AppKit coordinate, bypassing screenshot-pixel math.
+    private var currentAXElementRegistry: [DetectedAXElement] = []
+
     /// Set when GET /health fails — shown on the Courses tab so users know why a course won't start.
     @Published private(set) var isBackendReachable: Bool = true
     @Published private(set) var backendConnectionHint: String?
@@ -793,24 +799,36 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - AI Response Pipeline
 
-    private static let companionVoiceResponseSystemPrompt = """
-    You are Teachy — a real person sitting next to them at their Mac, looking at the same screen.
-    They just talked to you. Your reply is spoken out loud, so talk like a human coach in the room —
-    warm, clear, a little playful, never like Siri, never like a help article, never like a corporate bot.
+    /// Builds the companion system prompt, optionally injecting a temporal continuity
+    /// line when the learner is returning after a gap (e.g. "last chat was 3 days ago —
+    /// be warm, don't reintroduce yourself"). The continuity line is sourced from
+    /// `LearnerTemporalContext` using `teachyEngine.daysSinceLastSession` which is
+    /// captured at session-start before `recordActivity` overwrites `lastActiveDate`.
+    private func buildCompanionVoiceResponseSystemPrompt() -> String {
+        let continuityLine = LearnerTemporalContext.companionContinuityLine(
+            daysSinceLastSession: teachyEngine.daysSinceLastSession
+        )
+        let continuitySection = continuityLine.map { "\n\n\($0)" } ?? ""
+        return """
+        You are Teachy — a real person sitting next to them at their Mac, looking at the same screen.
+        They just talked to you. Your reply is spoken out loud, so talk like a human coach in the room —
+        warm, clear, a little playful, never like Siri, never like a help article, never like a corporate bot.
 
-    How you sound (spoken aloud):
-    - Natural sentences. Contractions. Short pauses implied with commas, not stage directions.
-    - Usually 1–2 short sentences. Three only if they asked for detail.
-    - Specific to WHAT YOU SEE on screen — name the real button, tab, or window.
-    - No emojis, no markdown, no bullet lists, no "as an AI".
-    - Never say "simply", "certainly", "I'd be happy to help", or "great question".
-    - Don't read code aloud — say what it does in plain words.
-    - If something's confusing, empathize in half a breath, then give the next move.
-    - When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there.
-    - Feel like a sharp friend who actually wants them to get it — not a lecture.
+        How you sound (spoken aloud):
+        - Natural sentences. Contractions. Short pauses implied with commas, not stage directions.
+        - Usually 1–2 short sentences. Three only if they asked for detail.
+        - Specific to WHAT YOU SEE on screen — name the real button, tab, or window.
+        - No emojis, no markdown, no bullet lists, no "as an AI".
+        - Never say "simply", "certainly", "I'd be happy to help", or "great question".
+        - Don't read code aloud — say what it does in plain words.
+        - If something's confusing, empathize in half a breath, then give the next move.
+        - When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there.
+        - Feel like a sharp friend who actually wants them to get it — not a lecture.
+        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)
 
-    \(ScreenGridAnnotationUtility.modelInstructions)
-    """
+        \(ScreenGridAnnotationUtility.modelInstructions)
+        """
+    }
 
     /// Routes voice input to an active course (unchanged teaching path) or quick screen Q&A.
     /// Free-form background agent / automation triggers are demoted — Mac tools still run
@@ -863,7 +881,7 @@ final class CompanionManager: ObservableObject {
 
             guard !Task.isCancelled else { return }
 
-            let labeledImages = buildLabeledAnnotatedImages(
+            let labeledImages = await buildLabeledAnnotatedImages(
                 screenCaptures: screenCaptures,
                 mouseOutlineContext: mouseOutlineContext
             )
@@ -880,7 +898,7 @@ final class CompanionManager: ObservableObject {
             do {
                 let (fullResponseText, _) = try await claudeAPI.analyzeImageStreaming(
                     images: labeledImages,
-                    systemPrompt: Self.companionVoiceResponseSystemPrompt,
+                    systemPrompt: buildCompanionVoiceResponseSystemPrompt(),
                     conversationHistory: historyForAPI,
                     userPrompt: transcriptWithSpatialHint,
                     onTextChunk: { _ in }
@@ -889,7 +907,16 @@ final class CompanionManager: ObservableObject {
                 guard !Task.isCancelled else { return }
 
                 let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
-                let spokenText = parseResult.spokenText
+                // Strip [REMEMBER: ...] tags before this ever reaches TTS/history — same
+                // tag convention used inside courses (`CourseCoachMessageParts`), reused
+                // here since quick companion Q&A can also surface personal facts.
+                let (spokenText, rememberedFacts) = CoachRememberTagParser.extractFactsAndStrip(from: parseResult.spokenText)
+                // Quick companion Q&A runs outside a course, so there's no active
+                // TeachyEngine `CoachingSession` — `processEvent` would silently no-op
+                // (see its session guard). Use the session-independent recorder instead.
+                for fact in rememberedFacts {
+                    self.teachyEngine.recordPersonalFact(fact)
+                }
 
                 if let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) {
                     applyPointingFromResponse(fullResponseText, screenCapture: cursorScreenCapture)
@@ -1067,6 +1094,18 @@ final class CompanionManager: ObservableObject {
 
     func submitCourseUnderstandingAnswer(_ answer: String) {
         lessonPlayer.submitUnderstandingAnswer(answer)
+    }
+
+    func submitCourseInteractiveChoiceAnswer(_ index: Int) {
+        lessonPlayer.submitInteractiveChoiceAnswer(index)
+    }
+
+    func submitCourseInteractiveChecklistCompletion(_ completed: Bool) {
+        lessonPlayer.submitInteractiveChecklistCompletion(completed)
+    }
+
+    func submitCourseInteractiveFillInBlankAnswer(_ text: String) {
+        lessonPlayer.submitInteractiveFillInBlankAnswer(text)
     }
 
     func requestCourseHint() {
@@ -1273,7 +1312,7 @@ final class CompanionManager: ObservableObject {
             )
         }
 
-        let labeledImages = buildLabeledAnnotatedImages(
+        let labeledImages = await buildLabeledAnnotatedImages(
             screenCaptures: screenCaptures,
             mouseOutlineContext: nil
         )
@@ -1367,11 +1406,67 @@ final class CompanionManager: ObservableObject {
             || errorDescription.contains("network")
     }
 
+    /// Builds the labeled image array for model requests, and also populates
+    /// `currentAXElementRegistry` with actionable elements from the frontmost app.
+    ///
+    /// AX detection runs off the main thread inside a `Task.detached` block so it
+    /// doesn't block the screenshot-to-API pipeline. We await it here so the element
+    /// list is ready before the model request fires (adding no serial latency — the
+    /// detection budget is 250ms and the image encoding typically takes longer).
+    ///
+    /// The element block is appended only to the cursor screen's label, not secondary
+    /// screens, so the model isn't confused by elements from an off-focus display.
     private func buildLabeledAnnotatedImages(
         screenCaptures: [CompanionScreenCapture],
         mouseOutlineContext: CompanionMouseOutlineContext?
-    ) -> [(data: Data, label: String)] {
-        screenCaptures.map { screenCapture in
+    ) async -> [(data: Data, label: String)] {
+        // Detect AX elements concurrently with image annotation (off main thread).
+        // We guard on the instance-level hasAccessibilityPermission property which
+        // mirrors the live AXIsProcessTrusted() state and is refreshed periodically.
+        let detectedAXElements: [DetectedAXElement]
+        if hasAccessibilityPermission {
+            detectedAXElements = await Task.detached(priority: .userInitiated) {
+                AccessibilityElementDetector.detectActionableElements()
+            }.value
+        } else {
+            detectedAXElements = []
+        }
+
+        // Store in the registry so applyPointingFromResponse can look up by id.
+        currentAXElementRegistry = detectedAXElements
+
+        // Build a compact text block the model can reference to pick an element by ax:ID.
+        // Only built when the list is non-empty.
+        let axElementBlock: String? = {
+            guard !detectedAXElements.isEmpty else { return nil }
+            let simplifiedRole: (String) -> String = { role in
+                switch role {
+                case "AXButton", "AXMenuButton": return "button"
+                case "AXLink": return "link"
+                case "AXTextField": return "textfield"
+                case "AXTextArea": return "textarea"
+                case "AXCheckBox": return "checkbox"
+                case "AXRadioButton": return "radio"
+                case "AXPopUpButton": return "popup"
+                case "AXMenuItem", "AXMenuBarItem": return "menuitem"
+                case "AXTab", "AXTabButton": return "tab"
+                case "AXSlider": return "slider"
+                case "AXCell": return "cell"
+                case "AXImage": return "image"
+                case "AXStaticText": return "text"
+                default: return role.replacingOccurrences(of: "AX", with: "").lowercased()
+                }
+            }
+            let lines = detectedAXElements.map { element in
+                "[ax:\(element.id)] \(simplifiedRole(element.role)) \"\(element.label)\""
+            }.joined(separator: "\n")
+            return """
+            On-screen elements you can point at precisely (prefer these — they resolve to exact positions):
+            \(lines)
+            """
+        }()
+
+        return screenCaptures.map { screenCapture in
             let outlinePointsForCapture = screenCapture.isCursorScreen
                 ? (mouseOutlineContext?.outlinePointsInScreenshotSpace ?? [])
                 : []
@@ -1379,10 +1474,16 @@ final class CompanionManager: ObservableObject {
                 ? (mouseOutlineContext?.touchedGridCellLabels ?? [])
                 : []
 
-            var dimensionInfo = " (image dimensions: \(screenCapture.screenshotWidthInPixels)x\(screenCapture.screenshotHeightInPixels) pixels, grid overlay: columns A-X, rows 1-16; prefer [POINT:x,y:label] pixels or [POINT:cell:label])"
+            var dimensionInfo = " (image dimensions: \(screenCapture.screenshotWidthInPixels)x\(screenCapture.screenshotHeightInPixels) pixels, grid overlay: columns A-X, rows 1-16; prefer [POINT:ax:ID:label] when target is in the elements list, otherwise [POINT:x,y:label] pixels or [POINT:cell:label])"
             if let spatialContextLabel = mouseOutlineContext?.spatialContextLabel,
                screenCapture.isCursorScreen {
                 dimensionInfo += "; \(spatialContextLabel)"
+            }
+
+            // Append the AX element block only to the cursor screen label
+            var fullLabel = screenCapture.label + dimensionInfo
+            if screenCapture.isCursorScreen, let axBlock = axElementBlock {
+                fullLabel += "\n\n" + axBlock
             }
 
             let annotatedImageData = ScreenGridAnnotationUtility.annotateScreenshotForModel(
@@ -1393,7 +1494,7 @@ final class CompanionManager: ObservableObject {
                 highlightedGridCellLabels: highlightedCellsForCapture
             ) ?? screenCapture.imageData
 
-            return (data: annotatedImageData, label: screenCapture.label + dimensionInfo)
+            return (data: annotatedImageData, label: fullLabel)
         }
     }
 
@@ -1499,12 +1600,28 @@ final class CompanionManager: ObservableObject {
         let screenNumber: Int?
         /// Grid cell label when the model used [POINT:E4:label] instead of raw pixels.
         let gridCellLabel: String?
+        /// AX element id when the model used [POINT:ax:ID:label] — highest-priority path.
+        /// When set, coordinate and gridCellLabel are nil; the true position is resolved
+        /// from `currentAXElementRegistry` in `applyPointingFromResponse`.
+        let axElementID: Int?
     }
 
     /// Parses pointing info from a model response — structured [POINT:...] tags (anywhere in text),
     /// or a fallback grid-cell mention in prose when the model says "cell E4" without the tag.
+    ///
+    /// Priority order:
+    /// 1. [POINT:ax:ID:label] — AX element reference (most accurate, exact bounds known)
+    /// 2. [POINT:cell:E4:label] / [POINT:E4:label] — grid cell fallback
+    /// 3. [POINT:842,310:label] — raw pixel coordinate fallback
+    /// 4. [POINT:none] — explicit no-op
+    /// 5. Prose mentions of a grid cell (last-resort)
     static func parsePointingCoordinates(from responseText: String) -> PointingParseResult {
         let trimmedResponse = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // MOST ACCURATE: AX element reference — checked first
+        if let axResult = findAXPointingTag(in: trimmedResponse) {
+            return axResult
+        }
 
         if let gridResult = findGridCellPointingTag(in: trimmedResponse) {
             return gridResult
@@ -1525,7 +1642,8 @@ final class CompanionManager: ObservableObject {
                 coordinate: nil,
                 elementLabel: "none",
                 screenNumber: nil,
-                gridCellLabel: nil
+                gridCellLabel: nil,
+                axElementID: nil
             )
         }
 
@@ -1538,7 +1656,43 @@ final class CompanionManager: ObservableObject {
             coordinate: nil,
             elementLabel: nil,
             screenNumber: nil,
-            gridCellLabel: nil
+            gridCellLabel: nil,
+            axElementID: nil
+        )
+    }
+
+    /// Finds [POINT:ax:ID:optional label] anywhere in the response.
+    /// This is the highest-priority pointing format — the model references an element
+    /// by its ax:ID from the on-screen elements list, giving us exact AX bounds.
+    private static func findAXPointingTag(in responseText: String) -> PointingParseResult? {
+        let axPattern = #"\[POINT:\s*ax:\s*(\d+)\s*(?::\s*([^\]]*?))?\s*\]"#
+        guard let regex = try? NSRegularExpression(pattern: axPattern, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: responseText, range: NSRange(responseText.startIndex..., in: responseText)),
+              let idRange = Range(match.range(at: 1), in: responseText),
+              let axID = Int(responseText[idRange]) else {
+            return nil
+        }
+
+        let spokenText = responseTextByRemovingPointingTag(
+            from: responseText,
+            tagRange: Range(match.range, in: responseText)!
+        )
+
+        var elementLabel: String? = nil
+        if match.numberOfRanges >= 3, let labelRange = Range(match.range(at: 2), in: responseText) {
+            let rawLabel = String(responseText[labelRange]).trimmingCharacters(in: .whitespaces)
+            if !rawLabel.isEmpty {
+                elementLabel = rawLabel
+            }
+        }
+
+        return PointingParseResult(
+            spokenText: spokenText,
+            coordinate: nil,
+            elementLabel: elementLabel,
+            screenNumber: nil,
+            gridCellLabel: nil,
+            axElementID: axID
         )
     }
 
@@ -1569,7 +1723,8 @@ final class CompanionManager: ObservableObject {
             coordinate: nil,
             elementLabel: elementLabel,
             screenNumber: screenNumber,
-            gridCellLabel: cellLabel
+            gridCellLabel: cellLabel,
+            axElementID: nil
         )
     }
 
@@ -1602,7 +1757,8 @@ final class CompanionManager: ObservableObject {
             coordinate: CGPoint(x: x, y: y),
             elementLabel: elementLabel,
             screenNumber: screenNumber,
-            gridCellLabel: nil
+            gridCellLabel: nil,
+            axElementID: nil
         )
     }
 
@@ -1626,7 +1782,8 @@ final class CompanionManager: ObservableObject {
                 coordinate: nil,
                 elementLabel: nil,
                 screenNumber: nil,
-                gridCellLabel: cellLabel
+                gridCellLabel: cellLabel,
+                axElementID: nil
             )
         }
 
@@ -1643,7 +1800,8 @@ final class CompanionManager: ObservableObject {
             coordinate: nil,
             elementLabel: nil,
             screenNumber: nil,
-            gridCellLabel: cellLabel
+            gridCellLabel: cellLabel,
+            axElementID: nil
         )
     }
 
@@ -1654,13 +1812,62 @@ final class CompanionManager: ObservableObject {
     }
 
     /// Applies a parsed POINT tag to the cursor overlay using the given screen capture for coordinate mapping.
+    ///
+    /// Priority:
+    /// 1. **AX element hit** (`parseResult.axElementID` is set): look up the element in
+    ///    `currentAXElementRegistry`, convert its global CG center to AppKit coordinates using
+    ///    `AccessibilityElementDetector.globalAppKitPoint`, set `detectedElementDisplayFrame`
+    ///    from `appKitDisplayFrame(containingGlobalCGFrame:)`. Bypasses all screenshot-pixel
+    ///    math — the AX frame is already global truth. If the id no longer resolves (stale
+    ///    registry), falls through to the grid/pixel path below.
+    /// 2. **Grid/pixel fallback** (no AX hit): resolves via `resolvedScreenshotCoordinate` +
+    ///    `globalAppKitCoordinate` as before, then runs `performZoomRefinementIfNeeded` for
+    ///    grid-cell results (Part 2 two-stage zoom refinement).
     func applyPointingFromResponse(
         _ responseText: String,
         screenCapture: CompanionScreenCapture
     ) {
         let parseResult = Self.parsePointingCoordinates(from: responseText)
 
-        guard let screenshotCoordinate = Self.resolvedScreenshotCoordinate(
+        // --- Part 1: AX element hit (most accurate path) ---
+        if let axID = parseResult.axElementID {
+            if let resolvedElement = currentAXElementRegistry.first(where: { $0.id == axID }) {
+                // Compute the element center in global CG space
+                let cgCenter = CGPoint(
+                    x: resolvedElement.globalCGFrame.midX,
+                    y: resolvedElement.globalCGFrame.midY
+                )
+                // Flip to global AppKit coordinates (bottom-left primary-screen origin)
+                let globalAppKitLocation = AccessibilityElementDetector.globalAppKitPoint(
+                    fromGlobalCGPoint: cgCenter
+                )
+                // Find the display frame (AppKit) for the element's screen so
+                // OverlayWindow.isDisplayFrameOnThisScreen fires on the correct overlay.
+                let targetDisplayFrame = AccessibilityElementDetector.appKitDisplayFrame(
+                    containingGlobalCGFrame: resolvedElement.globalCGFrame
+                ) ?? screenCapture.displayFrame
+
+                applyBubbleText(from: parseResult, fallbackResponseText: responseText)
+
+                // Publish nil → value transition
+                detectedElementScreenLocation = nil
+                detectedElementDisplayFrame = nil
+                DispatchQueue.main.async { [weak self] in
+                    self?.detectedElementDisplayFrame = targetDisplayFrame
+                    self?.detectedElementScreenLocation = globalAppKitLocation
+                }
+
+                print("🎯 AX pointing ax:\(axID) → \(Int(cgCenter.x)),\(Int(cgCenter.y)) CG → AppKit \(Int(globalAppKitLocation.x)),\(Int(globalAppKitLocation.y)) — \"\(resolvedElement.label)\"")
+                return
+            }
+            // Stale ax:ID — fall through to grid/pixel path (model may have included a fallback tag)
+            print("🎯 AX id \(axID) not found in registry (\(currentAXElementRegistry.count) elements) — falling through to grid/pixel")
+        }
+
+        // --- Part 2 + legacy: grid/pixel fallback ---
+        // The zoom refinement runs asynchronously for grid-cell results (which are coarse).
+        // For pixel results the model was already confident, so we use the coordinate directly.
+        guard let coarseScreenshotCoordinate = Self.resolvedScreenshotCoordinate(
             parseResult: parseResult,
             screenCapture: screenCapture
         ) else {
@@ -1668,31 +1875,169 @@ final class CompanionManager: ObservableObject {
             return
         }
 
-        let globalLocation = ScreenGridAnnotationUtility.globalAppKitCoordinate(
-            screenshotPixelCoordinate: screenshotCoordinate,
-            screenCapture: screenCapture
-        )
+        applyBubbleText(from: parseResult, fallbackResponseText: responseText)
 
+        // For grid-cell results, attempt one zoom-refinement round to tighten accuracy.
+        // For pixel results (model was confident), or when the app is offline, skip refinement.
+        let isGridCellResult = parseResult.gridCellLabel != nil
+        if isGridCellResult {
+            // Kick off refinement asynchronously so TTS can start immediately
+            Task { [weak self] in
+                guard let self else { return }
+                let refinedCoordinate = await self.performZoomRefinementIfNeeded(
+                    coarseScreenshotCoordinate: coarseScreenshotCoordinate,
+                    screenCapture: screenCapture
+                )
+                let finalCoordinate = refinedCoordinate ?? coarseScreenshotCoordinate
+                let globalLocation = ScreenGridAnnotationUtility.globalAppKitCoordinate(
+                    screenshotPixelCoordinate: finalCoordinate,
+                    screenCapture: screenCapture
+                )
+                let coordinateDescription = refinedCoordinate != nil
+                    ? "zoom-refined \(Int(finalCoordinate.x)),\(Int(finalCoordinate.y))"
+                    : (parseResult.gridCellLabel ?? "\(Int(finalCoordinate.x)),\(Int(finalCoordinate.y))")
+                print("🎯 Pointing at \(coordinateDescription) — \"\(parseResult.elementLabel ?? "element")\"")
+
+                self.detectedElementScreenLocation = nil
+                self.detectedElementDisplayFrame = nil
+                DispatchQueue.main.async { [weak self] in
+                    self?.detectedElementDisplayFrame = screenCapture.displayFrame
+                    self?.detectedElementScreenLocation = globalLocation
+                }
+            }
+        } else {
+            // Pixel coordinate — publish immediately without refinement
+            let globalLocation = ScreenGridAnnotationUtility.globalAppKitCoordinate(
+                screenshotPixelCoordinate: coarseScreenshotCoordinate,
+                screenCapture: screenCapture
+            )
+            detectedElementScreenLocation = nil
+            detectedElementDisplayFrame = nil
+            DispatchQueue.main.async { [weak self] in
+                self?.detectedElementDisplayFrame = screenCapture.displayFrame
+                self?.detectedElementScreenLocation = globalLocation
+            }
+            print("🎯 Pointing at pixel \(Int(coarseScreenshotCoordinate.x)),\(Int(coarseScreenshotCoordinate.y)) — \"\(parseResult.elementLabel ?? "element")\"")
+        }
+    }
+
+    /// Shared helper: sets `detectedElementBubbleText` from a parse result.
+    /// Strips [REMEMBER:...] tags so the raw tag never reaches the speech bubble.
+    private func applyBubbleText(from parseResult: PointingParseResult, fallbackResponseText: String) {
         detectedElementBubbleText = {
-            let spokenText = parseResult.spokenText.isEmpty ? responseText : parseResult.spokenText
-            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenText)
+            let spokenText = parseResult.spokenText.isEmpty ? fallbackResponseText : parseResult.spokenText
+            let (spokenTextWithoutMemoryTags, _) = CoachRememberTagParser.extractFactsAndStrip(from: spokenText)
+            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenTextWithoutMemoryTags)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedSpokenText.isEmpty else { return nil }
-            // Show the same full coaching line TTS speaks — do not hard-truncate mid-sentence.
             return cleanedSpokenText
         }()
+    }
 
-        let targetDisplayFrame = screenCapture.displayFrame
-        // Publish on the next run loop so SwiftUI always sees a nil → value transition.
-        detectedElementScreenLocation = nil
-        detectedElementDisplayFrame = nil
-        DispatchQueue.main.async { [weak self] in
-            self?.detectedElementDisplayFrame = targetDisplayFrame
-            self?.detectedElementScreenLocation = globalLocation
+    /// Part 2 — two-stage vision zoom refinement.
+    ///
+    /// Takes a coarse grid-cell screenshot coordinate, crops + upscales a neighborhood
+    /// around it, burns a fine local grid, and makes a single tight model call to pin
+    /// down the exact clickable control within that region. Maps the result back to
+    /// full-image screenshot-pixel space.
+    ///
+    /// Returns the refined coordinate, or nil if refinement failed or timed out
+    /// (caller falls back to the coarse coordinate — never worse than today).
+    ///
+    /// Skipped entirely for AX hits (already exact) and pixel-coordinate results
+    /// (model was already confident). Only runs for grid-cell fallback results.
+    private func performZoomRefinementIfNeeded(
+        coarseScreenshotCoordinate: CGPoint,
+        screenCapture: CompanionScreenCapture
+    ) async -> CGPoint? {
+        // Build a magnified crop around the coarse guess
+        guard let zoomRegion = ScreenGridAnnotationUtility.annotatedRegionForZoomRefinement(
+            originalJPEGData: screenCapture.imageData,
+            fullImageWidthInPixels: screenCapture.screenshotWidthInPixels,
+            fullImageHeightInPixels: screenCapture.screenshotHeightInPixels,
+            coarsePointInFullImagePixels: coarseScreenshotCoordinate
+        ) else {
+            return nil
         }
 
-        let coordinateDescription = parseResult.gridCellLabel ?? "\(Int(screenshotCoordinate.x)),\(Int(screenshotCoordinate.y))"
-        print("🎯 Pointing at \(coordinateDescription) — \"\(parseResult.elementLabel ?? "element")\"")
+        // One-image, one-line model call — no history, no TTS, bounded to ~8s
+        let refinementPrompt = "Point at the exact clickable control in this magnified view using [POINT:cell:label] where cell uses local columns a-f rows 1-6, or [POINT:x,y:label] in this image's pixel coordinates."
+        let refinementImages = [(data: zoomRegion.annotatedData, label: "magnified region — local grid a-f columns, 1-6 rows, row 1 at top")]
+
+        do {
+            let (refinementResponse, _) = try await withThrowingTaskGroup(of: (String, TimeInterval).self) { group in
+                group.addTask { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    return try await self.claudeAPI.analyzeImageStreaming(
+                        images: refinementImages,
+                        systemPrompt: "You are a pointing assistant. Reply with only a [POINT:...] tag and a short label. No other text.",
+                        conversationHistory: [],
+                        userPrompt: refinementPrompt,
+                        onTextChunk: { _ in }
+                    )
+                }
+                // 8-second wall-clock cap — if refinement takes too long, cancel it
+                group.addTask {
+                    try await Task.sleep(for: .seconds(8))
+                    throw CancellationError()
+                }
+                defer { group.cancelAll() }
+                return try await group.next()!
+            }
+
+            // Parse the refined response — accept grid-cell or pixel, reject AX (no registry for this crop)
+            let refinedParseResult = Self.parsePointingCoordinates(from: refinementResponse)
+
+            if let localGridCell = refinedParseResult.gridCellLabel {
+                // The local grid is 6 columns × 6 rows over the upscaled crop image
+                let localColumnCount = 6
+                let localRowCount = 6
+                let upscaledWidth = zoomRegion.cropSize.width * zoomRegion.usedUpscaleFactor
+                let upscaledHeight = zoomRegion.cropSize.height * zoomRegion.usedUpscaleFactor
+                let localCellWidth = upscaledWidth / CGFloat(localColumnCount)
+                let localCellHeight = upscaledHeight / CGFloat(localRowCount)
+
+                // Parse local grid label: column a-f (0-5), row 1-6
+                let label = localGridCell.lowercased()
+                guard label.count >= 2,
+                      let colChar = label.first,
+                      colChar >= "a" && colChar <= "f",
+                      let rowNumber = Int(String(label.dropFirst())),
+                      rowNumber >= 1, rowNumber <= localRowCount else {
+                    print("🔍 Zoom: local cell \(localGridCell) out of range — using coarse")
+                    return nil
+                }
+                let localColIdx = Int(colChar.asciiValue! - 97) // a=0
+                let localRowIdx = rowNumber - 1 // 0-based
+                let localCenterX = (CGFloat(localColIdx) + 0.5) * localCellWidth
+                let localCenterY = (CGFloat(localRowIdx) + 0.5) * localCellHeight
+                let localPoint = CGPoint(x: localCenterX, y: localCenterY)
+
+                let fullImagePoint = ScreenGridAnnotationUtility.fullImagePixelCoordinate(
+                    fromLocalZoomPoint: localPoint,
+                    cropOrigin: zoomRegion.cropOrigin,
+                    upscaleFactor: zoomRegion.usedUpscaleFactor
+                )
+                print("🔍 Zoom refined: local \(localGridCell) → full-image \(Int(fullImagePoint.x)),\(Int(fullImagePoint.y))")
+                return fullImagePoint
+
+            } else if let localPixelCoord = refinedParseResult.coordinate {
+                // Model returned pixel coords in the upscaled crop image space
+                let fullImagePoint = ScreenGridAnnotationUtility.fullImagePixelCoordinate(
+                    fromLocalZoomPoint: localPixelCoord,
+                    cropOrigin: zoomRegion.cropOrigin,
+                    upscaleFactor: zoomRegion.usedUpscaleFactor
+                )
+                print("🔍 Zoom refined (pixel): \(Int(localPixelCoord.x)),\(Int(localPixelCoord.y)) → full-image \(Int(fullImagePoint.x)),\(Int(fullImagePoint.y))")
+                return fullImagePoint
+            }
+
+        } catch {
+            // Refinement timed out or failed — not an error, just use coarse coordinate
+            print("🔍 Zoom refinement skipped/failed: \(error.localizedDescription)")
+        }
+
+        return nil
     }
 
     /// Soft cap only for pathological model dumps — normal coaching lines stay intact.

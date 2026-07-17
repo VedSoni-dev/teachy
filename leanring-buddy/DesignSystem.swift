@@ -834,11 +834,23 @@ struct IBeamCursorView: NSViewRepresentable {
 /// Uses AppKit's `NSView.toolTip` to show a tooltip on hover.
 /// SwiftUI's `.help()` conflicts with `.onHover` tracking areas, so
 /// this bridges directly to AppKit's tooltip system which works independently.
+///
+/// Pass-through hit testing (like `PointerCursorNSView`/`IBeamCursorNSView` above) is
+/// required here: `NSView.toolTip` is driven by AppKit's tracking-area system, not
+/// hit testing, so the overlay never needs to intercept clicks — but a plain `NSView`
+/// intercepts them by default, which silently ate taps on anything this modifier was
+/// attached to until this was added.
+private class NativeTooltipNSView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        return nil
+    }
+}
+
 private struct NativeTooltipView: NSViewRepresentable {
     let tooltip: String
 
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
+        let view = NativeTooltipNSView()
         view.toolTip = tooltip
         return view
     }

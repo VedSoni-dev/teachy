@@ -28,6 +28,9 @@ final class LessonPlayer: ObservableObject {
     private var didRunPlacementCheck = false
     private var placementAnswerContinuation: CheckedContinuation<String, Never>?
     private var understandingAnswerContinuation: CheckedContinuation<String, Never>?
+    private var interactiveChoiceContinuation: CheckedContinuation<Int, Never>?
+    private var interactiveChecklistContinuation: CheckedContinuation<Bool, Never>?
+    private var interactiveFillInBlankContinuation: CheckedContinuation<String, Never>?
 
     private enum YourTurnAction {
         case confirm
@@ -150,6 +153,7 @@ final class LessonPlayer: ObservableObject {
         placementAnswerContinuation = nil
         coursesManager.detectMoodFromUserResponse(trimmed)
         host?.teachyEngine.detectMood(from: trimmed)
+        host?.teachyEngine.updateHumorReceptivity(from: trimmed)
         continuation.resume(returning: trimmed)
     }
 
@@ -161,7 +165,29 @@ final class LessonPlayer: ObservableObject {
         understandingAnswerContinuation = nil
         coursesManager.detectMoodFromUserResponse(trimmed)
         host?.teachyEngine.detectMood(from: trimmed)
+        host?.teachyEngine.updateHumorReceptivity(from: trimmed)
         continuation.resume(returning: trimmed)
+    }
+
+    /// Option tap on an inline interactive multiple-choice widget.
+    func submitInteractiveChoiceAnswer(_ index: Int) {
+        guard let continuation = interactiveChoiceContinuation else { return }
+        interactiveChoiceContinuation = nil
+        continuation.resume(returning: index)
+    }
+
+    /// "Done" tap on an inline self-attested checklist widget.
+    func submitInteractiveChecklistCompletion(_ completed: Bool) {
+        guard let continuation = interactiveChecklistContinuation else { return }
+        interactiveChecklistContinuation = nil
+        continuation.resume(returning: completed)
+    }
+
+    /// "Continue" tap on an inline fill-in-the-blank widget.
+    func submitInteractiveFillInBlankAnswer(_ text: String) {
+        guard let continuation = interactiveFillInBlankContinuation else { return }
+        interactiveFillInBlankContinuation = nil
+        continuation.resume(returning: text)
     }
 
     // MARK: - Loop
@@ -305,6 +331,14 @@ final class LessonPlayer: ObservableObject {
         } else if let notes = goal.teacherVideoNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !notes.isEmpty {
             coursesManager.setActiveTeacherVideoNotes(notes)
+        }
+
+        if let multipleChoice = goal.interactiveMultipleChoice {
+            return await runInteractiveChoiceStep(goal: goal, multipleChoice: multipleChoice, session: session, host: host)
+        } else if let checklist = goal.interactiveChecklist {
+            return await runInteractiveChecklistStep(goal: goal, checklist: checklist, session: session, host: host)
+        } else if let fillInBlank = goal.interactiveFillInBlank {
+            return await runInteractiveFillInBlankStep(goal: goal, fillInBlank: fillInBlank, session: session, host: host)
         }
 
         let promptChipCue: String = {
@@ -539,7 +573,21 @@ final class LessonPlayer: ObservableObject {
         host.setCourseVoiceStateProcessing()
 
         do {
-            let systemPrompt = coursesManager.buildCourseSystemPrompt(for: session)
+            let relationshipMemory = host.teachyEngine.getLearnerModel()
+            // Compute temporal continuity lines from existing data — how long since
+            // last session, streak, stale skills, personality trend. `daysSinceLastSession`
+            // was captured in `TeachyEngine.startSession` before `recordActivity` ran,
+            // so it reflects the actual gap between sessions, not today's overwritten date.
+            let temporalContinuityLines = LearnerTemporalContext.continuityLines(
+                model: relationshipMemory,
+                daysSinceLastSession: host.teachyEngine.daysSinceLastSession
+            )
+            let systemPrompt = coursesManager.buildCourseSystemPrompt(
+                for: session,
+                personalFacts: relationshipMemory.personalFacts,
+                humorReceptivity: relationshipMemory.humorReceptivity,
+                temporalContinuityLines: temporalContinuityLines
+            )
             let conversationHistory = coursesManager.tutorConversationHistory(for: session)
             let turn = try await host.runCourseTutorTurn(
                 userPrompt: ask,
@@ -562,6 +610,14 @@ final class LessonPlayer: ObservableObject {
             _ = coursesManager.ingestCoachMemoryTags(from: turn.fullResponseText)
             let cleanedForSpeech = coursesManager.ingestCoachMemoryTags(from: turn.spokenText)
             let coachParts = CourseCoachMessageParts.parse(from: cleanedForSpeech)
+            if !coachParts.rememberedFacts.isEmpty {
+                let factsToRemember = coachParts.rememberedFacts
+                Task {
+                    for fact in factsToRemember {
+                        _ = await host.teachyEngine.processEvent(.personalFactShared(factText: fact))
+                    }
+                }
+            }
             if !coachParts.spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 host.setCourseVoiceStateResponding()
                 try await host.speechSynthesizer.speakText(coachParts.spokenText)
@@ -580,6 +636,106 @@ final class LessonPlayer: ObservableObject {
             host.speakCourseError(error)
             return false
         }
+    }
+
+    // MARK: - Interactive multiple choice
+
+    /// Inline interactive widget step — no vision call, no off-screen action. Always
+    /// advances after showing feedback (formative concept check, not a hard gate); see
+    /// the "Architecture decision" note above `CourseInteractiveMultipleChoice`.
+    private func runInteractiveChoiceStep(
+        goal: CourseLearningGoal,
+        multipleChoice: CourseInteractiveMultipleChoice,
+        session: ClickyCourseSession,
+        host: CompanionManager
+    ) async -> Bool {
+        setPhase(.interactiveChoice(prompt: multipleChoice.question))
+        coursesManager.setCourseInteractionRunning(false)
+        host.setCourseVoiceStateIdle()
+        NotificationCenter.default.post(name: .clickySwitchToCoursesTab, object: nil)
+
+        let selectedIndex = await waitForInteractiveChoiceAnswer()
+        guard selectedIndex >= 0, coursesManager.activeSession != nil else { return false }
+
+        let isCorrect = selectedIndex == multipleChoice.correctAnswerIndex
+        Task { _ = await host.teachyEngine.processEvent(.goalAttempted(
+            goalID: goal.id,
+            attemptDescription: isCorrect ? "pass" : "offTrack"
+        )) }
+
+        host.flashCourseSuccessCelebration()
+        host.setCourseVoiceStateIdle()
+        setPhase(.celebrating)
+        try? await Task.sleep(for: .milliseconds(900))
+        return true
+    }
+
+    // MARK: - Interactive checklist
+
+    /// Inline self-attested checklist step — sibling of `runInteractiveChoiceStep`. No
+    /// right/wrong concept; checking items is a memory aid, not a gate, so "Done" always
+    /// advances regardless of what (if anything) got checked.
+    private func runInteractiveChecklistStep(
+        goal: CourseLearningGoal,
+        checklist: CourseInteractiveChecklist,
+        session: ClickyCourseSession,
+        host: CompanionManager
+    ) async -> Bool {
+        setPhase(.interactiveChecklist(prompt: checklist.prompt))
+        coursesManager.setCourseInteractionRunning(false)
+        host.setCourseVoiceStateIdle()
+        NotificationCenter.default.post(name: .clickySwitchToCoursesTab, object: nil)
+
+        let completed = await waitForInteractiveChecklistCompletion()
+        guard completed, coursesManager.activeSession != nil else { return false }
+
+        // Self-attested — there's no incorrect outcome, so this is always a "pass".
+        Task { _ = await host.teachyEngine.processEvent(.goalAttempted(
+            goalID: goal.id,
+            attemptDescription: "pass"
+        )) }
+
+        host.flashCourseSuccessCelebration()
+        host.setCourseVoiceStateIdle()
+        setPhase(.celebrating)
+        try? await Task.sleep(for: .milliseconds(900))
+        return true
+    }
+
+    // MARK: - Interactive fill-in-the-blank
+
+    /// Inline fill-in-the-blank step — sibling of `runInteractiveChoiceStep`. Local
+    /// exact-match verification (trimmed/lowercased against `acceptableAnswers`) — no
+    /// vision call, no LLM classifier. Always advances after showing feedback (formative
+    /// concept check, not a hard gate), matching the multiple-choice widget's philosophy.
+    private func runInteractiveFillInBlankStep(
+        goal: CourseLearningGoal,
+        fillInBlank: CourseInteractiveFillInBlank,
+        session: ClickyCourseSession,
+        host: CompanionManager
+    ) async -> Bool {
+        setPhase(.interactiveFillInBlank(prompt: fillInBlank.prompt))
+        coursesManager.setCourseInteractionRunning(false)
+        host.setCourseVoiceStateIdle()
+        NotificationCenter.default.post(name: .clickySwitchToCoursesTab, object: nil)
+
+        let submittedAnswer = await waitForInteractiveFillInBlankAnswer()
+        let normalizedAnswer = submittedAnswer.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedAnswer.isEmpty, coursesManager.activeSession != nil else { return false }
+
+        let isCorrect = fillInBlank.acceptableAnswers.contains { acceptable in
+            acceptable.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedAnswer
+        }
+        Task { _ = await host.teachyEngine.processEvent(.goalAttempted(
+            goalID: goal.id,
+            attemptDescription: isCorrect ? "pass" : "offTrack"
+        )) }
+
+        host.flashCourseSuccessCelebration()
+        host.setCourseVoiceStateIdle()
+        setPhase(.celebrating)
+        try? await Task.sleep(for: .milliseconds(900))
+        return true
     }
 
     // MARK: - Adaptive teach-back (up to 3 turns)
@@ -800,6 +956,27 @@ final class LessonPlayer: ObservableObject {
         }
     }
 
+    private func waitForInteractiveChoiceAnswer() async -> Int {
+        await withCheckedContinuation { continuation in
+            interactiveChoiceContinuation?.resume(returning: -1)
+            interactiveChoiceContinuation = continuation
+        }
+    }
+
+    private func waitForInteractiveChecklistCompletion() async -> Bool {
+        await withCheckedContinuation { continuation in
+            interactiveChecklistContinuation?.resume(returning: false)
+            interactiveChecklistContinuation = continuation
+        }
+    }
+
+    private func waitForInteractiveFillInBlankAnswer() async -> String {
+        await withCheckedContinuation { continuation in
+            interactiveFillInBlankContinuation?.resume(returning: "")
+            interactiveFillInBlankContinuation = continuation
+        }
+    }
+
     private func answerUserQuestion(_ question: String) async {
         guard let host, let session = coursesManager.activeSession else { return }
         let ask = """
@@ -892,6 +1069,18 @@ final class LessonPlayer: ObservableObject {
         if let understandingAnswerContinuation {
             self.understandingAnswerContinuation = nil
             understandingAnswerContinuation.resume(returning: "i think i get it")
+        }
+        if let interactiveChoiceContinuation {
+            self.interactiveChoiceContinuation = nil
+            interactiveChoiceContinuation.resume(returning: -1)
+        }
+        if let interactiveChecklistContinuation {
+            self.interactiveChecklistContinuation = nil
+            interactiveChecklistContinuation.resume(returning: false)
+        }
+        if let interactiveFillInBlankContinuation {
+            self.interactiveFillInBlankContinuation = nil
+            interactiveFillInBlankContinuation.resume(returning: "")
         }
         host?.clearCoursePresenceBubble()
         host?.courseSuccessCelebration = nil

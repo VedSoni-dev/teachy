@@ -169,17 +169,74 @@ enum ReviewPerformance: String, Codable {
     case easy
 }
 
+// MARK: - Humor receptivity
+
+/// Lightweight read on what lands — same heuristic spirit as detectedMood,
+/// but tracking receptiveness to humor/banter specifically rather than
+/// moment-to-moment frustration/engagement.
+enum HumorReceptivity: String, Codable, Equatable {
+    case warm       // jokes back, seems to enjoy banter
+    case neutral    // no strong signal either way
+    case efficient  // short/all-business responses — wants to move fast, keep humor light/rare
+}
+
+// MARK: - Timestamped personal fact
+
+/// A personal fact about the learner — their job, interests, things they've
+/// mentioned — with the date it was captured. Replaces the old flat `[String]`
+/// so the coaching prompt can say "you mentioned X two days ago."
+struct TimestampedFact: Codable, Equatable {
+    var text: String
+    var capturedAt: Date
+}
+
+// MARK: - Dated signal (evolving personality trend)
+
+/// A value recorded at a specific point in time. Used to build a short dated
+/// history of `humorReceptivity` and `detectedMood` so the coach can detect
+/// trends ("they've warmed up over recent sessions") rather than only seeing
+/// the latest single overwrite.
+struct DatedSignal<Value: Codable & Equatable>: Codable, Equatable {
+    var value: Value
+    var at: Date
+}
+
 // MARK: - Learner model
 
 /// The complete persistent model of a learner. Carries knowledge across all
 /// courses, tracks proficiency over time, and powers spaced repetition.
 /// This is the "persistent learner memory" that makes Teachy un-copyable.
+///
+/// Codable notes:
+/// - `datedPersonalFacts` is the canonical storage for personal facts.
+/// - `personalFacts` is a computed accessor over `datedPersonalFacts` so all
+///   existing readers (prompt injection, UI, relationship check-in) continue
+///   working without changes.
+/// - Old `engine-state.json` files that have a flat `personalFacts: [String]`
+///   and no `datedPersonalFacts` are migrated transparently in `init(from:)`.
 struct LearnerModel: Codable, Equatable {
     var skillNodes: [LearnerSkillNode]
     var teachingDemos: [TeachingDemo]
     var rollingNotes: [String]
-    var prefersHintsOverAutomation: Bool?
+    /// Dated personal facts — canonical storage. Use `personalFacts` to read as
+    /// plain strings (all existing readers do this via the computed accessor below).
+    var datedPersonalFacts: [TimestampedFact]
+    /// Lightweight read on what lands — see `HumorReceptivity`. Kept as the
+    /// single-value "latest" for all existing readers; `humorReceptivityHistory`
+    /// accumulates the dated trail for trend analysis.
+    var humorReceptivity: HumorReceptivity?
+    /// Short dated history of humor-receptivity readings. Trimmed to last 12 entries.
+    /// Used by `LearnerTemporalContext` to derive trend phrases for the coaching prompt.
+    var humorReceptivityHistory: [DatedSignal<HumorReceptivity>]
+    /// Latest detected mood string. Kept for all existing readers; `moodHistory`
+    /// accumulates the dated trail.
     var detectedMood: String?
+    /// Short dated history of mood detections. Trimmed to last 12 entries.
+    var moodHistory: [DatedSignal<String>]
+    /// Last time the outside-lesson relationship check-in card (Home tab) was shown
+    /// and reacted to — gates re-showing it (see `TeachyEngine.recordRelationshipCheckInReaction`).
+    var lastRelationshipCheckInAt: Date?
+    var prefersHintsOverAutomation: Bool?
     var totalCoursesCompleted: Int
     var totalGoalsCompleted: Int
     var totalSessionMinutes: Int
@@ -190,10 +247,20 @@ struct LearnerModel: Codable, Equatable {
     var createdAt: Date
     var updatedAt: Date
 
+    /// Computed accessor over `datedPersonalFacts` — returns plain text strings.
+    /// All existing callers (prompt builders, UI, relationship check-in card) use
+    /// this so they keep working without modification.
+    var personalFacts: [String] {
+        datedPersonalFacts.map(\.text)
+    }
+
     init() {
         self.skillNodes = []
         self.teachingDemos = []
         self.rollingNotes = []
+        self.datedPersonalFacts = []
+        self.humorReceptivityHistory = []
+        self.moodHistory = []
         self.totalCoursesCompleted = 0
         self.totalGoalsCompleted = 0
         self.totalSessionMinutes = 0
@@ -202,6 +269,110 @@ struct LearnerModel: Codable, Equatable {
         self.portfolioItemCount = 0
         self.createdAt = Date()
         self.updatedAt = Date()
+    }
+
+    // MARK: - Custom Codable (backward-compat migration)
+
+    /// Custom coding keys — `personalFacts` is no longer a stored property, so it
+    /// must NOT appear as a case here. `datedPersonalFacts` is the stored key.
+    /// All other fields mirror the struct properties exactly.
+    enum CodingKeys: String, CodingKey {
+        case skillNodes
+        case teachingDemos
+        case rollingNotes
+        case datedPersonalFacts
+        case humorReceptivity
+        case humorReceptivityHistory
+        case detectedMood
+        case moodHistory
+        case lastRelationshipCheckInAt
+        case prefersHintsOverAutomation
+        case totalCoursesCompleted
+        case totalGoalsCompleted
+        case totalSessionMinutes
+        case currentStreakDays
+        case longestStreakDays
+        case lastActiveDate
+        case portfolioItemCount
+        case createdAt
+        case updatedAt
+    }
+
+    /// Decodes from persisted JSON. If `datedPersonalFacts` is absent (old format),
+    /// migrates the legacy flat `personalFacts: [String]` array by wrapping each
+    /// string into a `TimestampedFact` with `capturedAt = createdAt` (or `Date()`
+    /// when `createdAt` is also absent). All other fields have plain `decodeIfPresent`
+    /// calls so they default gracefully when absent in older JSON.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        skillNodes = try container.decodeIfPresent([LearnerSkillNode].self, forKey: .skillNodes) ?? []
+        teachingDemos = try container.decodeIfPresent([TeachingDemo].self, forKey: .teachingDemos) ?? []
+        rollingNotes = try container.decodeIfPresent([String].self, forKey: .rollingNotes) ?? []
+        humorReceptivity = try container.decodeIfPresent(HumorReceptivity.self, forKey: .humorReceptivity)
+        humorReceptivityHistory = try container.decodeIfPresent([DatedSignal<HumorReceptivity>].self, forKey: .humorReceptivityHistory) ?? []
+        detectedMood = try container.decodeIfPresent(String.self, forKey: .detectedMood)
+        moodHistory = try container.decodeIfPresent([DatedSignal<String>].self, forKey: .moodHistory) ?? []
+        lastRelationshipCheckInAt = try container.decodeIfPresent(Date.self, forKey: .lastRelationshipCheckInAt)
+        prefersHintsOverAutomation = try container.decodeIfPresent(Bool.self, forKey: .prefersHintsOverAutomation)
+        totalCoursesCompleted = try container.decodeIfPresent(Int.self, forKey: .totalCoursesCompleted) ?? 0
+        totalGoalsCompleted = try container.decodeIfPresent(Int.self, forKey: .totalGoalsCompleted) ?? 0
+        totalSessionMinutes = try container.decodeIfPresent(Int.self, forKey: .totalSessionMinutes) ?? 0
+        currentStreakDays = try container.decodeIfPresent(Int.self, forKey: .currentStreakDays) ?? 0
+        longestStreakDays = try container.decodeIfPresent(Int.self, forKey: .longestStreakDays) ?? 0
+        lastActiveDate = try container.decodeIfPresent(Date.self, forKey: .lastActiveDate)
+        portfolioItemCount = try container.decodeIfPresent(Int.self, forKey: .portfolioItemCount) ?? 0
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+
+        // Migration: decode `datedPersonalFacts` if present (new format), otherwise
+        // fall back to the legacy `personalFacts: [String]` key. The legacy key is
+        // NOT in `CodingKeys` because it conflicts with the computed accessor's name,
+        // so we re-open the raw container to read the legacy key directly.
+        if let dated = try container.decodeIfPresent([TimestampedFact].self, forKey: .datedPersonalFacts) {
+            datedPersonalFacts = dated
+        } else {
+            // Legacy flat array — wrap each string with a date anchored to `createdAt`
+            // so "2 days ago" timestamps are plausible rather than all "just now".
+            let legacyFactsContainer = try decoder.container(keyedBy: LegacyPersonalFactsCodingKey.self)
+            let legacyStrings = try legacyFactsContainer.decodeIfPresent([String].self, forKey: .personalFacts) ?? []
+            let migrationDate = createdAt
+            datedPersonalFacts = legacyStrings.map { factText in
+                TimestampedFact(text: factText, capturedAt: migrationDate)
+            }
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(skillNodes, forKey: .skillNodes)
+        try container.encode(teachingDemos, forKey: .teachingDemos)
+        try container.encode(rollingNotes, forKey: .rollingNotes)
+        try container.encode(datedPersonalFacts, forKey: .datedPersonalFacts)
+        try container.encodeIfPresent(humorReceptivity, forKey: .humorReceptivity)
+        try container.encode(humorReceptivityHistory, forKey: .humorReceptivityHistory)
+        try container.encodeIfPresent(detectedMood, forKey: .detectedMood)
+        try container.encode(moodHistory, forKey: .moodHistory)
+        try container.encodeIfPresent(lastRelationshipCheckInAt, forKey: .lastRelationshipCheckInAt)
+        try container.encodeIfPresent(prefersHintsOverAutomation, forKey: .prefersHintsOverAutomation)
+        try container.encode(totalCoursesCompleted, forKey: .totalCoursesCompleted)
+        try container.encode(totalGoalsCompleted, forKey: .totalGoalsCompleted)
+        try container.encode(totalSessionMinutes, forKey: .totalSessionMinutes)
+        try container.encode(currentStreakDays, forKey: .currentStreakDays)
+        try container.encode(longestStreakDays, forKey: .longestStreakDays)
+        try container.encodeIfPresent(lastActiveDate, forKey: .lastActiveDate)
+        try container.encode(portfolioItemCount, forKey: .portfolioItemCount)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+    }
+
+    /// Separate coding key enum for the legacy `personalFacts: [String]` key.
+    /// Because `personalFacts` is now a computed property on `LearnerModel`,
+    /// we cannot add it to the primary `CodingKeys` enum. This secondary enum
+    /// lets the migration path in `init(from:)` re-open the decoder container
+    /// to read the old key without conflicting with the computed accessor's name.
+    private enum LegacyPersonalFactsCodingKey: String, CodingKey {
+        case personalFacts
     }
 
     // MARK: - Skill lookups
@@ -292,14 +463,24 @@ struct LearnerModel: Codable, Equatable {
         let trimmed = userResponse.trimmingCharacters(in: .whitespacesAndNewlines)
         let wordCount = trimmed.split(separator: " ").count
 
+        let newMood: String?
         if wordCount <= 3 && (lower.contains("idk") || lower.contains("i don't know") || lower.contains("no idea") || lower.contains("confused") || lower.contains("lost")) {
-            detectedMood = "frustrated"
+            newMood = "frustrated"
         } else if wordCount <= 2 && (lower == "ok" || lower == "done" || lower == "yes" || lower == "yep" || lower == "sure" || lower == "k") {
-            detectedMood = "bored"
+            newMood = "bored"
         } else if wordCount >= 6 || lower.contains("?") {
-            detectedMood = "engaged"
+            newMood = "engaged"
         } else if lower.contains("maybe") || lower.contains("i think") || lower.contains("not sure") {
-            detectedMood = "confused"
+            newMood = "confused"
+        } else {
+            newMood = nil
+        }
+
+        if let mood = newMood {
+            detectedMood = mood
+            // Also record in the dated history for trend analysis.
+            moodHistory.append(DatedSignal(value: mood, at: Date()))
+            moodHistory = Array(moodHistory.suffix(12))
         }
     }
 
@@ -310,6 +491,30 @@ struct LearnerModel: Codable, Equatable {
         guard !trimmed.isEmpty else { return }
         rollingNotes.append(trimmed)
         rollingNotes = Array(rollingNotes.suffix(16))
+        updatedAt = Date()
+    }
+
+    // MARK: - Personal facts & humor
+
+    mutating func appendPersonalFact(_ fact: String) {
+        let trimmed = fact.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        // Dedupe against existing facts (case-insensitive, using the computed accessor).
+        let alreadyKnown = personalFacts.contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(trimmed) == .orderedSame
+        }
+        guard !alreadyKnown else { return }
+        datedPersonalFacts.append(TimestampedFact(text: trimmed, capturedAt: Date()))
+        // Keep at most 20 facts — trim from the oldest end.
+        datedPersonalFacts = Array(datedPersonalFacts.suffix(20))
+        updatedAt = Date()
+    }
+
+    mutating func updateHumorReceptivity(_ value: HumorReceptivity) {
+        humorReceptivity = value
+        // Also record in the dated history so trend analysis works across sessions.
+        humorReceptivityHistory.append(DatedSignal(value: value, at: Date()))
+        humorReceptivityHistory = Array(humorReceptivityHistory.suffix(12))
         updatedAt = Date()
     }
 
@@ -358,7 +563,10 @@ struct LearnerModel: Codable, Equatable {
             prefersHintsOverAutomation = prefersHints
         }
         rollingNotes = legacyProfile.rollingNotes
-        detectedMood = legacyProfile.detectedMood
+        if let mood = legacyProfile.detectedMood {
+            detectedMood = mood
+            moodHistory.append(DatedSignal(value: mood, at: createdAt))
+        }
     }
 
     // MARK: - Prompt sections for LLM

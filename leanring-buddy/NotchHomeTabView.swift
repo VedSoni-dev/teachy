@@ -13,13 +13,32 @@ struct NotchHomeTabView: View {
     @ObservedObject var notchManager: NotchWindowManager
     @ObservedObject private var softwareUpdater = TeachySoftwareUpdater.shared
 
+    @State private var elevenLabsAPIKeyInput: String = ""
+    @State private var elevenLabsVoiceIDInput: String = ""
+    @State private var elevenLabsIsValidating: Bool = false
+    @State private var elevenLabsError: String?
+    @State private var elevenLabsIsConfigured: Bool = TeachyElevenLabsKeyStore.isConfigured
+
+    /// Flips locally the moment a reaction is tapped so the card disappears without
+    /// needing to reopen the tab (the durable gate lives on `LearnerModel.lastRelationshipCheckInAt`).
+    @State private var isCheckInDismissed: Bool = false
+    /// Picked once per appearance (see `relationshipCheckInSection`'s `.onAppear`) so the
+    /// templated line doesn't re-roll on every unrelated re-render of this view.
+    @State private var cachedRelationshipCheckInLine: String?
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            relationshipCheckInSection
+
             pushToTalkInstructions
 
             trustAndPrivacySection
 
+            teachyRemembersSection
+
             softwareUpdatesSection
+
+            voiceSection
 
             cursorColorSection
 
@@ -82,6 +101,141 @@ struct NotchHomeTabView: View {
         .glassCard(tint: DS.Colors.learnAccent)
     }
 
+    private var teachyRemembersSection: some View {
+        let learnerModel = companionManager.teachyEngine.getLearnerModel()
+        let datedFacts = learnerModel.datedPersonalFacts
+
+        // How long this learner has been using Teachy, shown as a header line
+        // so there's always a visible signal that Teachy remembers across time.
+        let totalDaysLearning = Calendar.current.dateComponents(
+            [.day],
+            from: learnerModel.createdAt,
+            to: Date()
+        ).day ?? 0
+        let learningDurationLine: String? = totalDaysLearning >= 1
+            ? "Learning with Teachy for \(totalDaysLearning) day\(totalDaysLearning == 1 ? "" : "s")"
+            : nil
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Teachy remembers")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(DS.Colors.textPrimary)
+
+            if let durationLine = learningDurationLine {
+                Text(durationLine)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.Colors.learnAccent.opacity(0.8))
+            }
+
+            if datedFacts.isEmpty {
+                Text("Nothing yet — the more you talk, the more Teachy remembers.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(datedFacts.suffix(6).reversed()), id: \.text) { fact in
+                        HStack(alignment: .top, spacing: 6) {
+                            Text("·")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(DS.Colors.textTertiary)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(fact.text)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(DS.Colors.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(LearnerTemporalContext.relativeTimeLabel(for: fact.capturedAt))
+                                    .font(.system(size: 9))
+                                    .foregroundColor(DS.Colors.textTertiary.opacity(0.7))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+    }
+
+    // MARK: - Relationship check-in (outside any lesson)
+
+    /// Shows only when there's actually a personal fact to reference AND it hasn't
+    /// been shown (and reacted to) in the last 24 hours — avoids repeating the same
+    /// callback every time someone opens the panel.
+    private var shouldShowRelationshipCheckIn: Bool {
+        guard !isCheckInDismissed else { return false }
+        let learnerModel = companionManager.teachyEngine.getLearnerModel()
+        guard !learnerModel.personalFacts.isEmpty else { return false }
+        guard let lastCheckIn = learnerModel.lastRelationshipCheckInAt else { return true }
+        return Date().timeIntervalSince(lastCheckIn) > 86400
+    }
+
+    @ViewBuilder
+    private var relationshipCheckInSection: some View {
+        if shouldShowRelationshipCheckIn {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(cachedRelationshipCheckInLine ?? relationshipCheckInLine())
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    Button {
+                        companionManager.teachyEngine.recordRelationshipCheckInReaction(wasPositive: true)
+                        isCheckInDismissed = true
+                    } label: {
+                        Image(systemName: "hand.thumbsup")
+                    }
+                    .dsIconButtonStyle(size: 28, tooltip: "Good update")
+
+                    Button {
+                        companionManager.teachyEngine.recordRelationshipCheckInReaction(wasPositive: false)
+                        isCheckInDismissed = true
+                    } label: {
+                        Image(systemName: "hand.thumbsdown")
+                    }
+                    .dsIconButtonStyle(size: 28, isDestructiveOnHover: true, tooltip: "Not really")
+
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassCard(tint: DS.Colors.learnAccent, prominent: true)
+            .onAppear {
+                if cachedRelationshipCheckInLine == nil {
+                    cachedRelationshipCheckInLine = relationshipCheckInLine()
+                }
+            }
+        }
+    }
+
+    /// Templated callback line — no LLM call, same "simple heuristic over classifier"
+    /// philosophy already used for humor/mood detection elsewhere in this codebase.
+    /// Tone varies by `humorReceptivity` so repeat visits don't feel robotic.
+    private func relationshipCheckInLine() -> String {
+        let learnerModel = companionManager.teachyEngine.getLearnerModel()
+        let recentFacts = Array(learnerModel.personalFacts.suffix(4))
+        guard let fact = recentFacts.randomElement() ?? learnerModel.personalFacts.last else {
+            return ""
+        }
+        switch learnerModel.humorReceptivity {
+        case .warm:
+            let templates = [
+                "Ok but real talk — how's the \(fact) thing going?",
+                "Still thinking about \(fact). Update me?",
+            ]
+            return templates.randomElement() ?? templates[0]
+        case .efficient, .neutral, .none:
+            let templates = [
+                "Last time you mentioned \(fact) — how's that going?",
+                "Quick one: any update on \(fact)?",
+            ]
+            return templates.randomElement() ?? templates[0]
+        }
+    }
+
     private var softwareUpdatesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Updates")
@@ -122,6 +276,144 @@ struct NotchHomeTabView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+    }
+
+    private var voiceSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Voice")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(DS.Colors.textPrimary)
+
+            Text("Optional — use your own ElevenLabs voice instead of the built-in one. Get a key at elevenlabs.io (their pricing applies) — Teachy sounds great without one too.")
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if elevenLabsIsConfigured {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.Colors.learnAccent)
+                    Text("Voice configured")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.Colors.textSecondary)
+
+                    Spacer()
+
+                    Button {
+                        TeachyElevenLabsKeyStore.apiKey = nil
+                        TeachyElevenLabsKeyStore.voiceID = nil
+                        elevenLabsAPIKeyInput = ""
+                        elevenLabsVoiceIDInput = ""
+                        elevenLabsError = nil
+                        elevenLabsIsConfigured = false
+                    } label: {
+                        Text("Remove")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.red)
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    SecureField("ElevenLabs API key", text: $elevenLabsAPIKeyInput)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .padding(8)
+                        .glassCard(cornerRadius: 8, tint: DS.Colors.learnAccent)
+                        .onSubmit {
+                            validateAndSaveElevenLabsKey()
+                        }
+
+                    TextField("Voice ID", text: $elevenLabsVoiceIDInput)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .padding(8)
+                        .glassCard(cornerRadius: 8, tint: DS.Colors.learnAccent)
+                        .onSubmit {
+                            validateAndSaveElevenLabsKey()
+                        }
+
+                    if let error = elevenLabsError {
+                        Text(error)
+                            .font(.system(size: 10))
+                            .foregroundColor(.red)
+                    }
+                }
+
+                Button {
+                    validateAndSaveElevenLabsKey()
+                } label: {
+                    HStack {
+                        if elevenLabsIsValidating {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                        } else {
+                            Text("Save")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(DS.Colors.learnAccent)
+                    )
+                    .foregroundColor(.white)
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                .disabled(
+                    elevenLabsAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || elevenLabsVoiceIDInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || elevenLabsIsValidating
+                )
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+    }
+
+    private func validateAndSaveElevenLabsKey() {
+        let key = elevenLabsAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let voiceID = elevenLabsVoiceIDInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, !voiceID.isEmpty else { return }
+
+        elevenLabsIsValidating = true
+        elevenLabsError = nil
+
+        Task {
+            // Quick validation: hit ElevenLabs with the key
+            var request = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/voices")!)
+            request.timeoutInterval = 10
+            request.setValue(key, forHTTPHeaderField: "xi-api-key")
+
+            do {
+                let (_, response) = try await URLSession.shared.data(for: request)
+                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                    TeachyElevenLabsKeyStore.apiKey = key
+                    TeachyElevenLabsKeyStore.voiceID = voiceID
+                    await MainActor.run {
+                        elevenLabsIsValidating = false
+                        elevenLabsIsConfigured = true
+                    }
+                } else {
+                    await MainActor.run {
+                        elevenLabsIsValidating = false
+                        elevenLabsError = "That key doesn't seem valid. Check it and try again."
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    elevenLabsIsValidating = false
+                    elevenLabsError = "Couldn't reach ElevenLabs. Check your connection."
+                }
+            }
+        }
     }
 
     private var watchIntroAgainButton: some View {

@@ -39,7 +39,19 @@ final class LocalSpeechSynthesizer: NSObject {
         stopPlayback()
         isPlaying = true
 
-        // 1) Cloud neural TTS via Teachy proxy (ElevenLabs preferred, OpenAI fallback on proxy)
+        // 1a) User's own ElevenLabs key, called directly (bypasses the Teachy proxy
+        // entirely so a user's voice usage never lands on the developer's bill)
+        if let audioData = await Self.fetchDirectElevenLabsAudio(text: cleaned) {
+            do {
+                try await playAudioData(audioData)
+                isPlaying = false
+                return
+            } catch {
+                print("⚠️ Direct ElevenLabs playback failed, falling back: \(error)")
+            }
+        }
+
+        // 1b) Cloud neural TTS via Teachy proxy (ElevenLabs preferred, OpenAI fallback on proxy)
         if let audioData = await Self.fetchCloudTTSAudio(text: cleaned) {
             do {
                 try await playAudioData(audioData)
@@ -81,6 +93,48 @@ final class LocalSpeechSynthesizer: NSObject {
     }
 
     // MARK: - Cloud TTS
+
+    /// Calls ElevenLabs directly with the user's own API key + voice ID, if
+    /// configured (see `TeachyElevenLabsKeyStore`). This intentionally bypasses
+    /// the Teachy proxy so a user's own voice usage is billed to their own
+    /// ElevenLabs account, not the developer's. Falls through to `nil` (and
+    /// therefore to `fetchCloudTTSAudio`'s worker path) if the user hasn't
+    /// configured their own key, or if the direct call fails for any reason.
+    private static func fetchDirectElevenLabsAudio(text: String) async -> Data? {
+        guard let apiKey = TeachyElevenLabsKeyStore.apiKey,
+              let voiceID = TeachyElevenLabsKeyStore.voiceID,
+              !apiKey.isEmpty, !voiceID.isEmpty,
+              let url = URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voiceID)")
+        else { return nil }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.setValue("audio/mpeg", forHTTPHeaderField: "accept")
+        request.timeoutInterval = 28
+
+        let body: [String: Any] = [
+            "text": text,
+            "model_id": "eleven_turbo_v2_5",
+            "voice_settings": [
+                "stability": 0.4,
+                "similarity_boost": 0.8,
+                "style": 0.4,
+                "use_speaker_boost": true,
+            ],
+        ]
+        guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else { return nil }
+        request.httpBody = httpBody
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+            return data
+        } catch {
+            return nil
+        }
+    }
 
     private static func fetchCloudTTSAudio(text: String) async -> Data? {
         guard let url = URL(string: ClickyWorkerConfiguration.ttsEndpointURL) else { return nil }

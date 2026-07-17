@@ -352,7 +352,7 @@ struct ClickyNotchRootView: View {
                 if companionManager.allPermissionsGranted && companionManager.hasCompletedOnboarding {
                     headerTab(.courses, title: "Learn", systemImage: "book.fill")
                     headerTab(.portfolio, title: "Portfolio", systemImage: "folder.fill")
-                    headerTab(.skills, title: "Skills", systemImage: "chart.tree")
+                    headerTab(.skills, title: "Skills", systemImage: "chart.bar.xaxis")
                     headerTab(.home, title: "Settings", systemImage: "slider.horizontal.3")
                 }
             }

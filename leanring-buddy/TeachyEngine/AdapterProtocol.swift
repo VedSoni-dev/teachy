@@ -25,6 +25,7 @@ enum LearnerEvent: Codable, Equatable {
     case userMoodDetected(mood: String)
     case sessionResumed
     case sessionPaused
+    case personalFactShared(factText: String)
 }
 
 // MARK: - Output from the engine

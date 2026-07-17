@@ -159,7 +159,11 @@ private struct CourseLessonHUDView: View {
             let isYourTurn = phase.isYourTurn
             let isPlacement = phase.isPlacement
             let isUnderstanding = phase.isUnderstanding
+            let isInteractiveChoice = phase.isInteractiveChoice
+            let isInteractiveChecklist = phase.isInteractiveChecklist
+            let isInteractiveFillInBlank = phase.isInteractiveFillInBlank
             let isLearnerWaiting = isYourTurn || isPlacement || isUnderstanding
+                || isInteractiveChoice || isInteractiveChecklist || isInteractiveFillInBlank
             let isWatchingVideo = phase.isWatchingVideo
             let showDetails = isHovering || isLearnerWaiting || isWatchingVideo
                 || coursesManager.lastCoachMessage != nil
@@ -184,6 +188,33 @@ private struct CourseLessonHUDView: View {
                         .lineLimit(2)
 
                     Text("Say it in your words")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.learnAccent.opacity(0.95))
+                } else if isInteractiveChoice {
+                    Text("Quick check")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .lineLimit(2)
+
+                    Text("Pick an answer")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.learnAccent.opacity(0.95))
+                } else if isInteractiveChecklist {
+                    Text("Checklist")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .lineLimit(2)
+
+                    Text("Check off what you did")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.learnAccent.opacity(0.95))
+                } else if isInteractiveFillInBlank {
+                    Text("Fill in the blank")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .lineLimit(2)
+
+                    Text("Type the missing word")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(DS.Colors.learnAccent.opacity(0.95))
                 } else {
@@ -291,6 +322,27 @@ private struct CourseLessonHUDView: View {
                         }
                         Spacer(minLength: 0)
                     }
+                } else if isInteractiveChoice, let multipleChoice = session.currentGoal.interactiveMultipleChoice {
+                    CourseInteractiveChoiceWidgetView(
+                        multipleChoice: multipleChoice,
+                        onSubmit: { index in
+                            companionManager.submitCourseInteractiveChoiceAnswer(index)
+                        }
+                    )
+                } else if isInteractiveChecklist, let checklist = session.currentGoal.interactiveChecklist {
+                    CourseInteractiveChecklistWidgetView(
+                        checklist: checklist,
+                        onSubmit: { completed in
+                            companionManager.submitCourseInteractiveChecklistCompletion(completed)
+                        }
+                    )
+                } else if isInteractiveFillInBlank, let fillInBlank = session.currentGoal.interactiveFillInBlank {
+                    CourseInteractiveFillInBlankWidgetView(
+                        fillInBlank: fillInBlank,
+                        onSubmit: { text in
+                            companionManager.submitCourseInteractiveFillInBlankAnswer(text)
+                        }
+                    )
                 }
             }
             .padding(.horizontal, 12)
@@ -407,6 +459,15 @@ private struct CourseLessonHUDView: View {
         }
         if case .understanding = phase {
             return "hold ctrl+option and explain · or tap “I get it”"
+        }
+        if case .interactiveChoice = phase {
+            return "tap an answer to see how you did"
+        }
+        if case .interactiveChecklist = phase {
+            return "check off what applies · tap Done when ready"
+        }
+        if case .interactiveFillInBlank = phase {
+            return "type your answer · tap Check to see how you did"
         }
         if case .yourTurn = phase {
             if !TeachyPromptChips.chips(forGoalID: session.currentStep.id).isEmpty {

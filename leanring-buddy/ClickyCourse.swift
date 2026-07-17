@@ -33,6 +33,36 @@ struct CourseArtifactSnapshot: Codable, Equatable {
     let capturedAt: Date
 }
 
+// MARK: - Interactive lesson steps
+
+/// An inline multiple-choice question rendered directly in the lesson UI —
+/// no vision call, no off-screen action. First proof of the "interactive
+/// widget" architecture (see `CourseLessonPhase.interactiveChoice`).
+struct CourseInteractiveMultipleChoice: Codable, Equatable {
+    let question: String
+    let options: [String]
+    let correctAnswerIndex: Int
+    let explanation: String?
+}
+
+/// A self-attested checklist rendered directly in the lesson UI — no right/wrong
+/// concept, purely a memory aid the learner checks off before moving on. Sibling
+/// of `CourseInteractiveMultipleChoice`; see `CourseLessonPhase.interactiveChecklist`.
+struct CourseInteractiveChecklist: Codable, Equatable {
+    var prompt: String
+    var items: [String]
+}
+
+/// An inline fill-in-the-blank question rendered directly in the lesson UI —
+/// local exact-match verification (trimmed/lowercased), no vision call, no LLM
+/// classifier. Sibling of `CourseInteractiveMultipleChoice`; see
+/// `CourseLessonPhase.interactiveFillInBlank`.
+struct CourseInteractiveFillInBlank: Codable, Equatable {
+    var prompt: String
+    var acceptableAnswers: [String]
+    var explanation: String?
+}
+
 // MARK: - Course catalog
 
 struct ClickyCourse: Identifiable, Codable, Equatable {
@@ -162,6 +192,17 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
     let toolPolicy: CourseToolPolicy?
     /// One-line learning outcome shown in the HUD next to the goal title.
     let outcome: String?
+    /// If set, this goal is rendered as an inline interactive widget (e.g. multiple
+    /// choice) instead of the video → coach → vision-verify flow. A goal is
+    /// "interactive" purely by having this set — `goal`/`coachAsk` stay required but
+    /// become short authoring context rather than driving the lesson loop.
+    let interactiveMultipleChoice: CourseInteractiveMultipleChoice?
+    /// Self-attested checklist widget — sibling of `interactiveMultipleChoice`.
+    /// A goal has at most one interactive type set.
+    let interactiveChecklist: CourseInteractiveChecklist?
+    /// Fill-in-the-blank widget — sibling of `interactiveMultipleChoice`.
+    /// A goal has at most one interactive type set.
+    let interactiveFillInBlank: CourseInteractiveFillInBlank?
 
     /// Back-compat names used by session/HUD copy.
     var instruction: String { goal }
@@ -197,7 +238,10 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
         teacherVideoNotes: String? = nil,
         teachingContext: CourseTeachingContext? = nil,
         toolPolicy: CourseToolPolicy? = nil,
-        outcome: String? = nil
+        outcome: String? = nil,
+        interactiveMultipleChoice: CourseInteractiveMultipleChoice? = nil,
+        interactiveChecklist: CourseInteractiveChecklist? = nil,
+        interactiveFillInBlank: CourseInteractiveFillInBlank? = nil
     ) {
         self.id = id
         self.title = title
@@ -214,6 +258,9 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
         self.teachingContext = teachingContext
         self.toolPolicy = toolPolicy
         self.outcome = outcome
+        self.interactiveMultipleChoice = interactiveMultipleChoice
+        self.interactiveChecklist = interactiveChecklist
+        self.interactiveFillInBlank = interactiveFillInBlank
     }
 
     /// Credit line for the beside-cursor player.
@@ -309,17 +356,58 @@ enum TeachyPromptChips {
     }
 }
 
+/// Extracts and strips `[REMEMBER: the fact]` tags from any coach response text —
+/// shared by course lesson turns (`CourseCoachMessageParts`, below) and the
+/// free-form companion voice path (`CompanionManager.sendCompanionChatResponse`).
+/// The tag must never reach the learner spoken or displayed; the extracted facts
+/// are fed into `TeachyEngine.processEvent(.personalFactShared)`.
+enum CoachRememberTagParser {
+    /// Returns the personal facts tagged in `text`, in order of appearance, with
+    /// every `[REMEMBER: ...]` occurrence removed from `cleanedText` (not just the first —
+    /// someone can share two facts in one turn).
+    static func extractFactsAndStrip(from text: String) -> (cleanedText: String, facts: [String]) {
+        guard let regex = try? NSRegularExpression(pattern: "\\[REMEMBER:\\s*([^\\]]+)\\]", options: [.caseInsensitive]) else {
+            return (text, [])
+        }
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = regex.matches(in: text, options: [], range: range)
+        let facts = matches.compactMap { match -> String? in
+            guard match.numberOfRanges >= 2, let contentRange = Range(match.range(at: 1), in: text) else {
+                return nil
+            }
+            return String(text[contentRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let cleaned = regex.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: range,
+            withTemplate: ""
+        )
+        .replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (cleaned, facts)
+    }
+}
+
 /// Parsed coach line — info (explain) vs todo (do this now).
 struct CourseCoachMessageParts: Equatable {
     let infoText: String?
     let todoText: String?
     /// Clean text for TTS / history (tags stripped, parts joined).
     let spokenText: String
+    /// Personal facts the coach tagged `[REMEMBER: …]` in this turn — stripped
+    /// from `spokenText`/`infoText`/`todoText`, never shown or spoken to the
+    /// learner. Fed into `TeachyEngine.processEvent(.personalFactShared)`.
+    let rememberedFacts: [String]
 
     var hasStructuredParts: Bool { infoText != nil || todoText != nil }
 
     static func parse(from rawResponse: String) -> CourseCoachMessageParts {
-        let trimmed = rawResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRaw = rawResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Extract REMEMBER facts before any other parsing, then strip them out
+        // so they never leak into INFO/TODO extraction or the spoken fallback.
+        let (trimmed, rememberedFacts) = CoachRememberTagParser.extractFactsAndStrip(from: trimmedRaw)
+
         let info = extractTaggedSection(named: "INFO", from: trimmed)
             ?? extractPrefixedLine(named: "INFO", from: trimmed)
         let todo = extractTaggedSection(named: "TODO", from: trimmed)
@@ -327,7 +415,12 @@ struct CourseCoachMessageParts: Equatable {
 
         if info == nil, todo == nil {
             let cleaned = stripCoachTags(from: trimmed)
-            return CourseCoachMessageParts(infoText: nil, todoText: cleaned.isEmpty ? nil : cleaned, spokenText: cleaned)
+            return CourseCoachMessageParts(
+                infoText: nil,
+                todoText: cleaned.isEmpty ? nil : cleaned,
+                spokenText: cleaned,
+                rememberedFacts: rememberedFacts
+            )
         }
 
         var spokenPieces: [String] = []
@@ -337,7 +430,8 @@ struct CourseCoachMessageParts: Equatable {
         return CourseCoachMessageParts(
             infoText: info?.nilIfEmpty,
             todoText: todo?.nilIfEmpty,
-            spokenText: spoken.isEmpty ? stripCoachTags(from: trimmed) : spoken
+            spokenText: spoken.isEmpty ? stripCoachTags(from: trimmed) : spoken,
+            rememberedFacts: rememberedFacts
         )
     }
 
@@ -369,7 +463,10 @@ struct CourseCoachMessageParts: Equatable {
     }
 
     private static func stripCoachTags(from text: String) -> String {
-        var result = text
+        // Defense-in-depth: REMEMBER tags are already stripped in `parse(from:)`
+        // before this is reached, but strip again here in case this is ever
+        // called directly on unprocessed text.
+        var result = CoachRememberTagParser.extractFactsAndStrip(from: text).cleanedText
         for name in ["INFO", "TODO"] {
             if let regex = try? NSRegularExpression(
                 pattern: "\\[/?\(name)\\]",
@@ -416,6 +513,12 @@ enum CourseLessonPhase: Equatable {
     case yourTurn(prompt: String)
     /// Soft teach-back after vision success — confirm they get *why*.
     case understanding(prompt: String)
+    /// Inline interactive widget (e.g. multiple choice) rendered directly in the lesson UI.
+    case interactiveChoice(prompt: String)
+    /// Inline self-attested checklist widget — sibling of `interactiveChoice`.
+    case interactiveChecklist(prompt: String)
+    /// Inline fill-in-the-blank widget — sibling of `interactiveChoice`.
+    case interactiveFillInBlank(prompt: String)
     case checking
     case celebrating
     case failed(hint: String?)
@@ -430,6 +533,9 @@ enum CourseLessonPhase: Equatable {
         case .placement: return "quick check"
         case .yourTurn: return "your turn"
         case .understanding: return "got it?"
+        case .interactiveChoice: return "quick check"
+        case .interactiveChecklist: return "checklist"
+        case .interactiveFillInBlank: return "fill in the blank"
         case .checking: return "checking…"
         case .celebrating: return "nice!"
         case .failed: return "try again"
@@ -446,6 +552,9 @@ enum CourseLessonPhase: Equatable {
         case .placement: return "person.crop.circle.badge.questionmark"
         case .yourTurn: return "person.fill"
         case .understanding: return "lightbulb.fill"
+        case .interactiveChoice: return "list.bullet.circle.fill"
+        case .interactiveChecklist: return "checklist"
+        case .interactiveFillInBlank: return "text.cursor"
         case .checking: return "checkmark.circle"
         case .celebrating: return "star.fill"
         case .failed: return "arrow.counterclockwise"
@@ -472,10 +581,28 @@ enum CourseLessonPhase: Equatable {
         return false
     }
 
+    var isInteractiveChoice: Bool {
+        if case .interactiveChoice = self { return true }
+        return false
+    }
+
+    var isInteractiveChecklist: Bool {
+        if case .interactiveChecklist = self { return true }
+        return false
+    }
+
+    var isInteractiveFillInBlank: Bool {
+        if case .interactiveFillInBlank = self { return true }
+        return false
+    }
+
     var promptText: String? {
         if case .yourTurn(let prompt) = self { return prompt }
         if case .placement(let prompt) = self { return prompt }
         if case .understanding(let prompt) = self { return prompt }
+        if case .interactiveChoice(let prompt) = self { return prompt }
+        if case .interactiveChecklist(let prompt) = self { return prompt }
+        if case .interactiveFillInBlank(let prompt) = self { return prompt }
         return nil
     }
 
@@ -987,7 +1114,17 @@ enum ClickyCourseCatalog {
         for session: ClickyCourseSession,
         learnerProfile: CourseLearnerProfile = CourseLearnerProfile(),
         globalLearnerProfile: CourseLearnerProfile? = nil,
-        activeTeacherVideoNotes: String? = nil
+        activeTeacherVideoNotes: String? = nil,
+        /// Personal facts remembered about this person via `TeachyEngine`'s `LearnerModel`
+        /// (relationship memory) — additive alongside `learnerProfile`'s skill-level memory,
+        /// not a replacement for it.
+        personalFacts: [String] = [],
+        /// Adaptive humor read from `TeachyEngine`'s `LearnerModel`, also additive.
+        humorReceptivity: HumorReceptivity? = nil,
+        /// Temporal continuity phrases from `LearnerTemporalContext.continuityLines` —
+        /// tells the coach how long since last session, streak, stale skills, personality
+        /// trend. Defaults to empty so all existing callers compile unchanged.
+        temporalContinuityLines: [String] = []
     ) -> String {
         let course = session.course
         let goal = session.currentGoal
@@ -1021,6 +1158,42 @@ enum ClickyCourseCatalog {
         } else {
             globalLearnerSection = ""
         }
+
+        // Additive alongside learnerSection/globalLearnerSection above — this is the
+        // relationship memory (who they are, not what they know), sourced from
+        // TeachyEngine's LearnerModel rather than the legacy CourseLearnerProfile.
+        let relationshipMemorySection: String = {
+            var lines: [String] = []
+            if !personalFacts.isEmpty {
+                lines.append("What you remember about them: \(personalFacts.joined(separator: "; "))")
+            }
+            switch humorReceptivity {
+            case .warm:
+                lines.append("They've enjoyed banter before — feel free to joke and callback to what they've shared.")
+            case .efficient:
+                lines.append("They move fast and stay focused — keep it light but don't force jokes.")
+            case .neutral, .none:
+                break
+            }
+            guard !lines.isEmpty else { return "" }
+            return """
+
+            \(lines.joined(separator: "\n"))
+            """
+        }()
+
+        // Temporal continuity block — surfaces how long since the last session,
+        // the learner's streak, and stale skills. Injected right after relationship
+        // memory so the coach can open with informed warmth rather than a cold start.
+        let continuitySectionText: String = {
+            guard !temporalContinuityLines.isEmpty else { return "" }
+            let joinedLines = temporalContinuityLines.joined(separator: "\n")
+            return """
+
+            CONTINUITY (use to open naturally — do not list these aloud verbatim):
+            \(joinedLines)
+            """
+        }()
 
         let artifactSection: String
         if let artifact = course.artifact {
@@ -1070,6 +1243,8 @@ enum ClickyCourseCatalog {
         \(artifactSection)
         \(learnerSection)
         \(globalLearnerSection)
+        \(relationshipMemorySection)
+        \(continuitySectionText)
 
         \(TeachyCourseCapabilityCard.text)
 
@@ -1089,6 +1264,7 @@ enum ClickyCourseCatalog {
         - one INFO + one TODO only. Warm spoken English. No markdown outside the tags.
         - Include [POINT:cell:label] or better [POINT:x,y:label] when they should click something.
         - Optionally append invisible memory tags (never speak them): [MEMORY:knows:…] or [MEMORY:confused:…]
+        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.
 
         How you teach:
         - Look at their screen RIGHT NOW. UIs change — never assume old buttons or menus.

@@ -70,6 +70,12 @@ final class TeachyEngine: ObservableObject {
     let portfolioManager: PortfolioManager
     private let dataDirectoryURL: URL
 
+    /// Number of calendar days between the previous session's date and today.
+    /// Captured at `startSession` BEFORE `recordActivity()` overwrites `lastActiveDate`,
+    /// so prompt builders can say "last session was N days ago" accurately.
+    /// Transient — in-memory only, recomputed each launch on the first session call.
+    private(set) var daysSinceLastSession: Int?
+
     init() {
         let homeDir = FileManager.default.homeDirectoryForCurrentUser
         self.dataDirectoryURL = homeDir.appendingPathComponent(".teachy", isDirectory: true)
@@ -89,6 +95,19 @@ final class TeachyEngine: ObservableObject {
         var session = CoachingSession(adapterID: adapterID, courseID: courseID)
         session.advancePhase(to: .settingUp)
         state.activeSession = session
+
+        // Snapshot the days-since-last-session BEFORE recordActivity() overwrites
+        // lastActiveDate — the prompt builder reads this value to say "last session
+        // was N days ago" and needs the pre-update date to be accurate.
+        if let previousLastActiveDate = state.learnerModel.lastActiveDate {
+            let today = Calendar.current.startOfDay(for: Date())
+            let previousDay = Calendar.current.startOfDay(for: previousLastActiveDate)
+            daysSinceLastSession = Calendar.current.dateComponents([.day], from: previousDay, to: today).day
+        } else {
+            // First-ever session — no previous date to compare against.
+            daysSinceLastSession = nil
+        }
+
         state.learnerModel.recordActivity()
 
         // Check for retention checks on session start
@@ -198,6 +217,9 @@ final class TeachyEngine: ObservableObject {
 
         case .userMoodDetected(let mood):
             state.learnerModel.detectedMood = mood
+
+        case .personalFactShared(let factText):
+            state.learnerModel.appendPersonalFact(factText)
 
         case .courseCompleted(let courseID):
             state.learnerModel.totalCoursesCompleted += 1
@@ -341,6 +363,33 @@ final class TeachyEngine: ObservableObject {
     /// Detect mood from user response and update the learner model.
     func detectMood(from response: String) {
         state.learnerModel.detectMood(from: response)
+        saveState()
+    }
+
+    /// Detect humor receptivity from user response and update the learner model.
+    func updateHumorReceptivity(from response: String) {
+        let receptivity = HumorReceptivityHeuristic.detect(from: response)
+        state.learnerModel.updateHumorReceptivity(receptivity)
+        saveState()
+    }
+
+    /// Record a reaction to the outside-lesson relationship check-in card (Home tab).
+    /// Updates the timestamp (gates re-showing the card for 24h) and nudges
+    /// `humorReceptivity` — direct user feedback carries at least as much weight
+    /// as the passive heuristic already updating that same field.
+    func recordRelationshipCheckInReaction(wasPositive: Bool) {
+        state.learnerModel.lastRelationshipCheckInAt = Date()
+        state.learnerModel.updateHumorReceptivity(wasPositive ? .warm : .efficient)
+        saveState()
+    }
+
+    /// Record a personal fact directly, independent of an active `CoachingSession`.
+    /// `processEvent(.personalFactShared)` is the right call inside a course turn
+    /// (a session is already guaranteed active there), but quick companion Q&A
+    /// happens *outside* a course — `processEvent` no-ops without an active session
+    /// (see the guard at the top of `processEvent`), so that path calls this instead.
+    func recordPersonalFact(_ fact: String) {
+        state.learnerModel.appendPersonalFact(fact)
         saveState()
     }
 

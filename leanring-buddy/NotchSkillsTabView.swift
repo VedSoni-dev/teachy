@@ -61,7 +61,7 @@ struct NotchSkillsTabView: View {
 
     private var emptySkillsCard: some View {
         VStack(spacing: 12) {
-            Image(systemName: "chart.tree")
+            Image(systemName: "chart.bar.xaxis")
                 .font(.system(size: 28))
                 .foregroundColor(DS.Colors.textTertiary.opacity(0.5))
 

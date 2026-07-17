@@ -474,6 +474,24 @@ struct NotchCoursesTabView: View {
                     title: "Quick check",
                     subtitle: "Explain it in your own words."
                 )
+            } else if phase.isInteractiveChoice {
+                coursePhasePromptRow(
+                    icon: "list.bullet.circle",
+                    title: "Quick check",
+                    subtitle: "Pick the best answer below."
+                )
+            } else if phase.isInteractiveChecklist {
+                coursePhasePromptRow(
+                    icon: "checklist",
+                    title: "Checklist",
+                    subtitle: "Check off what you did, then tap Done."
+                )
+            } else if phase.isInteractiveFillInBlank {
+                coursePhasePromptRow(
+                    icon: "text.cursor",
+                    title: "Fill in the blank",
+                    subtitle: "Type the missing word below."
+                )
             } else if phase == .checking {
                 coursePhasePromptRow(
                     icon: "checkmark.circle",
@@ -501,6 +519,30 @@ struct NotchCoursesTabView: View {
                         companionManager.confirmCourseBeat()
                     }
                 }
+                .padding(.top, 8)
+            } else if phase.isInteractiveChoice, let multipleChoice = session.currentGoal.interactiveMultipleChoice {
+                CourseInteractiveChoiceWidgetView(
+                    multipleChoice: multipleChoice,
+                    onSubmit: { index in
+                        companionManager.submitCourseInteractiveChoiceAnswer(index)
+                    }
+                )
+                .padding(.top, 8)
+            } else if phase.isInteractiveChecklist, let checklist = session.currentGoal.interactiveChecklist {
+                CourseInteractiveChecklistWidgetView(
+                    checklist: checklist,
+                    onSubmit: { completed in
+                        companionManager.submitCourseInteractiveChecklistCompletion(completed)
+                    }
+                )
+                .padding(.top, 8)
+            } else if phase.isInteractiveFillInBlank, let fillInBlank = session.currentGoal.interactiveFillInBlank {
+                CourseInteractiveFillInBlankWidgetView(
+                    fillInBlank: fillInBlank,
+                    onSubmit: { text in
+                        companionManager.submitCourseInteractiveFillInBlankAnswer(text)
+                    }
+                )
                 .padding(.top, 8)
             }
 
@@ -534,7 +576,8 @@ struct NotchCoursesTabView: View {
                             message: CourseCoachMessageParts(
                                 infoText: nil,
                                 todoText: companionManager.coursesManager.lastCoachSpokenText,
-                                spokenText: companionManager.coursesManager.lastCoachSpokenText
+                                spokenText: companionManager.coursesManager.lastCoachSpokenText,
+                                rememberedFacts: []
                             )
                         )
                     }

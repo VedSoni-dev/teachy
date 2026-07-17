@@ -161,6 +161,34 @@ struct CourseLearnerProfile: Codable, Equatable {
     }
 }
 
+// MARK: - Humor receptivity heuristic
+
+/// Lightweight heuristic read on how receptive the learner is to jokes/banter —
+/// same heuristic spirit as `CourseLearnerProfile.detectMood(from:)` above, but
+/// reading for playfulness vs terse task-only responses instead of
+/// frustration/engagement. Feeds `TeachyEngine`'s `LearnerModel.humorReceptivity`.
+enum HumorReceptivityHeuristic {
+    static func detect(from userResponse: String) -> HumorReceptivity {
+        let lower = userResponse.lowercased()
+        let trimmed = userResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wordCount = trimmed.split(separator: " ").count
+
+        // Warm: obvious playful/joke-like markers.
+        let playfulMarkers = ["lol", "haha", "hah", "lmao", "!", "😂", "😄", "😆", "funny", "joke", "kidding", "jk"]
+        if playfulMarkers.contains(where: { lower.contains($0) }) {
+            return .warm
+        }
+
+        // Efficient: very short, purely task-focused acknowledgements, no elaboration.
+        let terseTaskOnlyResponses: Set<String> = ["yes", "no", "ok", "okay", "done", "next", "yep", "yeah", "sure", "k", "got it", "cool"]
+        if wordCount <= 4 && terseTaskOnlyResponses.contains(lower) {
+            return .efficient
+        }
+
+        return .neutral
+    }
+}
+
 // MARK: - Memory tags in coach replies (stripped before TTS / HUD)
 
 enum TeachyMemoryTagParser {

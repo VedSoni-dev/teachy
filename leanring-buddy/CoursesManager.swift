@@ -565,12 +565,24 @@ final class CoursesManager: ObservableObject {
     }
 
     /// Goal-based courses use `ClickyCourseCatalog.courseCoachSystemPrompt`.
-    func buildCourseSystemPrompt(for session: ClickyCourseSession) -> String {
+    /// `personalFacts`/`humorReceptivity`/`temporalContinuityLines` are optional —
+    /// sourced from `TeachyEngine`'s `LearnerModel` by callers that have a
+    /// `CompanionManager` in reach (e.g. `LessonPlayer`); default to empty/nil so
+    /// existing call sites without that context still compile.
+    func buildCourseSystemPrompt(
+        for session: ClickyCourseSession,
+        personalFacts: [String] = [],
+        humorReceptivity: HumorReceptivity? = nil,
+        temporalContinuityLines: [String] = []
+    ) -> String {
         ClickyCourseCatalog.courseCoachSystemPrompt(
             for: session,
             learnerProfile: learnerProfile,
             globalLearnerProfile: globalLearnerProfile,
-            activeTeacherVideoNotes: activeTeacherVideoNotes
+            activeTeacherVideoNotes: activeTeacherVideoNotes,
+            personalFacts: personalFacts,
+            humorReceptivity: humorReceptivity,
+            temporalContinuityLines: temporalContinuityLines
         )
     }
 

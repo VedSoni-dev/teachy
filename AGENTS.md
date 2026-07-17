@@ -100,7 +100,8 @@ npm run harness                      # validate all routes
 | `TeachyDataPaths.swift` | ~40 | Resolves `~/.teachy/{courses,connectors}` with legacy `~/.clicky/` fallback. |
 | `LessonPlayer.swift` | ~730 | Goal auto-prompter — video parts → tutor turns → verify → teach-back. |
 | `TeachyEngine/AdapterProtocol.swift` | ~100 | Environment-agnostic contract between the Teachy engine and any surface (macOS, browser, CLI, Makr). Defines LearnerEvent inputs, CoachingOutput decisions, and the TeachyAdapter protocol. |
-| `TeachyEngine/LearnerModel.swift` | ~400 | Enhanced persistent learner model with skill nodes, proficiency tracking, teaching demos, streaks, and cross-course memory. Replaces flat knows/confusedBy lists. |
+| `LearnerTemporalContext.swift` | ~140 | Pure helper that derives human-readable continuity phrases from existing temporal data in `LearnerModel` (days since last session, streak, stale skills, personality trend). Injected into course coach prompts and companion prompt. |
+| `TeachyEngine/LearnerModel.swift` | ~640 | Enhanced persistent learner model. Now includes `TimestampedFact` / `DatedSignal` types; `datedPersonalFacts` replaces flat `personalFacts: [String]` (computed accessor keeps all readers working); `humorReceptivityHistory` and `moodHistory` accumulate dated trend data. Custom `Codable` migrates legacy flat-facts JSON on first load. |
 | `TeachyEngine/SkillGraph.swift` | ~350 | Connected skill nodes with prerequisites, cross-domain transfers, difficulty ratings. Ships with bundled AI fluency graph (20+ skills). |
 | `TeachyEngine/VerificationEngine.swift` | ~500 | Multi-modal verification: vision-only, vision+explain, near-transfer tests, code analysis. Goes beyond output checking to verify understanding. |
 | `TeachyEngine/TeachBackEngine.swift` | ~550 | Enhanced teach-back with protégé effect: quick check, full explanation, teach-someone-else, teach-with-follow-up. Scores teaching quality. |
