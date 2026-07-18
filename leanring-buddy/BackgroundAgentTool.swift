@@ -162,6 +162,11 @@ final class BackgroundAgentToolRegistry {
         register(CaptureScreenTool())
         register(AuthenticatedFetchTool())
         register(ListBrowserSessionsTool())
+        // Phase L: dedicated native app/browser control tools.
+        // Registered alongside the existing tools so they are available to Phase K
+        // .act steps, course "do it for me", and the new one-shot [DO:] path alike.
+        register(ControlAppTool())
+        register(ControlBrowserTool())
     }
 
     func register(_ tool: any BackgroundAgentTool) {

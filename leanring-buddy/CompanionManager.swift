@@ -856,6 +856,12 @@ final class CompanionManager: ObservableObject {
         - Feel like a sharp friend who actually wants them to get it — not a lecture.
         - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)
         \(guidedTaskSection)
+
+        You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT, SINGLE native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
+        - Use [DO:] only for a direct, single, reversible native command (app open/quit/activate/hide, tab/window open/close/switch).
+        - For multi-step tasks or anything that requires planning and teaching, use [GUIDE:] instead — not [DO:].
+        - NEVER tag [DO:] for anything that deletes user data, spends money, sends an email or message on their behalf, or cannot be easily undone. For those, explain and let them act.
+        - Examples of safe [DO:] use: "Opening Spotify for you. [DO: open app Spotify]" — "Sure, closing this tab. [DO: close active browser tab]" — "Switching over to Arc. [DO: activate app Arc]".
         \(ScreenGridAnnotationUtility.modelInstructions)
         """
     }
@@ -1057,8 +1063,58 @@ final class CompanionManager: ObservableObject {
                 // Strip [GUIDE: short title] the same way REMEMBER is stripped above,
                 // and use its presence/absence this turn to drive the ephemeral guided
                 // walkthrough lifecycle (start / continue / naturally end).
-                let (spokenText, guideTaskTitleThisTurn) = CompanionGuideTagParser.extractTitleAndStrip(from: spokenTextWithoutMemoryTags)
+                let (spokenTextWithoutGuideTags, guideTaskTitleThisTurn) = CompanionGuideTagParser.extractTitleAndStrip(from: spokenTextWithoutMemoryTags)
+
+                // Phase L: strip [DO: action] — the model's one-shot native-action tag.
+                // This runs after REMEMBER and GUIDE so all three tags are removed from
+                // the final spoken text. The extracted action string drives the fast lane
+                // below; the cleaned text is what TTS actually speaks.
+                let (spokenText, directNativeActionThisTurn) = CompanionActionTagParser.extractActionAndStrip(from: spokenTextWithoutGuideTags)
+
                 let lifecycleOutcome = applyGuidedTaskLifecycle(guideTaskTitleThisTurn: guideTaskTitleThisTurn)
+
+                // Phase L — one-shot native-action fast lane.
+                // Conditions for taking it: a [DO:] action was tagged AND no guided task is
+                // newly starting this turn AND there is no existing active guided task that
+                // this turn is continuing. This keeps the three lanes mutually exclusive:
+                //   1. [DO:] + no active/starting guided task → executeDirectNativeAction
+                //   2. [GUIDE:] newlyStarted → presentGuidedTaskPlan (plan-then-execute)
+                //   3. everything else → normal spoken answer
+                // The model's spoken text (the heads-up, e.g. "Opening Spotify for you")
+                // is already in `spokenText` — it gets spoken first, then the action runs.
+                if let nativeActionDescription = directNativeActionThisTurn,
+                   !nativeActionDescription.isEmpty,
+                   lifecycleOutcome != .newlyStarted,
+                   activeGuidedTask == nil {
+
+                    conversationHistory.append((
+                        userTranscript: transcript,
+                        assistantResponse: spokenText
+                    ))
+                    if conversationHistory.count > 10 {
+                        conversationHistory.removeFirst(conversationHistory.count - 10)
+                    }
+                    ClickyAnalytics.trackAIResponseReceived(response: spokenText)
+
+                    // Speak the heads-up first (announce-before-act), then run the action.
+                    if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        voiceState = .responding
+                        do {
+                            try await speechSynthesizer.speakText(spokenText)
+                        } catch {
+                            print("⚠️ Companion TTS error (direct action heads-up): \(error)")
+                        }
+                    }
+
+                    guard !Task.isCancelled else { return }
+
+                    await executeDirectNativeAction(
+                        actionDescription: nativeActionDescription,
+                        screenCaptures: screenCaptures
+                    )
+                    // executeDirectNativeAction resets voiceState to .idle on completion.
+                    return
+                }
 
                 // Plan-then-execute: a brand-new guided task discards this turn's quick
                 // first-call answer (it couldn't reference steps that didn't exist yet)
@@ -1624,6 +1680,106 @@ final class CompanionManager: ObservableObject {
             // Reflection failed — continue coaching the existing step. The plan stays
             // frozen at the diverged step rather than breaking the task entirely.
             print("⚠️ Reflection failed for '\(task.title)': \(error.localizedDescription) — continuing with existing plan")
+        }
+    }
+
+    // MARK: - Phase L: One-shot native-action fast lane
+
+    /// Executes a direct single native Mac action — lighter sibling of `executeActStep`.
+    ///
+    /// The caller (`sendCompanionChatResponse`) has already spoken the model's heads-up
+    /// text (announce-before-act invariant), so this function's job is:
+    /// 1. Flip to `.processing` state so the UI shows activity.
+    /// 2. Run the agent tool loop scoped to the requested native action with a
+    ///    permissive-but-safety-bounded system prompt.
+    /// 3. Speak a short confirmation only if it meaningfully adds to the heads-up.
+    /// 4. Reset to `.idle` regardless of success or failure.
+    ///
+    /// There is no doneWhen verification, no step advancement, and no guided-task
+    /// state changes — this is a completely standalone one-shot path.
+    private func executeDirectNativeAction(
+        actionDescription: String,
+        screenCaptures: [CompanionScreenCapture]
+    ) async {
+        voiceState = .processing
+
+        // Safety-bounded but permissive system prompt for direct native commands.
+        // The user explicitly chose max-capability with spoken heads-up only (no confirmation).
+        let nativeActionSystemPrompt = """
+        You are Teachy's native Mac action arm. The user has asked you to perform a direct, \
+        single native Mac operation. Execute it immediately and efficiently using the available tools.
+
+        Requested action: \(actionDescription)
+
+        ALLOWED: Opening, activating, quitting, or hiding any application. Opening, closing, or \
+        switching browser tabs and windows. Navigating to a URL in a new tab. These are all \
+        reversible and are exactly what the user asked for — do them without hesitation.
+
+        STRICTLY FORBIDDEN — do NOT execute, stop and explain instead:
+        - Deleting user files, folders, emails, messages, contacts, or any data.
+        - Making payments, purchases, or any financial transactions.
+        - Deleting accounts or cancelling subscriptions.
+        - Sending emails, messages, or posts on the user's behalf without showing them a draft first.
+        - Any action that cannot be easily undone or that destroys data.
+        If the action falls into any of the above categories, STOP, do not proceed, and explain \
+        clearly in one sentence what you would have done and why you stopped — then guide the user \
+        to do it themselves.
+
+        Tool preference: use control_app for app open/activate/quit/hide; use control_browser for \
+        tab/window operations in the frontmost browser. Prefer these purpose-built native tools over \
+        run_applescript or ui_action clicking wherever they cover the need.
+
+        When done, report what you did in one short, natural sentence. No markdown, no bullet points.
+        """
+
+        do {
+            let toolLoopResultText = try await backgroundAgentManager.runCourseInteraction(
+                userPrompt: "Do this now: \(actionDescription)",
+                systemPrompt: nativeActionSystemPrompt,
+                conversationHistory: [],
+                screenCaptures: screenCaptures,
+                mouseOutlineContext: nil,
+                onToolStep: { [weak self] agentToolStep in
+                    self?.coursesManager.recordCourseToolStep(agentToolStep)
+                }
+            )
+
+            guard !Task.isCancelled else { return }
+
+            // Speak a short confirmation only when the tool loop's final line meaningfully
+            // differs from the heads-up already spoken. If the result is empty or just
+            // echoes the action description, skip it to avoid double-speaking.
+            let confirmationText = BackgroundAgentManager.formatFinalResponseForSpeech(toolLoopResultText)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let confirmationIsSubstantive = !confirmationText.isEmpty
+                && confirmationText.lowercased() != actionDescription.lowercased()
+
+            if confirmationIsSubstantive {
+                voiceState = .responding
+                do {
+                    try await speechSynthesizer.speakText(confirmationText)
+                } catch {
+                    print("⚠️ Companion TTS error (direct action confirmation): \(error)")
+                }
+            }
+
+        } catch {
+            guard !Task.isCancelled else { return }
+
+            // Brief natural error message — same tone as the rest of companion voice.
+            let errorUtterance = "Hmm, that didn't go through — you may want to do that one manually."
+            print("⚠️ Direct native action failed (\(actionDescription)): \(error.localizedDescription)")
+            voiceState = .responding
+            do {
+                try await speechSynthesizer.speakText(errorUtterance)
+            } catch {
+                print("⚠️ Companion TTS error (direct action error speech): \(error)")
+            }
+        }
+
+        if !Task.isCancelled {
+            voiceState = .idle
+            scheduleTransientHideIfNeeded()
         }
     }
 
@@ -2598,7 +2754,10 @@ final class CompanionManager: ObservableObject {
     }
 
     /// Shared helper: sets `detectedElementBubbleText` from a parse result.
-    /// Strips [REMEMBER:...] tags so the raw tag never reaches the speech bubble.
+    /// Strips [REMEMBER:...], [GUIDE:...], and [DO:...] tags so raw structured tags
+    /// never reach the speech bubble. This path re-parses the raw response text
+    /// independently of `sendCompanionChatResponse`, so it needs the same
+    /// defense-in-depth stripping for all three tag types.
     private func applyBubbleText(from parseResult: PointingParseResult, fallbackResponseText: String) {
         detectedElementBubbleText = {
             let spokenText = parseResult.spokenText.isEmpty ? fallbackResponseText : parseResult.spokenText
@@ -2607,8 +2766,11 @@ final class CompanionManager: ObservableObject {
             // risk here (this bubble-text path re-parses the raw response independently
             // of the REMEMBER/GUIDE stripping already done in `sendCompanionChatResponse`),
             // so it needs the same defense-in-depth stripping.
-            let (spokenTextWithoutGuideTag, _) = CompanionGuideTagParser.extractTitleAndStrip(from: spokenTextWithoutMemoryTags)
-            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenTextWithoutGuideTag)
+            let (spokenTextWithoutGuideTags, _) = CompanionGuideTagParser.extractTitleAndStrip(from: spokenTextWithoutMemoryTags)
+            // [DO:...] is the Phase L one-shot action tag — same defense-in-depth strip
+            // so the raw action instruction never surfaces in the speech bubble.
+            let (spokenTextWithoutActionTags, _) = CompanionActionTagParser.extractActionAndStrip(from: spokenTextWithoutGuideTags)
+            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenTextWithoutActionTags)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedSpokenText.isEmpty else { return nil }
             return cleanedSpokenText

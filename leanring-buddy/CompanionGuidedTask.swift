@@ -94,3 +94,36 @@ enum CompanionGuideTagParser {
         return (cleaned, titles.last)
     }
 }
+
+/// Extracts and strips `[DO: precise native action]` tags from a coach response.
+/// Exact mirror of `CompanionGuideTagParser` — same shape, different tag name.
+/// The `[DO:]` tag triggers the fast one-shot native-action path in Phase L:
+/// the model emits the spoken heads-up and the action description together, so
+/// the tag is stripped before TTS but the action string is kept for execution.
+enum CompanionActionTagParser {
+    /// Returns the last action string in `text` (if any), with every `[DO: ...]`
+    /// occurrence removed from `cleanedText`. Whitespace is collapsed after removal
+    /// so the spoken text flows naturally without gaps.
+    static func extractActionAndStrip(from text: String) -> (cleanedText: String, action: String?) {
+        guard let regex = try? NSRegularExpression(pattern: "\\[DO:\\s*([^\\]]+)\\]", options: [.caseInsensitive]) else {
+            return (text, nil)
+        }
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = regex.matches(in: text, options: [], range: range)
+        let actions = matches.compactMap { match -> String? in
+            guard match.numberOfRanges >= 2, let contentRange = Range(match.range(at: 1), in: text) else {
+                return nil
+            }
+            return String(text[contentRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let cleaned = regex.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: range,
+            withTemplate: ""
+        )
+        .replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (cleaned, actions.last)
+    }
+}
