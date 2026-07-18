@@ -952,7 +952,8 @@ final class CoursesManager: ObservableObject {
     /// steps are never shown in any Course UI and never persisted.
     func generateGuidedTaskSteps(
         taskDescription: String,
-        apiClient: ClaudeAPI
+        apiClient: ClaudeAPI,
+        groundingKnowledge: String? = nil
     ) async throws -> [CourseLearningGoal] {
         let systemPrompt = """
         You are helping Teachy, a macOS teaching companion, put together a short ad-hoc
@@ -986,9 +987,19 @@ final class CoursesManager: ObservableObject {
             learnerContext = ""
         }
 
+        // When this walkthrough matched a `TeachyRecommendedToolRegistry` entry (e.g.
+        // Vapi for phone/voice agents), ground the generated steps in real knowledge
+        // about that tool instead of the model guessing generic UI from scratch.
+        let groundingContext: String
+        if let groundingKnowledge, !groundingKnowledge.isEmpty {
+            groundingContext = "\n\nGround the steps in this real knowledge about the tool being used: \(groundingKnowledge)"
+        } else {
+            groundingContext = ""
+        }
+
         let response = try await apiClient.generateText(
             systemPrompt: systemPrompt,
-            userPrompt: "Create short walkthrough steps for: \(taskDescription)\(learnerContext)"
+            userPrompt: "Create short walkthrough steps for: \(taskDescription)\(learnerContext)\(groundingContext)"
         )
 
         guard let data = response.data(using: .utf8),

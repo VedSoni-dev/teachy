@@ -339,4 +339,27 @@ extension AccessibilityElementDetector {
         }
         return "\(appName) — window: \(windowTitle)"
     }
+
+    /// All other real, user-facing apps currently running — not just the frontmost one.
+    /// Filters `NSWorkspace.shared.runningApplications` to `.activationPolicy == .regular`
+    /// (visible, dock-worthy apps — excludes background agents/daemons/helpers), excludes
+    /// Teachy itself, and excludes whatever `frontmostApplicationContext()` already reported
+    /// so the two prompt lines never duplicate the same app name. Returns nil when there's
+    /// nothing else meaningfully open.
+    static func allOpenApplicationsContext() -> String? {
+        let ownBundleIdentifier = Bundle.main.bundleIdentifier
+        let frontmostApplicationName = NSWorkspace.shared.frontmostApplication?.localizedName
+
+        let otherOpenApplicationNames = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular }
+            .filter { $0.bundleIdentifier != ownBundleIdentifier }
+            .compactMap { $0.localizedName }
+            .filter { $0 != frontmostApplicationName }
+
+        guard !otherOpenApplicationNames.isEmpty else {
+            return nil
+        }
+
+        return "Also open: \(otherOpenApplicationNames.joined(separator: ", "))"
+    }
 }

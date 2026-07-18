@@ -827,6 +827,12 @@ final class CompanionManager: ObservableObject {
         let frontmostAppSection = AccessibilityElementDetector.frontmostApplicationContext()
             .map { "\n\nRight now they're in: \($0)." } ?? ""
 
+        // Fuller situational awareness beyond just the frontmost app — lets the model
+        // reason about things like "switch to Slack and paste this" without the user
+        // having to name every app themselves.
+        let allOpenApplicationsSection = AccessibilityElementDetector.allOpenApplicationsContext()
+            .map { "\n\n\($0)." } ?? ""
+
         let guidedTaskSection = guidedTaskPromptSection()
 
         return """
@@ -848,7 +854,7 @@ final class CompanionManager: ObservableObject {
           pointing at it — describing where it is AGAIN makes you sound like you're not looking
           at the same screen they are.
         - Feel like a sharp friend who actually wants them to get it — not a lecture.
-        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)
+        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)
         \(guidedTaskSection)
         \(ScreenGridAnnotationUtility.modelInstructions)
         """
@@ -1059,12 +1065,24 @@ final class CompanionManager: ObservableObject {
         activeGuidedTask = CompanionGuidedTask(title: guideTaskTitleThisTurn)
         print("🧭 Guided task started: \(guideTaskTitleThisTurn)")
 
+        // Recommended-tool registry: if this task's title matches a known go-to tool
+        // (e.g. "set up a phone agent" → Vapi), remember it on the task so ongoing
+        // coaching stays grounded in real knowledge about that tool, and soft-open its
+        // site immediately — same soft-start pattern Course goals already use for
+        // `startURL`, reusing `CourseUIGrounder.openSetupURLIfNeeded` exactly as-is.
+        let matchedTool = TeachyRecommendedToolRegistry.match(forText: guideTaskTitleThisTurn)
+        if let matchedTool {
+            activeGuidedTask?.recommendedTool = matchedTool
+            Task { await CourseUIGrounder.openSetupURLIfNeeded(matchedTool.url) }
+        }
+
         Task { [weak self] in
             guard let self else { return }
             do {
                 let generatedSteps = try await self.coursesManager.generateGuidedTaskSteps(
                     taskDescription: guideTaskTitleThisTurn,
-                    apiClient: self.claudeAPI
+                    apiClient: self.claudeAPI,
+                    groundingKnowledge: matchedTool?.knowledgeBrief
                 )
                 // Guard against a race: only apply the steps if this exact task is
                 // still active (it may have naturally ended, been superseded by a new
@@ -1092,6 +1110,7 @@ final class CompanionManager: ObservableObject {
             enough context yet (e.g. what they need something FOR changes the right guidance), just ask — check
             what you already remember about them first (personal facts, past context) so you're not asking
             something you should already know.
+            \(Self.recommendedToolRegistrySummaryLine())
             """
         }
 
@@ -1130,8 +1149,31 @@ final class CompanionManager: ObservableObject {
             lines.append(verificationLine)
         }
         lines.append("Current step: \(currentStep.goal)")
+        if let recommendedTool = activeGuidedTask.recommendedTool {
+            lines.append("Real knowledge about \(recommendedTool.displayName), so your coaching stays grounded turn after turn: \(recommendedTool.knowledgeBrief)")
+        }
         lines.append("If they're still actively working through this, tag your reply [GUIDE: \(activeGuidedTask.title)] again so guidance continues; stop tagging it once this naturally wraps up.")
         return lines.joined(separator: "\n")
+    }
+
+    /// Builds one line per `TeachyRecommendedToolRegistry` entry so a plain "what's a good
+    /// tool for X" question can surface a recommendation even before any guided task starts —
+    /// the registry text goes straight to the model, so its own semantic matching (not just
+    /// the narrower Swift-side `match()` used for the deterministic auto-open/grounding
+    /// side-effect) does most of the conversational recommending. Built dynamically from
+    /// the registry so adding a future entry doesn't require touching this prompt text.
+    private static func recommendedToolRegistrySummaryLine() -> String {
+        guard !TeachyRecommendedToolRegistry.all.isEmpty else { return "" }
+
+        let perToolLines = TeachyRecommendedToolRegistry.all.map { tool in
+            "for \(tool.displayName) (\(tool.url)) — recommend it if asked about \(tool.triggerKeywords.joined(separator: ", ")), or similar."
+        }
+
+        return """
+
+        Known go-to tools Teachy recommends — mention these by name when relevant even in a quick answer, not just when guiding a walkthrough:
+        \(perToolLines.joined(separator: "\n"))
+        """
     }
 
     // MARK: - Teachy Courses

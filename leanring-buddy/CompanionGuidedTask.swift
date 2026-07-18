@@ -20,6 +20,11 @@ struct CompanionGuidedTask {
     var steps: [CourseLearningGoal] = []
     var currentStepIndex: Int = 0
     var lastActivityAt: Date = Date()
+    /// Set once, at task creation, when the task's title matches a known
+    /// `TeachyRecommendedToolRegistry` entry (e.g. Vapi for phone/voice agents) —
+    /// never changed afterward. Grounds both initial step generation and ongoing
+    /// per-turn coaching in real knowledge about the tool being used.
+    var recommendedTool: TeachyRecommendedTool? = nil
 
     var currentStep: CourseLearningGoal? {
         steps.indices.contains(currentStepIndex) ? steps[currentStepIndex] : nil
