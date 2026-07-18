@@ -849,10 +849,10 @@ final class CompanionManager: ObservableObject {
         - Don't read code aloud — say what it does in plain words.
         - If something's confusing, empathize in half a breath, then give the next move.
         - When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there —
-          and say "here" / "right here" / "this one" in your reply, not a separate location
-          description (not "on the left sidebar" or "the option that says X"). You're already
-          pointing at it — describing where it is AGAIN makes you sound like you're not looking
-          at the same screen they are.
+          and say "here" / "right here" / "this one" ONLY when you're including that [POINT:...] tag
+          in the same reply. If you can't confidently identify a specific, pointable target (vague
+          references like "that tab" without a clear match), describe it in words instead — don't
+          say "here" with nothing backing it, that's worse than not pointing at all.
         - Feel like a sharp friend who actually wants them to get it — not a lecture.
         - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)
         \(guidedTaskSection)
@@ -995,27 +995,48 @@ final class CompanionManager: ObservableObject {
                 // and use its presence/absence this turn to drive the ephemeral guided
                 // walkthrough lifecycle (start / continue / naturally end).
                 let (spokenText, guideTaskTitleThisTurn) = CompanionGuideTagParser.extractTitleAndStrip(from: spokenTextWithoutMemoryTags)
-                applyGuidedTaskLifecycle(guideTaskTitleThisTurn: guideTaskTitleThisTurn)
+                let lifecycleOutcome = applyGuidedTaskLifecycle(guideTaskTitleThisTurn: guideTaskTitleThisTurn)
+
+                // Plan-then-execute: a brand-new guided task discards this turn's quick
+                // first-call answer (it couldn't reference steps that didn't exist yet)
+                // in favor of synchronously generating the plan and asking a second time
+                // so the spoken answer actually enumerates it — explicit user tradeoff of
+                // added latency on this one turn for a real plan instead of a vague guess.
+                let finalSpokenText: String
+                let finalFullResponseText: String
+                if lifecycleOutcome == .newlyStarted {
+                    let planResult = await presentGuidedTaskPlan(
+                        images: labeledImages,
+                        historyForAPI: historyForAPI,
+                        fallbackSpokenText: spokenText,
+                        fallbackFullResponseText: fullResponseText
+                    )
+                    finalSpokenText = planResult.spokenText
+                    finalFullResponseText = planResult.fullResponseText
+                } else {
+                    finalSpokenText = spokenText
+                    finalFullResponseText = fullResponseText
+                }
 
                 if let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) {
-                    applyPointingFromResponse(fullResponseText, screenCapture: cursorScreenCapture)
+                    applyPointingFromResponse(finalFullResponseText, screenCapture: cursorScreenCapture)
                 }
 
                 conversationHistory.append((
                     userTranscript: transcript,
-                    assistantResponse: spokenText
+                    assistantResponse: finalSpokenText
                 ))
                 if conversationHistory.count > 10 {
                     conversationHistory.removeFirst(conversationHistory.count - 10)
                 }
 
                 print("🧠 Conversation history: \(conversationHistory.count) exchanges")
-                ClickyAnalytics.trackAIResponseReceived(response: spokenText)
+                ClickyAnalytics.trackAIResponseReceived(response: finalSpokenText)
 
-                if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if !finalSpokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     voiceState = .responding
                     do {
-                        try await speechSynthesizer.speakText(spokenText)
+                        try await speechSynthesizer.speakText(finalSpokenText)
                     } catch {
                         print("⚠️ Companion TTS error: \(error)")
                     }
@@ -1037,31 +1058,48 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - Ephemeral guided walkthroughs (companion Q&A only — see CompanionGuidedTask.swift)
 
+    /// Outcome of a single `applyGuidedTaskLifecycle` call — lets the caller decide whether
+    /// this turn needs the plan-then-execute treatment (`.newlyStarted`) or can just use the
+    /// answer it already generated (every other case).
+    private enum GuidedTaskLifecycleOutcome {
+        case notActive   // no task active, tag absent this turn — nothing to do
+        case newlyStarted // task just created this turn — caller must generate + present its plan
+        case continuing  // existing task, still tagged this turn
+        case ended       // task existed, tag absent this turn — concluded
+    }
+
     /// Drives the ephemeral guided-task lifecycle purely from this turn's `[GUIDE: ...]`
     /// tag presence/absence — no separate start/end tags needed. Called once per companion
     /// turn, right after the tag has been extracted and stripped from the spoken text.
-    private func applyGuidedTaskLifecycle(guideTaskTitleThisTurn: String?) {
+    ///
+    /// Step generation is NOT performed here anymore — "plan first, then execute, like a
+    /// coding agent" (explicit user direction) means the caller must synchronously generate
+    /// and present the plan on `.newlyStarted` via `presentGuidedTaskPlan` before this turn's
+    /// answer is finalized, rather than firing it off in the background after the fact.
+    private func applyGuidedTaskLifecycle(guideTaskTitleThisTurn: String?) -> GuidedTaskLifecycleOutcome {
         guard let guideTaskTitleThisTurn, !guideTaskTitleThisTurn.isEmpty else {
             // Tag absent this turn — a task that was active has naturally concluded
             // (wrapped up, or the conversation moved on). No lingering state.
             if activeGuidedTask != nil {
                 print("🧭 Guided task ended: \(activeGuidedTask?.title ?? "")")
                 activeGuidedTask = nil
+                return .ended
             }
-            return
+            return .notActive
         }
 
         if activeGuidedTask != nil {
             // Continuing an in-progress task. Deliberately keep the original title
-            // (it's used as the race guard below for the background step-generation
-            // task) rather than overwriting it with whatever the model tagged this turn.
+            // (it's used as the race guard in `presentGuidedTaskPlan`) rather than
+            // overwriting it with whatever the model tagged this turn.
             activeGuidedTask?.lastActivityAt = Date()
-            return
+            return .continuing
         }
 
-        // Starting a brand-new guided task. Steps start empty and are populated
-        // asynchronously below (after this turn's answer has already been returned
-        // and is speaking) so the triggering turn isn't slowed down.
+        // Starting a brand-new guided task. Steps start empty — the caller generates
+        // them synchronously via `presentGuidedTaskPlan` before this turn's answer is
+        // finalized, trading a beat of latency for an answer that actually enumerates
+        // the plan instead of guessing at steps that don't exist yet.
         activeGuidedTask = CompanionGuidedTask(title: guideTaskTitleThisTurn)
         print("🧭 Guided task started: \(guideTaskTitleThisTurn)")
 
@@ -1076,24 +1114,71 @@ final class CompanionManager: ObservableObject {
             Task { await CourseUIGrounder.openSetupURLIfNeeded(matchedTool.url) }
         }
 
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let generatedSteps = try await self.coursesManager.generateGuidedTaskSteps(
-                    taskDescription: guideTaskTitleThisTurn,
-                    apiClient: self.claudeAPI,
-                    groundingKnowledge: matchedTool?.knowledgeBrief
-                )
-                // Guard against a race: only apply the steps if this exact task is
-                // still active (it may have naturally ended, been superseded by a new
-                // guided task, or a formal Course may have started, while generation
-                // was in flight).
-                guard self.activeGuidedTask?.title == guideTaskTitleThisTurn else { return }
-                self.activeGuidedTask?.steps = generatedSteps
-                print("🧭 Guided task steps ready (\(generatedSteps.count)): \(guideTaskTitleThisTurn)")
-            } catch {
-                print("⚠️ Guided task step generation failed: \(error)")
+        return .newlyStarted
+    }
+
+    /// Generates the guided-task's step plan SYNCHRONOUSLY — accepting added latency
+    /// for this turn — then makes a second model call so the spoken answer actually
+    /// enumerates the plan in Teachy's own natural voice, instead of the quick first-call
+    /// guess (discarded) that couldn't reference steps that didn't exist yet. "Plan first,
+    /// then execute, like a coding agent" — explicit user direction, this trades the
+    /// original zero-added-latency design for actually having something to say.
+    private func presentGuidedTaskPlan(
+        images: [(data: Data, label: String)],
+        historyForAPI: [(userPlaceholder: String, assistantResponse: String)],
+        fallbackSpokenText: String,
+        fallbackFullResponseText: String
+    ) async -> (spokenText: String, fullResponseText: String) {
+        guard let task = activeGuidedTask else { return (fallbackSpokenText, fallbackFullResponseText) }
+
+        do {
+            let generatedSteps = try await coursesManager.generateGuidedTaskSteps(
+                taskDescription: task.title,
+                apiClient: claudeAPI,
+                groundingKnowledge: task.recommendedTool?.knowledgeBrief
+            )
+            // Race guard: task may have ended / been superseded / a Course may have
+            // started while generation was in flight.
+            guard activeGuidedTask?.title == task.title else { return (fallbackSpokenText, fallbackFullResponseText) }
+            activeGuidedTask?.steps = generatedSteps
+            print("🧭 Guided task steps ready (\(generatedSteps.count)): \(task.title)")
+
+            let stepSummary = generatedSteps.enumerated()
+                .map { "\($0.offset + 1). \($0.element.title) — \($0.element.goal)" }
+                .joined(separator: "; ")
+            let planIntroPrompt = """
+            You just figured out the plan for "\(task.title)": \(stepSummary).
+
+            Give a short, warm, SPOKEN introduction of this plan in your own natural voice — not a
+            bullet list, just talk through it like you would out loud ("first we'll..., then...").
+            Then transition straight into coaching them on step 1. Only say "here"/"right here" if
+            you're including a [POINT:...] tag with it — if you can't confidently point at something
+            specific yet, describe it in words instead. Tag [GUIDE: \(task.title)] to keep guidance going.
+            """
+
+            let (planResponseText, _) = try await claudeAPI.analyzeImageStreaming(
+                images: images,
+                systemPrompt: buildCompanionVoiceResponseSystemPrompt(),
+                conversationHistory: historyForAPI,
+                userPrompt: planIntroPrompt,
+                onTextChunk: { _ in }
+            )
+
+            let planParseResult = Self.parsePointingCoordinates(from: planResponseText)
+            let (planTextWithoutMemoryTags, planRememberedFacts) = CoachRememberTagParser.extractFactsAndStrip(from: planParseResult.spokenText)
+            for fact in planRememberedFacts {
+                teachyEngine.recordPersonalFact(fact)
             }
+            let (planSpokenText, _) = CompanionGuideTagParser.extractTitleAndStrip(from: planTextWithoutMemoryTags)
+            activeGuidedTask?.lastActivityAt = Date()
+
+            return (planSpokenText, planResponseText)
+        } catch {
+            print("⚠️ Guided task plan generation failed: \(error)")
+            // Degrade to the original quick answer rather than dead silence — and don't
+            // leave the task stuck in a permanent "steps.isEmpty" state.
+            activeGuidedTask = nil
+            return (fallbackSpokenText, fallbackFullResponseText)
         }
     }
 
