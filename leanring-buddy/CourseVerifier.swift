@@ -71,7 +71,8 @@ enum CourseVerifier {
     static func verifyStructured(
         criteria: CourseSuccessCriteria,
         claudeAPI: ClaudeAPI,
-        treatAsUserAdvance: Bool = false
+        treatAsUserAdvance: Bool = false,
+        precapturedScreenCapture: CompanionScreenCapture? = nil
     ) async -> CourseVerificationResult {
         let visionDescription = criteria.visionDescription?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -122,15 +123,22 @@ enum CourseVerifier {
         }
 
         let screenCapture: CompanionScreenCapture
-        do {
-            screenCapture = try await CourseUIGrounder.captureCursorScreen()
-        } catch {
-            return CourseVerificationResult(
-                status: .pass,
-                whatsGood: "could not capture screen — soft passing",
-                whatsMissing: nil,
-                suggestedNextAction: nil
-            )
+        // Callers that already captured a screenshot for this turn (e.g. companion
+        // guided-task verification, which reuses the same capture used to answer the
+        // user's question) can pass it in to avoid a redundant capture.
+        if let precapturedScreenCapture {
+            screenCapture = precapturedScreenCapture
+        } else {
+            do {
+                screenCapture = try await CourseUIGrounder.captureCursorScreen()
+            } catch {
+                return CourseVerificationResult(
+                    status: .pass,
+                    whatsGood: "could not capture screen — soft passing",
+                    whatsMissing: nil,
+                    suggestedNextAction: nil
+                )
+            }
         }
 
         let annotatedImageData = ScreenGridAnnotationUtility.annotateScreenshotForModel(

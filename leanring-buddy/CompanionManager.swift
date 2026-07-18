@@ -199,6 +199,17 @@ final class CompanionManager: ObservableObject {
     /// Conversation history so companion chat remembers prior exchanges within a session.
     private var conversationHistory: [(userTranscript: String, assistantResponse: String)] = []
 
+    /// An in-progress, fully ephemeral step-by-step walkthrough happening inside
+    /// normal companion chat (no Course UI, no HUD, no persistence). Started/continued/
+    /// ended entirely by the model tagging `[GUIDE: short title]` on its own replies —
+    /// see `sendCompanionChatResponse` and `guidedTaskPromptSection()`.
+    @Published private(set) var activeGuidedTask: CompanionGuidedTask?
+
+    /// Set for the duration of a single companion turn when a guided-task step was just
+    /// vision-verified, so `guidedTaskPromptSection()` can weave the result into that
+    /// turn's answer. Cleared once the prompt for that turn has been built.
+    private var pendingGuidedTaskVerificationResult: CourseVerificationResult?
+
     /// The currently running AI response task, if any. Cancelled when the user
     /// speaks again so a new response can begin immediately.
     private var currentResponseTask: Task<Void, Never>?
@@ -809,6 +820,15 @@ final class CompanionManager: ObservableObject {
             daysSinceLastSession: teachyEngine.daysSinceLastSession
         )
         let continuitySection = continuityLine.map { "\n\n\($0)" } ?? ""
+
+        // Situational awareness: tell the model the frontmost app/window by name,
+        // not just from screenshot pixels — this is what lets "I have Claude open,
+        // what's cowork?" work without the user having to say what app they're in.
+        let frontmostAppSection = AccessibilityElementDetector.frontmostApplicationContext()
+            .map { "\n\nRight now they're in: \($0)." } ?? ""
+
+        let guidedTaskSection = guidedTaskPromptSection()
+
         return """
         You are Teachy — a real person sitting next to them at their Mac, looking at the same screen.
         They just talked to you. Your reply is spoken out loud, so talk like a human coach in the room —
@@ -828,8 +848,8 @@ final class CompanionManager: ObservableObject {
           pointing at it — describing where it is AGAIN makes you sound like you're not looking
           at the same screen they are.
         - Feel like a sharp friend who actually wants them to get it — not a lecture.
-        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)
-
+        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)
+        \(guidedTaskSection)
         \(ScreenGridAnnotationUtility.modelInstructions)
         """
     }
@@ -839,6 +859,13 @@ final class CompanionManager: ObservableObject {
     /// inside courses via LessonPlayer (“Do it for me”) exactly as before.
     private func routeVoiceTranscript(_ transcript: String) {
         if coursesManager.isCourseActive {
+            // Defensive: a formal Course is active, so the ephemeral companion guided
+            // task (if any) must not linger — `startClickyCourse` already clears it at
+            // the moment a course starts, this is just a backstop against the two
+            // systems ever overlapping.
+            if activeGuidedTask != nil {
+                activeGuidedTask = nil
+            }
             if ClickyCourseVoiceCommands.isExitRequest(transcript: transcript) {
                 exitClickyCourse(voiceInitiated: true)
                 return
@@ -885,6 +912,36 @@ final class CompanionManager: ObservableObject {
 
             guard !Task.isCancelled else { return }
 
+            // Safety-net: a guided task that's gone quiet for a long while (user
+            // walked away, started doing something else) shouldn't resurface oddly
+            // much later — this is a backstop, not the primary exit mechanism (that's
+            // the model simply not tagging [GUIDE:...] anymore, handled below).
+            if let activeGuidedTask, Date().timeIntervalSince(activeGuidedTask.lastActivityAt) > 2700 {
+                self.activeGuidedTask = nil
+            }
+
+            // If we're mid-walkthrough and steps have finished generating, verify the
+            // current step against the screenshot we already captured for this turn
+            // (no separate capture) BEFORE building this turn's answer, so the coach's
+            // reply can honestly reference what's actually on screen right now.
+            pendingGuidedTaskVerificationResult = nil
+            if let currentGuidedStep = self.activeGuidedTask?.currentStep,
+               let cursorScreenCaptureForVerification = screenCaptures.first(where: { $0.isCursorScreen }) {
+                let verificationResult = await CourseVerifier.verifyStructured(
+                    criteria: CourseSuccessCriteria(
+                        visionDescription: currentGuidedStep.doneWhen ?? currentGuidedStep.goal,
+                        urlContains: nil,
+                        requireUserAdvance: false
+                    ),
+                    claudeAPI: claudeAPI,
+                    precapturedScreenCapture: cursorScreenCaptureForVerification
+                )
+                pendingGuidedTaskVerificationResult = verificationResult
+                if verificationResult.status == .pass {
+                    self.activeGuidedTask?.currentStepIndex += 1
+                }
+            }
+
             let labeledImages = await buildLabeledAnnotatedImages(
                 screenCaptures: screenCaptures,
                 mouseOutlineContext: mouseOutlineContext
@@ -900,9 +957,15 @@ final class CompanionManager: ObservableObject {
             }
 
             do {
+                // Built once into a local so `pendingGuidedTaskVerificationResult` (read
+                // by `guidedTaskPromptSection()` inside this call) can be cleared right
+                // after — it's only meant to influence this single turn's prompt.
+                let systemPromptForThisTurn = buildCompanionVoiceResponseSystemPrompt()
+                pendingGuidedTaskVerificationResult = nil
+
                 let (fullResponseText, _) = try await claudeAPI.analyzeImageStreaming(
                     images: labeledImages,
-                    systemPrompt: buildCompanionVoiceResponseSystemPrompt(),
+                    systemPrompt: systemPromptForThisTurn,
                     conversationHistory: historyForAPI,
                     userPrompt: transcriptWithSpatialHint,
                     onTextChunk: { _ in }
@@ -914,13 +977,19 @@ final class CompanionManager: ObservableObject {
                 // Strip [REMEMBER: ...] tags before this ever reaches TTS/history — same
                 // tag convention used inside courses (`CourseCoachMessageParts`), reused
                 // here since quick companion Q&A can also surface personal facts.
-                let (spokenText, rememberedFacts) = CoachRememberTagParser.extractFactsAndStrip(from: parseResult.spokenText)
+                let (spokenTextWithoutMemoryTags, rememberedFacts) = CoachRememberTagParser.extractFactsAndStrip(from: parseResult.spokenText)
                 // Quick companion Q&A runs outside a course, so there's no active
                 // TeachyEngine `CoachingSession` — `processEvent` would silently no-op
                 // (see its session guard). Use the session-independent recorder instead.
                 for fact in rememberedFacts {
                     self.teachyEngine.recordPersonalFact(fact)
                 }
+
+                // Strip [GUIDE: short title] the same way REMEMBER is stripped above,
+                // and use its presence/absence this turn to drive the ephemeral guided
+                // walkthrough lifecycle (start / continue / naturally end).
+                let (spokenText, guideTaskTitleThisTurn) = CompanionGuideTagParser.extractTitleAndStrip(from: spokenTextWithoutMemoryTags)
+                applyGuidedTaskLifecycle(guideTaskTitleThisTurn: guideTaskTitleThisTurn)
 
                 if let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen }) {
                     applyPointingFromResponse(fullResponseText, screenCapture: cursorScreenCapture)
@@ -958,6 +1027,111 @@ final class CompanionManager: ObservableObject {
                 scheduleTransientHideIfNeeded()
             }
         }
+    }
+
+    // MARK: - Ephemeral guided walkthroughs (companion Q&A only — see CompanionGuidedTask.swift)
+
+    /// Drives the ephemeral guided-task lifecycle purely from this turn's `[GUIDE: ...]`
+    /// tag presence/absence — no separate start/end tags needed. Called once per companion
+    /// turn, right after the tag has been extracted and stripped from the spoken text.
+    private func applyGuidedTaskLifecycle(guideTaskTitleThisTurn: String?) {
+        guard let guideTaskTitleThisTurn, !guideTaskTitleThisTurn.isEmpty else {
+            // Tag absent this turn — a task that was active has naturally concluded
+            // (wrapped up, or the conversation moved on). No lingering state.
+            if activeGuidedTask != nil {
+                print("🧭 Guided task ended: \(activeGuidedTask?.title ?? "")")
+                activeGuidedTask = nil
+            }
+            return
+        }
+
+        if activeGuidedTask != nil {
+            // Continuing an in-progress task. Deliberately keep the original title
+            // (it's used as the race guard below for the background step-generation
+            // task) rather than overwriting it with whatever the model tagged this turn.
+            activeGuidedTask?.lastActivityAt = Date()
+            return
+        }
+
+        // Starting a brand-new guided task. Steps start empty and are populated
+        // asynchronously below (after this turn's answer has already been returned
+        // and is speaking) so the triggering turn isn't slowed down.
+        activeGuidedTask = CompanionGuidedTask(title: guideTaskTitleThisTurn)
+        print("🧭 Guided task started: \(guideTaskTitleThisTurn)")
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let generatedSteps = try await self.coursesManager.generateGuidedTaskSteps(
+                    taskDescription: guideTaskTitleThisTurn,
+                    apiClient: self.claudeAPI
+                )
+                // Guard against a race: only apply the steps if this exact task is
+                // still active (it may have naturally ended, been superseded by a new
+                // guided task, or a formal Course may have started, while generation
+                // was in flight).
+                guard self.activeGuidedTask?.title == guideTaskTitleThisTurn else { return }
+                self.activeGuidedTask?.steps = generatedSteps
+                print("🧭 Guided task steps ready (\(generatedSteps.count)): \(guideTaskTitleThisTurn)")
+            } catch {
+                print("⚠️ Guided task step generation failed: \(error)")
+            }
+        }
+    }
+
+    /// Additive system-prompt block for the current guided-task state — mirrors how
+    /// `continuitySection` conditionally appears in `buildCompanionVoiceResponseSystemPrompt()`.
+    /// When no task is active, instructs the model on when it's appropriate to start one.
+    private func guidedTaskPromptSection() -> String {
+        guard let activeGuidedTask else {
+            return """
+
+            If this question genuinely needs multiple concrete steps (not just an explanation), and you have
+            enough context to know what "done" looks like for the first step, tag your reply [GUIDE: short title].
+            Only do this when it actually helps — a quick factual question doesn't need it. If you don't have
+            enough context yet (e.g. what they need something FOR changes the right guidance), just ask — check
+            what you already remember about them first (personal facts, past context) so you're not asking
+            something you should already know.
+            """
+        }
+
+        if activeGuidedTask.steps.isEmpty {
+            // Steps are still generating in the background from the turn that started this.
+            return """
+
+            You're mid-way through guiding them on: "\(activeGuidedTask.title)" — you're still pulling together
+            the exact steps behind the scenes, so keep the conversation going naturally on this topic. Keep
+            tagging [GUIDE: \(activeGuidedTask.title)] while you're still actively helping with this.
+            """
+        }
+
+        if activeGuidedTask.isComplete {
+            return """
+
+            You just finished guiding them through the last step of "\(activeGuidedTask.title)". Wrap this up
+            warmly and naturally — no more step numbers, no more [GUIDE:...] tag, just a normal close to the
+            conversation.
+            """
+        }
+
+        guard let currentStep = activeGuidedTask.currentStep else { return "" }
+
+        let stepNumber = activeGuidedTask.currentStepIndex + 1
+        let totalSteps = activeGuidedTask.steps.count
+        var lines = [
+            "",
+            "You're mid-way through guiding them on: \"\(activeGuidedTask.title)\" (step \(stepNumber) of \(totalSteps))."
+        ]
+        if let verification = pendingGuidedTaskVerificationResult {
+            var verificationLine = "Just checked their screen: \(verification.status.rawValue) — \(verification.whatsGood)."
+            if let whatsMissing = verification.whatsMissing, !whatsMissing.isEmpty {
+                verificationLine += " Still missing: \(whatsMissing)."
+            }
+            lines.append(verificationLine)
+        }
+        lines.append("Current step: \(currentStep.goal)")
+        lines.append("If they're still actively working through this, tag your reply [GUIDE: \(activeGuidedTask.title)] again so guidance continues; stop tagging it once this naturally wraps up.")
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Teachy Courses
@@ -1031,6 +1205,11 @@ final class CompanionManager: ObservableObject {
             backendConnectionHint = nil
 
             guard let session = coursesManager.startCourse(courseID: courseID) else { return }
+
+            // A formal Course is now active — the two systems must never overlap
+            // (Course has its own HUD/verify/progress machinery; the ephemeral
+            // guided task has none of that and would be redundant/confusing).
+            activeGuidedTask = nil
 
             _ = teachyEngine.startSession(adapterID: "macos", courseID: courseID)
 
@@ -1931,7 +2110,12 @@ final class CompanionManager: ObservableObject {
         detectedElementBubbleText = {
             let spokenText = parseResult.spokenText.isEmpty ? fallbackResponseText : parseResult.spokenText
             let (spokenTextWithoutMemoryTags, _) = CoachRememberTagParser.extractFactsAndStrip(from: spokenText)
-            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenTextWithoutMemoryTags)
+            // [GUIDE:...] is a structured lifecycle tag like [REMEMBER:...] — same leak
+            // risk here (this bubble-text path re-parses the raw response independently
+            // of the REMEMBER/GUIDE stripping already done in `sendCompanionChatResponse`),
+            // so it needs the same defense-in-depth stripping.
+            let (spokenTextWithoutGuideTag, _) = CompanionGuideTagParser.extractTitleAndStrip(from: spokenTextWithoutMemoryTags)
+            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenTextWithoutGuideTag)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedSpokenText.isEmpty else { return nil }
             return cleanedSpokenText

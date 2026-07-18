@@ -900,22 +900,7 @@ final class CoursesManager: ObservableObject {
             )
         }
 
-        let goals = goalsJSON.compactMap { goalJSON -> ClickyCourseStep? in
-            guard let id = goalJSON["id"] as? String,
-                  let title = goalJSON["title"] as? String,
-                  let goal = goalJSON["goal"] as? String,
-                  let coachAsk = goalJSON["coachAsk"] as? String,
-                  let doneWhen = goalJSON["doneWhen"] as? String else {
-                return nil
-            }
-            return ClickyCourseStep(
-                id: id,
-                title: title,
-                goal: goal,
-                coachAsk: coachAsk,
-                doneWhen: doneWhen
-            )
-        }
+        let goals = Self.parseCourseLearningGoals(fromGoalsJSON: goalsJSON)
 
         let courseID = "custom-\(UUID().uuidString.prefix(8))"
         return ClickyCourse(
@@ -936,5 +921,86 @@ final class CoursesManager: ObservableObject {
             trackOrder: nil,
             prerequisiteCourseIDs: nil
         )
+    }
+
+    /// Shared JSON-goal-array → `CourseLearningGoal` decoding, used by both
+    /// `generateCustomCoursePlan` (full course) and `generateGuidedTaskSteps`
+    /// (ephemeral companion walkthrough) so the two generators stay in sync.
+    private static func parseCourseLearningGoals(fromGoalsJSON goalsJSON: [[String: Any]]) -> [CourseLearningGoal] {
+        goalsJSON.compactMap { goalJSON -> CourseLearningGoal? in
+            guard let id = goalJSON["id"] as? String,
+                  let title = goalJSON["title"] as? String,
+                  let goal = goalJSON["goal"] as? String,
+                  let coachAsk = goalJSON["coachAsk"] as? String,
+                  let doneWhen = goalJSON["doneWhen"] as? String else {
+                return nil
+            }
+            return CourseLearningGoal(
+                id: id,
+                title: title,
+                goal: goal,
+                coachAsk: coachAsk,
+                doneWhen: doneWhen
+            )
+        }
+    }
+
+    /// Lightweight sibling of `generateCustomCoursePlan`, for the companion's ephemeral
+    /// guided walkthroughs (`CompanionGuidedTask`). Same generation mechanism (one
+    /// `ClaudeAPI.generateText` call, JSON-in) but asks for 2-5 short ad-hoc steps only —
+    /// no course title/subtitle/estimatedMinutes/learningOutcomes ceremony, since these
+    /// steps are never shown in any Course UI and never persisted.
+    func generateGuidedTaskSteps(
+        taskDescription: String,
+        apiClient: ClaudeAPI
+    ) async throws -> [CourseLearningGoal] {
+        let systemPrompt = """
+        You are helping Teachy, a macOS teaching companion, put together a short ad-hoc
+        walkthrough for a quick spoken question — not a full course, just enough concrete
+        steps to guide someone through a task on their screen.
+
+        Return ONLY a JSON object with this exact structure (no markdown, no explanation):
+        {
+            "steps": [
+                {
+                    "id": "step-1",
+                    "title": "Step Title",
+                    "goal": "Success looks like: ...",
+                    "coachAsk": "Teaching prompt for this step",
+                    "doneWhen": "How to verify this step is done by looking at the screen"
+                }
+            ]
+        }
+
+        Rules:
+        - 2-5 steps, each building on the previous
+        - Each step must be concrete and verifiable by looking at the screen
+        - doneWhen should be a short natural-language description of what "done" looks like on screen
+        - Keep it tight — this is a quick walkthrough, not a lesson plan
+        """
+
+        let learnerContext: String
+        if globalLearnerProfile != CourseLearnerProfile() {
+            learnerContext = "\n\nLearner already knows: \(globalLearnerProfile.knows.joined(separator: "; "))"
+        } else {
+            learnerContext = ""
+        }
+
+        let response = try await apiClient.generateText(
+            systemPrompt: systemPrompt,
+            userPrompt: "Create short walkthrough steps for: \(taskDescription)\(learnerContext)"
+        )
+
+        guard let data = response.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let stepsJSON = json["steps"] as? [[String: Any]] else {
+            throw NSError(
+                domain: "CoursesManager",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to parse guided task steps"]
+            )
+        }
+
+        return Self.parseCourseLearningGoals(fromGoalsJSON: stepsJSON)
     }
 }

@@ -305,3 +305,38 @@ enum AccessibilityElementDetector {
         return nil
     }
 }
+
+// MARK: - Situational awareness (companion prompt context, not tool use)
+
+extension AccessibilityElementDetector {
+    /// Frontmost app name + focused window title, formatted for injection into a
+    /// system prompt (e.g. "Claude" or "Claude — window: some title"). Reuses the
+    /// exact AX pattern already proven in `AgentMacNativeTools.describeFrontmostApplication()`,
+    /// but that helper's output is a full tool-result sentence — this returns just the
+    /// app/window fragment so the caller controls the surrounding prompt phrasing.
+    /// Returns nil when there's no frontmost application to report.
+    static func frontmostApplicationContext() -> String? {
+        guard let frontmostApplication = NSWorkspace.shared.frontmostApplication else {
+            return nil
+        }
+
+        let appName = frontmostApplication.localizedName ?? frontmostApplication.bundleIdentifier ?? "Unknown"
+
+        var windowTitle = ""
+        let appElement = AXUIElementCreateApplication(frontmostApplication.processIdentifier)
+        var focusedWindowValue: AnyObject?
+        if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindowValue) == .success,
+           let focusedWindow = focusedWindowValue {
+            var titleValue: AnyObject?
+            if AXUIElementCopyAttributeValue(focusedWindow as! AXUIElement, kAXTitleAttribute as CFString, &titleValue) == .success,
+               let title = titleValue as? String {
+                windowTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        if windowTitle.isEmpty {
+            return appName
+        }
+        return "\(appName) — window: \(windowTitle)"
+    }
+}
