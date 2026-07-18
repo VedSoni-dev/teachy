@@ -14,6 +14,14 @@ struct OpenRouterModelOption: Identifiable, Equatable {
     static let defaultModelID = "google/gemini-2.5-flash"
     static let visionFallbackModelID = "google/gemini-2.5-flash"
 
+    /// Reasoning + vision model used for screen-grounded guided-task planning.
+    /// Must start with "google/gemini", "google/gemma", or "qwen/qwen3-vl" so the
+    /// worker's model-routing allowlist (worker/model-routing.mjs + worker/src/model-routing.ts
+    /// VISION_MODEL_PREFIXES) passes the model through untouched when a screenshot is attached.
+    /// Swapping to a model outside those prefixes would require also allowlisting its prefix
+    /// in both routing files — do not change without updating those files.
+    static let reasoningPlannerModelID = "google/gemini-2.5-pro"
+
     /// One list for the whole app. Pick a model; routing handles screen images when needed.
     static let models: [OpenRouterModelOption] = [
         OpenRouterModelOption(

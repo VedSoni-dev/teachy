@@ -434,6 +434,141 @@ class ClaudeAPI {
         }
     }
 
+    /// Hits the agent completions route (`/v1/chat/completions`) with a reasoning model,
+    /// high reasoning effort, and an optional screenshot attached as an `image_url` block.
+    /// Returns the raw assistant message text (JSON from the planner, typically).
+    ///
+    /// Mirrors `BackgroundAgentManager.sendChatRequest` in request construction — OpenAI
+    /// format, same proxy/direct-API URL resolution, same auth headers — but adds
+    /// `reasoning: { effort: "high" }` so OpenRouter enables the model's thinking budget,
+    /// and attaches a JPEG screenshot as a base64 `image_url` content block (annotated via
+    /// `ScreenGridAnnotationUtility.annotateScreenshotForModel` the same way the agent loop does).
+    ///
+    /// This call is non-streaming and may take 10–30 s when the reasoning model is thinking
+    /// deeply. The 120 s URLSession timeout is intentionally generous.
+    func generateReasonedPlanJSON(
+        systemPrompt: String,
+        userPrompt: String,
+        imageJPEGData: Data?,
+        imageLabel: String?,
+        screenshotWidthInPixels: Int = 0,
+        screenshotHeightInPixels: Int = 0,
+        modelID: String
+    ) async throws -> String {
+        // Use the agent completions endpoint (not the /chat companion endpoint) because
+        // the worker forwards the full request body on that route, including custom fields
+        // like `reasoning` that the /chat route doesn't pass through.
+        let agentCompletionsURL: URL
+        if useDirectAPI {
+            agentCompletionsURL = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
+        } else {
+            let workerBase = ClickyWorkerConfiguration.workerBaseURL
+            agentCompletionsURL = URL(string: "\(workerBase)/v1/chat/completions")!
+        }
+
+        var request = URLRequest(url: agentCompletionsURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        if useDirectAPI, let apiKey = TeachyAPIKeyStore.apiKey {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("https://teachy.app", forHTTPHeaderField: "HTTP-Referer")
+            request.setValue("Teachy", forHTTPHeaderField: "X-Title")
+        }
+
+        // Build the user message content — plain text when no screenshot, multipart when one is attached.
+        let userMessageContent: Any
+        if let rawJPEGData = imageJPEGData {
+            // Annotate with the coordinate grid the same way BackgroundAgentManager does,
+            // so the reasoning model can reference specific screen regions when planning.
+            let annotatedImageData = ScreenGridAnnotationUtility.annotateScreenshotForModel(
+                originalJPEGData: rawJPEGData,
+                screenshotWidthInPixels: screenshotWidthInPixels,
+                screenshotHeightInPixels: screenshotHeightInPixels,
+                mouseOutlinePointsInScreenshotSpace: [],
+                highlightedGridCellLabels: []
+            ) ?? rawJPEGData
+
+            var contentBlocks: [[String: Any]] = [
+                [
+                    "type": "image_url",
+                    "image_url": [
+                        "url": "data:image/jpeg;base64,\(annotatedImageData.base64EncodedString())"
+                    ]
+                ]
+            ]
+
+            if let imageLabel, !imageLabel.isEmpty {
+                let dimensionInfo = screenshotWidthInPixels > 0
+                    ? " (image dimensions: \(screenshotWidthInPixels)x\(screenshotHeightInPixels) pixels, grid overlay: columns A-T, rows 1-12)"
+                    : ""
+                contentBlocks.append(["type": "text", "text": imageLabel + dimensionInfo])
+            }
+
+            contentBlocks.append(["type": "text", "text": userPrompt])
+            userMessageContent = contentBlocks
+        } else {
+            userMessageContent = userPrompt
+        }
+
+        let messages: [[String: Any]] = [
+            ["role": "system", "content": systemPrompt],
+            ["role": "user", "content": userMessageContent]
+        ]
+
+        // `reasoning: { effort: "high" }` is OpenRouter's parameter for enabling the
+        // model's internal thinking budget. The worker's agent route spreads the full
+        // request body through (`const forwardedBody = { ...body, model: resolvedModel }`)
+        // so this field reaches OpenRouter untouched.
+        let requestBody: [String: Any] = [
+            "model": modelID,
+            "max_tokens": 4096,
+            "stream": false,
+            "messages": messages,
+            "reasoning": ["effort": "high"]
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+
+        let payloadMB = Double(request.httpBody?.count ?? 0) / 1_048_576.0
+        print("🧠 Reasoning plan request: model=\(modelID), \(String(format: "%.1f", payloadMB))MB, hasScreenshot=\(imageJPEGData != nil)")
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let errorBody = String(data: data, encoding: .utf8) ?? "unknown"
+            throw NSError(
+                domain: "ClaudeAPI",
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Reasoning plan API error (\(statusCode)): \(errorBody)"]
+            )
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(
+                domain: "ClaudeAPI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid JSON from reasoning planner"]
+            )
+        }
+
+        // OpenAI format: {"choices":[{"message":{"content":"..."}}]}
+        if let choices = json["choices"] as? [[String: Any]],
+           let message = choices.first?["message"] as? [String: Any],
+           let content = message["content"] as? String {
+            return content
+        }
+
+        throw NSError(
+            domain: "ClaudeAPI",
+            code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "Unexpected response format from reasoning planner"]
+        )
+    }
+
     /// Simple text-only completion (no images, no streaming). Used for course plan generation.
     func generateText(
         systemPrompt: String,

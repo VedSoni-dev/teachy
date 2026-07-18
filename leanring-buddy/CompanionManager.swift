@@ -933,9 +933,11 @@ final class CompanionManager: ObservableObject {
             pendingGuidedTaskVerificationResult = nil
             if let currentGuidedStep = self.activeGuidedTask?.currentStep,
                let cursorScreenCaptureForVerification = screenCaptures.first(where: { $0.isCursorScreen }) {
+                // `.goal` is the `CourseLearningGoal` nested inside `AgenticStep` —
+                // reach through it to get `doneWhen` and `goal` (the success description).
                 let verificationResult = await CourseVerifier.verifyStructured(
                     criteria: CourseSuccessCriteria(
-                        visionDescription: currentGuidedStep.doneWhen ?? currentGuidedStep.goal,
+                        visionDescription: currentGuidedStep.goal.doneWhen ?? currentGuidedStep.goal.goal,
                         urlContains: nil,
                         requireUserAdvance: false
                     ),
@@ -1005,9 +1007,14 @@ final class CompanionManager: ObservableObject {
                 let finalSpokenText: String
                 let finalFullResponseText: String
                 if lifecycleOutcome == .newlyStarted {
+                    // Pass the cursor screen capture so the reasoning planner can see what's
+                    // actually on screen when decomposing the task — this is what makes the
+                    // plan screen-grounded rather than a blind guess.
+                    let cursorScreenCaptureForPlanning = screenCaptures.first(where: { $0.isCursorScreen })
                     let planResult = await presentGuidedTaskPlan(
                         images: labeledImages,
                         historyForAPI: historyForAPI,
+                        cursorScreenCapture: cursorScreenCaptureForPlanning,
                         fallbackSpokenText: spokenText,
                         fallbackFullResponseText: fullResponseText
                     )
@@ -1123,28 +1130,60 @@ final class CompanionManager: ObservableObject {
     /// guess (discarded) that couldn't reference steps that didn't exist yet. "Plan first,
     /// then execute, like a coding agent" — explicit user direction, this trades the
     /// original zero-added-latency design for actually having something to say.
+    ///
+    /// Layer 1: uses the reasoning planner (`generateAgenticPlan`) with a real screenshot
+    /// so the plan is grounded in what's actually on screen. Falls back to the fast blind
+    /// planner (`generateGuidedTaskSteps`) if the reasoning model call fails, so robustness
+    /// is preserved even when the heavier model is slow or unavailable.
     private func presentGuidedTaskPlan(
         images: [(data: Data, label: String)],
         historyForAPI: [(userPlaceholder: String, assistantResponse: String)],
+        cursorScreenCapture: CompanionScreenCapture?,
         fallbackSpokenText: String,
         fallbackFullResponseText: String
     ) async -> (spokenText: String, fullResponseText: String) {
         guard let task = activeGuidedTask else { return (fallbackSpokenText, fallbackFullResponseText) }
 
         do {
-            let generatedSteps = try await coursesManager.generateGuidedTaskSteps(
-                taskDescription: task.title,
-                apiClient: claudeAPI,
-                groundingKnowledge: task.recommendedTool?.knowledgeBrief
-            )
+            // Try the screen-grounded reasoning planner first (Layer 1 upgrade).
+            // On any failure, fall through to the fast blind generator below so the
+            // guided task always gets steps rather than silently dying.
+            let generatedSteps: [AgenticStep]
+            do {
+                generatedSteps = try await coursesManager.generateAgenticPlan(
+                    taskDescription: task.title,
+                    screenCapture: cursorScreenCapture,
+                    learnerContext: nil,
+                    groundingKnowledge: task.recommendedTool?.knowledgeBrief,
+                    apiClient: claudeAPI
+                )
+                print("🧭 Reasoning-planned agentic steps ready (\(generatedSteps.count)): \(task.title)")
+            } catch {
+                // Reasoning model failed (slow, rate-limited, model unavailable, etc.) —
+                // fall back to the fast blind generator, wrapping each `CourseLearningGoal`
+                // in an `AgenticStep` with the default `.coach` mode.
+                print("⚠️ Reasoning planner failed (\(error)), falling back to fast generator: \(task.title)")
+                let fallbackCourseLearningGoals = try await coursesManager.generateGuidedTaskSteps(
+                    taskDescription: task.title,
+                    apiClient: claudeAPI,
+                    groundingKnowledge: task.recommendedTool?.knowledgeBrief
+                )
+                generatedSteps = fallbackCourseLearningGoals.map { courseLearningGoal in
+                    AgenticStep(goal: courseLearningGoal, executionMode: .coach)
+                }
+                print("🧭 Fast-fallback steps ready (\(generatedSteps.count)): \(task.title)")
+            }
+
             // Race guard: task may have ended / been superseded / a Course may have
             // started while generation was in flight.
             guard activeGuidedTask?.title == task.title else { return (fallbackSpokenText, fallbackFullResponseText) }
             activeGuidedTask?.steps = generatedSteps
             print("🧭 Guided task steps ready (\(generatedSteps.count)): \(task.title)")
 
+            // Reach through `.goal` (the nested `CourseLearningGoal`) to build the
+            // plan-intro summary — each `AgenticStep` wraps a `CourseLearningGoal`.
             let stepSummary = generatedSteps.enumerated()
-                .map { "\($0.offset + 1). \($0.element.title) — \($0.element.goal)" }
+                .map { "\($0.offset + 1). \($0.element.goal.title) — \($0.element.goal.goal)" }
                 .joined(separator: "; ")
             let planIntroPrompt = """
             You just figured out the plan for "\(task.title)": \(stepSummary).
@@ -1233,7 +1272,9 @@ final class CompanionManager: ObservableObject {
             }
             lines.append(verificationLine)
         }
-        lines.append("Current step: \(currentStep.goal)")
+        // `currentStep` is `AgenticStep` — reach through `.goal` (the nested
+        // `CourseLearningGoal`) for the human-readable success description.
+        lines.append("Current step: \(currentStep.goal.goal)")
         if let recommendedTool = activeGuidedTask.recommendedTool {
             lines.append("Real knowledge about \(recommendedTool.displayName), so your coaching stays grounded turn after turn: \(recommendedTool.knowledgeBrief)")
         }

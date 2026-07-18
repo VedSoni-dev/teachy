@@ -12,12 +12,33 @@
 
 import Foundation
 
+/// Whether Teachy coaches the user through a step or acts on it directly.
+/// In Layer 1, only `.coach` is behaviorally active — `.act` is recorded from the
+/// reasoning planner's output but has no effect until Layer 2 wires the tool loop.
+enum GuidedStepExecutionMode: String, Codable, Equatable {
+    /// User does the work; Teachy guides with voice, pointing, and verification.
+    case coach
+    /// Teachy should execute this step itself via Mac tools (mechanical/tedious setup).
+    /// RECORDED in Layer 1 but not acted on — reserved for Layer 2.
+    case act
+}
+
+/// A single step in an agentic guided task, wrapping the existing `CourseLearningGoal`
+/// shape with an execution-mode tag from the reasoning planner.
+struct AgenticStep: Equatable {
+    /// The goal content (id, title, goal, coachAsk, doneWhen) — reuses the existing
+    /// Course goal struct so verification and coaching logic are unchanged.
+    let goal: CourseLearningGoal
+    /// How this step should be executed. Layer 1 always treats both modes as `.coach`.
+    var executionMode: GuidedStepExecutionMode
+}
+
 struct CompanionGuidedTask {
     var title: String
-    /// Reuses the existing Course goal shape (same `doneWhen`/`coachAsk` fields) —
-    /// populated asynchronously in the background after the task starts, so the turn
-    /// that triggers it isn't slowed down by an extra generation round-trip.
-    var steps: [CourseLearningGoal] = []
+    /// Agentic steps from the reasoning planner — each wraps a `CourseLearningGoal` plus
+    /// an execution-mode tag. Populated synchronously by `presentGuidedTaskPlan` so the
+    /// spoken introduction can reference the real plan.
+    var steps: [AgenticStep] = []
     var currentStepIndex: Int = 0
     var lastActivityAt: Date = Date()
     /// Set once, at task creation, when the task's title matches a known
@@ -26,7 +47,7 @@ struct CompanionGuidedTask {
     /// per-turn coaching in real knowledge about the tool being used.
     var recommendedTool: TeachyRecommendedTool? = nil
 
-    var currentStep: CourseLearningGoal? {
+    var currentStep: AgenticStep? {
         steps.indices.contains(currentStepIndex) ? steps[currentStepIndex] : nil
     }
 

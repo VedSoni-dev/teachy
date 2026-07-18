@@ -1014,4 +1014,118 @@ final class CoursesManager: ObservableObject {
 
         return Self.parseCourseLearningGoals(fromGoalsJSON: stepsJSON)
     }
+
+    /// Screen-grounded, reasoning-model plan generator — Layer 1 upgrade over `generateGuidedTaskSteps`.
+    ///
+    /// Sends a real screenshot to `google/gemini-2.5-pro` with high reasoning effort so the plan
+    /// is decomposed against what's *actually on screen right now*, not a blind guess from the task
+    /// title alone. Each step comes back with an `executionMode` tag (`coach` or `act`).
+    ///
+    /// Layer 1 behavior: `executionMode` is recorded on each `AgenticStep` but has no behavioral
+    /// effect — all steps are coached regardless of tag. Acting is wired in Layer 2.
+    func generateAgenticPlan(
+        taskDescription: String,
+        screenCapture: CompanionScreenCapture?,
+        learnerContext: String?,
+        groundingKnowledge: String?,
+        apiClient: ClaudeAPI
+    ) async throws -> [AgenticStep] {
+        let systemPrompt = """
+        You are the planning brain for Teachy, a macOS teaching companion. Your job is to
+        look at what's ACTUALLY on the user's screen right now and decompose the task into
+        a concrete, screen-grounded plan.
+
+        Return ONLY a JSON object with this exact structure (no markdown fences, no explanation):
+        {
+            "steps": [
+                {
+                    "id": "step-1",
+                    "title": "Step Title",
+                    "goal": "Success looks like: ...",
+                    "coachAsk": "Teaching prompt Teachy should use when guiding this step",
+                    "doneWhen": "Natural-language description of what 'done' looks like on screen",
+                    "executionMode": "coach"
+                }
+            ]
+        }
+
+        executionMode rules — think carefully:
+        - "coach": user does it, Teachy guides. Use this for anything that is a genuine learning
+          moment, requires judgment, is risky, irreversible, financial, or where doing it yourself
+          would deprive the user of understanding.
+        - "act": Teachy should execute this step itself (click, navigate, fill a form field) — only
+          for purely mechanical/tedious/unambiguous setup with zero learning value (e.g. open a URL,
+          navigate to a specific page, click an obvious button to reach a starting point).
+        - Default to "coach" whenever in doubt. Never mark anything destructive, irreversible, or
+          financial as "act". Never mark a step "act" if it's a genuine skill moment.
+
+        Planning rules:
+        - 2-5 steps, each building on the previous
+        - Ground each step in what you can actually SEE on screen right now — reference real UI
+          elements, current state, and any obstacles visible (login walls, wrong page, etc.)
+        - Each step must be concretely verifiable by looking at the screen
+        - doneWhen: short natural-language description of what "done" looks like visually
+        - Think hard about the real sequence: what order makes sense given the current screen state?
+        """
+
+        // Build learner-context section from the CourseLearnerProfile `knows` array —
+        // same context `generateGuidedTaskSteps` includes, kept consistent.
+        let learnerProfileContext: String
+        if let learnerContext, !learnerContext.isEmpty {
+            learnerProfileContext = "\n\nLearner context: \(learnerContext)"
+        } else if globalLearnerProfile != CourseLearnerProfile() {
+            // Fall back to reading the profile directly, just as `generateGuidedTaskSteps` does.
+            learnerProfileContext = "\n\nLearner already knows: \(globalLearnerProfile.knows.joined(separator: "; "))"
+        } else {
+            learnerProfileContext = ""
+        }
+
+        let groundingContext: String
+        if let groundingKnowledge, !groundingKnowledge.isEmpty {
+            groundingContext = "\n\nGround the steps in this real knowledge about the tool being used: \(groundingKnowledge)"
+        } else {
+            groundingContext = ""
+        }
+
+        let userPrompt = "Plan the walkthrough for: \(taskDescription)\(learnerProfileContext)\(groundingContext)"
+
+        let rawJSONResponse = try await apiClient.generateReasonedPlanJSON(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            imageJPEGData: screenCapture?.imageData,
+            imageLabel: screenCapture?.label,
+            screenshotWidthInPixels: screenCapture?.screenshotWidthInPixels ?? 0,
+            screenshotHeightInPixels: screenCapture?.screenshotHeightInPixels ?? 0,
+            modelID: OpenRouterModelOption.reasoningPlannerModelID
+        )
+
+        // The reasoning model sometimes wraps its output in markdown fences — strip them
+        // before JSON parsing so a stray ```json block doesn't blow up the parse.
+        let jsonStringForParsing = rawJSONResponse
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"^```(?:json)?\s*"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s*```$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let responseData = jsonStringForParsing.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+              let stepsJSON = json["steps"] as? [[String: Any]] else {
+            throw NSError(
+                domain: "CoursesManager",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to parse agentic plan steps from reasoning model response"]
+            )
+        }
+
+        let courseLearningGoals = Self.parseCourseLearningGoals(fromGoalsJSON: stepsJSON)
+
+        return courseLearningGoals.enumerated().map { index, courseLearningGoal in
+            // Parse the `executionMode` field from the raw JSON step; default to `.coach`
+            // when absent or unrecognized — safety-first, never silently act when unsure.
+            let rawStepJSON = index < stepsJSON.count ? stepsJSON[index] : [:]
+            let rawExecutionMode = rawStepJSON["executionMode"] as? String ?? "coach"
+            let executionMode = GuidedStepExecutionMode(rawValue: rawExecutionMode) ?? .coach
+            return AgenticStep(goal: courseLearningGoal, executionMode: executionMode)
+        }
+    }
 }
