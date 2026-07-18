@@ -94,9 +94,10 @@ npm run harness                      # validate all routes
 |------|-------|---------|
 | `leanring_buddyApp.swift` | ~100 | Menu bar app entry point. Starts companion + Sparkle via `TeachySoftwareUpdater`. |
 | `TeachySoftwareUpdater.swift` | ~70 | Sparkle auto-update controller — GitHub Releases feed + Check for Updates in Home settings. |
-| `CompanionManager.swift` | ~2000 | Central state machine. Owns dictation, shortcut monitoring, screen capture, companion chat, Teachy Courses sessions, local TTS, and overlay management. Tracks voice state, conversation history, chat/agent model selection, and cursor visibility. |
+| `CompanionManager.swift` | ~3020 | Central state machine. Owns dictation, shortcut monitoring, screen capture, companion chat, Teachy Courses sessions, local TTS, and overlay management. Tracks voice state, conversation history, chat/agent model selection, and cursor visibility. Layer 2 `executeActStep` runs `.act` guided-task steps via the agent tool loop with announce-before-act ordering; Layer 3 `reflectAndReplaceRemainingSteps` calls the reasoning model on divergence to revise the living plan. |
+| `CompanionGuidedTask.swift` | ~96 | Ephemeral guided-task model. `GuidedStepExecutionMode` (`.coach`/`.act`), `AgenticStep`, `CompanionGuidedTask` with `reflectionRevisionCount` and `maximumReflectionRevisionsPerTask` cap. |
 | `ClickyCourse.swift` | ~1380 | Goal-based courses; **First Win** + **Use AI to Code** flagship; Teachy catalog + lesson briefs. |
-| `CoursesManager.swift` | ~710 | Catalog, sessions, learner profile memory, tool step log. |
+| `CoursesManager.swift` | ~1250 | Catalog, sessions, learner profile memory, tool step log. `generateAgenticPlan` (reasoning-model screen-grounded planner) and `reflectAndRevisePlan` (Layer 3 reflection model call returning revised remaining steps). |
 | `TeachyDataPaths.swift` | ~40 | Resolves `~/.teachy/{courses,connectors}` with legacy `~/.clicky/` fallback. |
 | `LessonPlayer.swift` | ~730 | Goal auto-prompter — video parts → tutor turns → verify → teach-back. |
 | `TeachyEngine/AdapterProtocol.swift` | ~100 | Environment-agnostic contract between the Teachy engine and any surface (macOS, browser, CLI, Makr). Defines LearnerEvent inputs, CoachingOutput decisions, and the TeachyAdapter protocol. |

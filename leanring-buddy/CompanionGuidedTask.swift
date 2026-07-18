@@ -46,6 +46,14 @@ struct CompanionGuidedTask {
     /// never changed afterward. Grounds both initial step generation and ongoing
     /// per-turn coaching in real knowledge about the tool being used.
     var recommendedTool: TeachyRecommendedTool? = nil
+    /// How many times the reasoning model has revised the remaining steps for this task.
+    /// Caps at `CompanionGuidedTask.maximumReflectionRevisionsPerTask` so divergence
+    /// can't loop the reflection call indefinitely.
+    var reflectionRevisionCount: Int = 0
+
+    /// Maximum number of reasoning-model reflection/replanning calls allowed per task.
+    /// After this cap, divergence falls through to coaching the current step as-is.
+    static let maximumReflectionRevisionsPerTask = 3
 
     var currentStep: AgenticStep? {
         steps.indices.contains(currentStepIndex) ? steps[currentStepIndex] : nil

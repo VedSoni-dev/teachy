@@ -926,10 +926,53 @@ final class CompanionManager: ObservableObject {
                 self.activeGuidedTask = nil
             }
 
-            // If we're mid-walkthrough and steps have finished generating, verify the
-            // current step against the screenshot we already captured for this turn
-            // (no separate capture) BEFORE building this turn's answer, so the coach's
-            // reply can honestly reference what's actually on screen right now.
+            // Layer 2: if the current guided-task step is tagged `.act`, Teachy announces
+            // and then executes it via the agent tool loop rather than coaching. The act
+            // path produces its own spoken result and returns early from this turn; only
+            // `.coach` steps fall through to the normal analyze-image-streaming below.
+            //
+            // We check for an existing task with steps (not newly-started — the plan-intro
+            // turn already narrates step 1; the NEXT turn is when we act on `.act` steps)
+            // and specifically for the `.act` execution mode on the current step.
+            if let currentGuidedStepForActing = self.activeGuidedTask?.currentStep,
+               currentGuidedStepForActing.executionMode == .act,
+               !self.activeGuidedTask!.steps.isEmpty {
+
+                let actingResult = await executeActStep(
+                    currentGuidedStep: currentGuidedStepForActing,
+                    screenCaptures: screenCaptures,
+                    transcript: transcript
+                )
+
+                conversationHistory.append((
+                    userTranscript: transcript,
+                    assistantResponse: actingResult.spokenText
+                ))
+                if conversationHistory.count > 10 {
+                    conversationHistory.removeFirst(conversationHistory.count - 10)
+                }
+
+                ClickyAnalytics.trackAIResponseReceived(response: actingResult.spokenText)
+
+                if !actingResult.spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    voiceState = .responding
+                    do {
+                        try await speechSynthesizer.speakText(actingResult.spokenText)
+                    } catch {
+                        print("⚠️ Companion TTS error (act step): \(error)")
+                    }
+                }
+
+                if !Task.isCancelled {
+                    voiceState = .idle
+                    scheduleTransientHideIfNeeded()
+                }
+                return
+            }
+
+            // Coach path: verify the current step against the screenshot we already captured
+            // for this turn (no separate capture) BEFORE building this turn's answer, so the
+            // coach's reply can honestly reference what's actually on screen right now.
             pendingGuidedTaskVerificationResult = nil
             if let currentGuidedStep = self.activeGuidedTask?.currentStep,
                let cursorScreenCaptureForVerification = screenCaptures.first(where: { $0.isCursorScreen }) {
@@ -945,8 +988,26 @@ final class CompanionManager: ObservableObject {
                     precapturedScreenCapture: cursorScreenCaptureForVerification
                 )
                 pendingGuidedTaskVerificationResult = verificationResult
+
                 if verificationResult.status == .pass {
                     self.activeGuidedTask?.currentStepIndex += 1
+                } else {
+                    // Layer 3: coach-path divergence. If the verification was off-track
+                    // (user hit an obstacle, wrong screen, unexpected state), call the
+                    // reasoning model to reflect and revise the remaining plan — so Teachy
+                    // adapts instead of blindly repeating the same stuck step.
+                    // Skip reflection on `.partial` (still in progress — not diverged yet)
+                    // and on clean `.pass` (cost control). Also respect the per-task cap.
+                    if verificationResult.status == .offTrack,
+                       let taskForReflection = self.activeGuidedTask,
+                       taskForReflection.reflectionRevisionCount < CompanionGuidedTask.maximumReflectionRevisionsPerTask {
+                        let whatWentWrongDescription = "Coach-path verification was off-track. \(verificationResult.whatsGood). Still missing: \(verificationResult.whatsMissing ?? "unknown")."
+                        await reflectAndReplaceRemainingSteps(
+                            task: taskForReflection,
+                            whatWentWrong: whatWentWrongDescription,
+                            freshScreenCapture: cursorScreenCaptureForVerification
+                        )
+                    }
                 }
             }
 
@@ -1275,6 +1336,21 @@ final class CompanionManager: ObservableObject {
         // `currentStep` is `AgenticStep` — reach through `.goal` (the nested
         // `CourseLearningGoal`) for the human-readable success description.
         lines.append("Current step: \(currentStep.goal.goal)")
+
+        // Let the model know whether this is a coach step (user acts, Teachy guides)
+        // or an act step (Teachy will execute mechanically — the model's role is to
+        // narrate what's happening and transition, not to instruct the user to do it).
+        if currentStep.executionMode == .act {
+            lines.append("This step is MECHANICAL SETUP — Teachy is handling it automatically with tools. Your role: acknowledge it, narrate briefly what's happening, then transition naturally to the next coaching point. Do NOT instruct the user to do this step themselves.")
+        }
+
+        // If the plan was recently revised by the reflection model (Layer 3), let the
+        // coach model know so it can acknowledge the change naturally rather than
+        // referencing steps that no longer exist.
+        if activeGuidedTask.reflectionRevisionCount > 0 {
+            lines.append("Note: the plan was just updated based on what happened — go with the current step above, not any earlier version of the plan you may have referenced.")
+        }
+
         if let recommendedTool = activeGuidedTask.recommendedTool {
             lines.append("Real knowledge about \(recommendedTool.displayName), so your coaching stays grounded turn after turn: \(recommendedTool.knowledgeBrief)")
         }
@@ -1300,6 +1376,255 @@ final class CompanionManager: ObservableObject {
         Known go-to tools Teachy recommends — mention these by name when relevant even in a quick answer, not just when guiding a walkthrough:
         \(perToolLines.joined(separator: "\n"))
         """
+    }
+
+    // MARK: - Layer 2: Acting on `.act` steps
+
+    /// The result of an `.act` step execution — text to speak and whether the step was
+    /// completed successfully (so the caller knows whether the step index was advanced).
+    private struct ActStepExecutionResult {
+        let spokenText: String
+        let stepAdvanced: Bool
+    }
+
+    /// Executes a guided-task step tagged `.act` — announces, runs the tool loop, verifies
+    /// on the post-action screen, and advances or falls back to coaching.
+    ///
+    /// Flow:
+    /// 1. Speak a brief announcement so the user is never surprised by cursor movement.
+    /// 2. Build a step-scoped acting system prompt that:
+    ///    a. Scopes the agent to this single step's goal only.
+    ///    b. Explicitly forbids destructive, financial, irreversible, or account-deleting actions.
+    ///    c. If such an action would be required, the model must STOP and explain instead of acting.
+    /// 3. Run `backgroundAgentManager.runCourseInteraction` (existing tool loop, up to 10 iterations).
+    /// 4. Capture a fresh screenshot after tools so pointing reflects the new screen state.
+    /// 5. Verify the post-action screen against the step's `doneWhen` criterion.
+    /// 6. On `.pass`: advance `activeGuidedTask.currentStepIndex`, compose a brief "done, now..." reply.
+    /// 7. On failure or tool-loop error: fall back to coaching (tell user what was attempted, guide them).
+    ///    Then trigger Layer 3 reflection so the plan adapts.
+    private func executeActStep(
+        currentGuidedStep: AgenticStep,
+        screenCaptures: [CompanionScreenCapture],
+        transcript: String
+    ) async -> ActStepExecutionResult {
+        guard let taskSnapshot = self.activeGuidedTask else {
+            // Task was cleared mid-flight — nothing to act on.
+            return ActStepExecutionResult(spokenText: "", stepAdvanced: false)
+        }
+
+        let stepGoalDescription = currentGuidedStep.goal.goal
+        let stepCoachAsk = currentGuidedStep.goal.coachAsk
+        let stepDoneWhen = currentGuidedStep.goal.doneWhen ?? stepGoalDescription
+
+        // Step 1: Announce before any cursor movement. Speak inline here so the
+        // announcement always precedes the tool loop — never out of order.
+        let announcementText = "Alright, I'll set this part up for you — one sec."
+        voiceState = .responding
+        do {
+            try await speechSynthesizer.speakText(announcementText)
+        } catch {
+            print("⚠️ Companion act-step announcement TTS error: \(error)")
+        }
+        voiceState = .processing
+
+        // Step 2: Build the step-scoped acting system prompt.
+        // Safety rail: destructive/financial/irreversible actions must never be auto-executed.
+        let actingSystemPrompt = """
+        You are Teachy's action arm — an agent that executes a single, clearly mechanical step
+        on the user's Mac so they can focus on the parts that actually require learning.
+
+        Your current task: \(stepGoalDescription)
+        Coaching context for this step: \(stepCoachAsk)
+        You are done when: \(stepDoneWhen)
+
+        STRICT SAFETY RULES — read these before acting:
+        - Execute ONLY the specific mechanical step described above. Do nothing else.
+        - NEVER perform any action that is destructive, irreversible, or financial in nature.
+          This includes: deleting files or data, submitting payments or purchases, accepting
+          charges, deleting accounts, sending emails on the user's behalf without showing them
+          the draft, or any action that cannot be easily undone.
+        - If completing this step would require ANY destructive or financial action, STOP
+          immediately, do NOT proceed, and explain in plain language what you were trying to do
+          and why you stopped — then guide the user to do it themselves safely.
+        - Prefer navigation and read-only actions over writes. Use ui_action only for clicks
+          and typed text that are clearly part of the step above.
+        - After finishing, report what you did in one short, natural sentence.
+        """
+
+        // Step 3: Run the tool loop with the existing course-interaction entry point.
+        var toolLoopResultText: String? = nil
+        var toolLoopError: Error? = nil
+        do {
+            toolLoopResultText = try await backgroundAgentManager.runCourseInteraction(
+                userPrompt: "Please complete this step now: \(stepGoalDescription)",
+                systemPrompt: actingSystemPrompt,
+                conversationHistory: [],
+                screenCaptures: screenCaptures,
+                mouseOutlineContext: nil,
+                onToolStep: { [weak self] agentStep in
+                    // Log tool steps via the courses manager's existing recorder so the
+                    // background side-dock mascot's status stays current (it reads
+                    // backgroundAgentManager.status, which runCourseInteraction updates).
+                    self?.coursesManager.recordCourseToolStep(agentStep)
+                }
+            )
+            print("🤖 Act step tool loop finished for: \(currentGuidedStep.goal.title)")
+        } catch {
+            toolLoopError = error
+            print("⚠️ Act step tool loop error: \(error)")
+        }
+
+        guard !Task.isCancelled else {
+            return ActStepExecutionResult(spokenText: "", stepAdvanced: false)
+        }
+
+        // Step 4: Fresh capture after tools so post-action verification and pointing
+        // reflect the screen the user sees NOW (not what it looked like before acting).
+        let postActionScreenCaptures: [CompanionScreenCapture]
+        if let freshCaptures = try? await CompanionScreenCaptureUtility.captureAllScreensAsJPEG() {
+            postActionScreenCaptures = freshCaptures
+        } else {
+            // Fall back to the pre-action captures rather than leaving verification blind.
+            postActionScreenCaptures = screenCaptures
+        }
+        let postActionCursorCapture = postActionScreenCaptures.first(where: { $0.isCursorScreen })
+            ?? screenCaptures.first(where: { $0.isCursorScreen })
+
+        // Step 5: Verify the post-action screen against the step's doneWhen criterion.
+        // If the tool loop itself errored, skip to the fallback-to-coach path directly.
+        var postActVerificationResult: CourseVerificationResult? = nil
+        if toolLoopError == nil, let postActionCapture = postActionCursorCapture {
+            postActVerificationResult = await CourseVerifier.verifyStructured(
+                criteria: CourseSuccessCriteria(
+                    visionDescription: stepDoneWhen,
+                    urlContains: nil,
+                    requireUserAdvance: false
+                ),
+                claudeAPI: claudeAPI,
+                precapturedScreenCapture: postActionCapture
+            )
+        }
+
+        let actStepSucceeded = postActVerificationResult?.status == .pass
+
+        if actStepSucceeded {
+            // Step 6: Advance the step index — same logic the coach path uses on `.pass`.
+            // Race guard: confirm the task is still the same one we started with.
+            guard self.activeGuidedTask?.title == taskSnapshot.title else {
+                return ActStepExecutionResult(spokenText: "", stepAdvanced: false)
+            }
+            self.activeGuidedTask?.currentStepIndex += 1
+            self.activeGuidedTask?.lastActivityAt = Date()
+
+            // Apply pointing to the post-action screen so the cursor flies to the
+            // right place on the new screen state when the agent mentions a location.
+            let toolLoopSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(
+                Self.parsePointingCoordinates(from: toolLoopResultText ?? "").spokenText
+            )
+            if let postActionCapture = postActionCursorCapture {
+                applyPointingFromResponse(toolLoopResultText ?? "", screenCapture: postActionCapture)
+            }
+
+            // Compose the spoken result: what was done + transition to the next step.
+            let nextStep = self.activeGuidedTask?.currentStep
+            let transitionPhrase: String
+            if let nextStep {
+                transitionPhrase = " Now, \(nextStep.goal.coachAsk)"
+            } else {
+                transitionPhrase = " And that's the last mechanical part sorted."
+            }
+
+            let resultSummary = toolLoopSpokenText.isEmpty
+                ? "Done — got that set up for you."
+                : toolLoopSpokenText
+            let spokenResult = resultSummary + transitionPhrase
+
+            print("✅ Act step completed and verified: \(currentGuidedStep.goal.title)")
+            return ActStepExecutionResult(spokenText: spokenResult, stepAdvanced: true)
+
+        } else {
+            // Step 7: Fallback — tell the user what was attempted, guide them to do it.
+            let whatWasAttempted = currentGuidedStep.goal.goal
+            let verificationDetail = postActVerificationResult.map {
+                " The screen shows: \($0.whatsGood). Still missing: \($0.whatsMissing ?? "the expected state")."
+            } ?? ""
+            let toolErrorNote = toolLoopError != nil ? " (The automation hit an error trying to do this.)" : ""
+
+            let fallbackSpokenText = "Hmm, I tried to \(whatWasAttempted.lowercased()) but couldn't quite get there.\(toolErrorNote)\(verificationDetail) Let me walk you through it instead — \(currentGuidedStep.goal.coachAsk)"
+
+            // Layer 3: trigger reflection since acting diverged. The reasoning model
+            // will see what went wrong and revise the remaining steps accordingly.
+            if let taskForReflection = self.activeGuidedTask,
+               taskForReflection.reflectionRevisionCount < CompanionGuidedTask.maximumReflectionRevisionsPerTask,
+               let reflectionScreenCapture = postActionCursorCapture {
+                let whatWentWrongDescription: String
+                if let toolError = toolLoopError {
+                    whatWentWrongDescription = "The act step automation errored out: \(toolError.localizedDescription). Goal was: \(whatWasAttempted)."
+                } else {
+                    let verificationSummary = postActVerificationResult.map { "Post-act verification: \($0.status.rawValue). \($0.whatsGood). Missing: \($0.whatsMissing ?? "unknown")." } ?? "Post-act verification was unavailable."
+                    whatWentWrongDescription = "The act step ran but did not achieve the goal. \(verificationSummary) Goal was: \(whatWasAttempted)."
+                }
+                await reflectAndReplaceRemainingSteps(
+                    task: taskForReflection,
+                    whatWentWrong: whatWentWrongDescription,
+                    freshScreenCapture: reflectionScreenCapture
+                )
+            }
+
+            print("⚠️ Act step fell back to coaching: \(currentGuidedStep.goal.title)")
+            return ActStepExecutionResult(spokenText: fallbackSpokenText, stepAdvanced: false)
+        }
+    }
+
+    // MARK: - Layer 3: Reflection and replanning
+
+    /// Calls the reasoning model to reflect on what went wrong and revise the remaining
+    /// steps of the living plan. Splices the revised steps into `activeGuidedTask`,
+    /// keeping already-completed steps intact. A spoken cue is appended to the task so
+    /// the coach's next response acknowledges the adaptation naturally.
+    ///
+    /// Called only on genuine divergence (`.offTrack` or act-step failure) — NEVER on a
+    /// clean `.pass` (cost control). Respects `CompanionGuidedTask.maximumReflectionRevisionsPerTask`.
+    private func reflectAndReplaceRemainingSteps(
+        task: CompanionGuidedTask,
+        whatWentWrong: String,
+        freshScreenCapture: CompanionScreenCapture
+    ) async {
+        print("🔄 Reflection triggered for '\(task.title)': \(whatWentWrong)")
+
+        do {
+            let revisedRemainingSteps = try await coursesManager.reflectAndRevisePlan(
+                taskTitle: task.title,
+                allSteps: task.steps,
+                currentStepIndex: task.currentStepIndex,
+                whatWentWrong: whatWentWrong,
+                screenCapture: freshScreenCapture,
+                apiClient: claudeAPI
+            )
+
+            // Race guard: confirm the task is still active and unchanged before splicing.
+            guard self.activeGuidedTask?.title == task.title else {
+                print("🔄 Reflection skipped — task changed during reflection for '\(task.title)'")
+                return
+            }
+
+            // Splice: keep completed steps (indices < currentStepIndex), replace
+            // current-and-remaining steps with the reasoned revision.
+            let completedSteps = Array(task.steps.prefix(task.currentStepIndex))
+            let splicedSteps = completedSteps + revisedRemainingSteps
+
+            self.activeGuidedTask?.steps = splicedSteps
+            // currentStepIndex stays the same — the revised steps start at the same index,
+            // but now they represent the model's best new plan for what to do next.
+            self.activeGuidedTask?.reflectionRevisionCount += 1
+            self.activeGuidedTask?.lastActivityAt = Date()
+
+            print("🔄 Plan revised for '\(task.title)': \(revisedRemainingSteps.count) new remaining steps (revision #\(self.activeGuidedTask?.reflectionRevisionCount ?? 0))")
+        } catch {
+            // Reflection failed — continue coaching the existing step. The plan stays
+            // frozen at the diverged step rather than breaking the task entirely.
+            print("⚠️ Reflection failed for '\(task.title)': \(error.localizedDescription) — continuing with existing plan")
+        }
     }
 
     // MARK: - Teachy Courses

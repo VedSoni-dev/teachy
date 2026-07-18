@@ -1015,6 +1015,126 @@ final class CoursesManager: ObservableObject {
         return Self.parseCourseLearningGoals(fromGoalsJSON: stepsJSON)
     }
 
+    /// Layer 3: Reflect on what went wrong and return a revised list of remaining steps.
+    ///
+    /// Called only when reality diverged from the plan (verification `.offTrack`, an `.act`
+    /// step's tool loop failed, or post-act verification failed). Mirrors `generateAgenticPlan`
+    /// in structure — sends the fresh screenshot + current plan state + divergence description
+    /// to the reasoning model, which returns a replacement list for the current-and-remaining
+    /// steps. Completed steps (indices < `currentStepIndex`) are kept intact by the caller.
+    ///
+    /// Returns the revised `[AgenticStep]` list starting from what should now be the active
+    /// step. On any failure, throws so the caller can gracefully fall back to coaching.
+    func reflectAndRevisePlan(
+        taskTitle: String,
+        allSteps: [AgenticStep],
+        currentStepIndex: Int,
+        whatWentWrong: String,
+        screenCapture: CompanionScreenCapture?,
+        apiClient: ClaudeAPI
+    ) async throws -> [AgenticStep] {
+        // Build a human-readable summary of the full current plan so the reasoning model
+        // has the complete picture — completed steps, the current (diverged) step, and
+        // remaining steps — when deciding what to revise.
+        let planSummaryLines = allSteps.enumerated().map { index, agenticStep in
+            let statusMarker: String
+            if index < currentStepIndex {
+                statusMarker = "[DONE]"
+            } else if index == currentStepIndex {
+                statusMarker = "[CURRENT — DIVERGED]"
+            } else {
+                statusMarker = "[REMAINING]"
+            }
+            return "\(statusMarker) \(index + 1). \(agenticStep.goal.title) (\(agenticStep.executionMode.rawValue)): \(agenticStep.goal.goal)"
+        }.joined(separator: "\n")
+
+        let systemPrompt = """
+        You are the replanning brain for Teachy, a macOS teaching companion. A step in a
+        guided task just went off-track and the plan needs to be revised.
+
+        You will receive:
+        - The original task title
+        - The full current plan (showing which steps are done, which diverged, which remain)
+        - What went wrong (why the current step failed or was off-track)
+        - A fresh screenshot of what the screen looks like RIGHT NOW
+
+        Your job: look at the screen and the divergence, then return a revised list of steps
+        covering the CURRENT STEP ONWARD (do not include already-completed steps). You may:
+        - Insert a prerequisite step before the current one (e.g. "need to log in first")
+        - Replace the current step with a different approach
+        - Reorder remaining steps if that makes more sense now
+        - Keep steps unchanged if they're still correct
+
+        Return ONLY a JSON object (no markdown fences, no explanation):
+        {
+            "steps": [
+                {
+                    "id": "step-1",
+                    "title": "Step Title",
+                    "goal": "Success looks like: ...",
+                    "coachAsk": "Teaching prompt Teachy should use when guiding this step",
+                    "doneWhen": "Natural-language description of what 'done' looks like on screen",
+                    "executionMode": "coach"
+                }
+            ]
+        }
+
+        executionMode rules — same as original planning:
+        - "coach": user does it, Teachy guides. Use for learning moments, risky/irreversible steps.
+        - "act": Teachy executes mechanically (click/navigate/fill) — only purely mechanical setup.
+        - Default to "coach" whenever in doubt. Never mark destructive/financial steps "act".
+
+        Keep the revised plan tight — 2-5 steps from current point onward.
+        """
+
+        let userPrompt = """
+        Task: \(taskTitle)
+
+        Current plan:
+        \(planSummaryLines)
+
+        What went wrong: \(whatWentWrong)
+
+        Please revise the plan from the current step onward.
+        """
+
+        let rawJSONResponse = try await apiClient.generateReasonedPlanJSON(
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            imageJPEGData: screenCapture?.imageData,
+            imageLabel: screenCapture?.label,
+            screenshotWidthInPixels: screenCapture?.screenshotWidthInPixels ?? 0,
+            screenshotHeightInPixels: screenCapture?.screenshotHeightInPixels ?? 0,
+            modelID: OpenRouterModelOption.reasoningPlannerModelID
+        )
+
+        // Strip markdown fences the reasoning model sometimes wraps its output in.
+        let jsonStringForParsing = rawJSONResponse
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"^```(?:json)?\s*"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s*```$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard let responseData = jsonStringForParsing.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+              let stepsJSON = json["steps"] as? [[String: Any]] else {
+            throw NSError(
+                domain: "CoursesManager",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to parse revised steps from reflection model response"]
+            )
+        }
+
+        let revisedCourseLearningGoals = Self.parseCourseLearningGoals(fromGoalsJSON: stepsJSON)
+
+        return revisedCourseLearningGoals.enumerated().map { index, courseLearningGoal in
+            let rawStepJSON = index < stepsJSON.count ? stepsJSON[index] : [:]
+            let rawExecutionMode = rawStepJSON["executionMode"] as? String ?? "coach"
+            let executionMode = GuidedStepExecutionMode(rawValue: rawExecutionMode) ?? .coach
+            return AgenticStep(goal: courseLearningGoal, executionMode: executionMode)
+        }
+    }
+
     /// Screen-grounded, reasoning-model plan generator — Layer 1 upgrade over `generateGuidedTaskSteps`.
     ///
     /// Sends a real screenshot to `google/gemini-2.5-pro` with high reasoning effort so the plan
