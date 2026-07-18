@@ -428,8 +428,49 @@ struct NotchSetupOnboardingView: View {
                 accessibilityPermissionRow
 
                 screenRecordingPermissionRow
+
+                automationSystemSettingRow
             }
         }
+    }
+
+    /// Automation (Apple Events) lets Teachy natively control apps for you — open/quit
+    /// apps, manage browser tabs. macOS grants this per-app on first use (you'll see
+    /// "Teachy wants to control X" prompts), so this is an informational row that just
+    /// points to the Automation settings pane rather than a live granted/not-granted
+    /// toggle like the others.
+    private var automationSystemSettingRow: some View {
+        HStack {
+            HStack(spacing: 8) {
+                Image(systemName: "wand.and.rays")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.warning)
+                    .frame(width: 14)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Automation")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.Colors.textSecondary)
+                    Text("Lets Teachy open apps and manage tabs. Allow each prompt as it appears.")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+            Button(action: {
+                WindowPositionManager.openAutomationSettings()
+            }) {
+                Text("Settings")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(DS.Colors.accent))
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+        }
+        .padding(.vertical, 4)
     }
 
     private var screenRecordingPermissionRow: some View {

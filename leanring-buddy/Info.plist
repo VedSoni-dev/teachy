@@ -28,5 +28,7 @@
 	<string>Teachy needs screen recording access to see your screen and coach you.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Teachy uses speech recognition to transcribe your voice when you talk</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Teachy uses automation to control apps for you — opening and quitting apps, and managing browser tabs — when you ask it to.</string>
 </dict>
 </plist>

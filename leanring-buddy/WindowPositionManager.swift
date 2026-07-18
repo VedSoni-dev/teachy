@@ -68,6 +68,16 @@ class WindowPositionManager {
         NSWorkspace.shared.open(url)
     }
 
+    /// Opens System Settings to the Automation pane. Automation (Apple Events) is
+    /// what lets Teachy natively control other apps — open/quit apps, manage browser
+    /// tabs. Unlike Accessibility/Screen Recording, macOS grants it per-target-app on
+    /// first use, so there's no single global toggle or clean "is granted" check —
+    /// this just takes the user to where the per-app toggles live.
+    static func openAutomationSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     /// Stable install path used by the Xcode "Install Dev App" build phase.
     /// Granting Accessibility here survives rebuilds better than DerivedData paths.
     static func stableDevelopmentInstallURL() -> URL {
