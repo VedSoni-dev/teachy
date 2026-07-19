@@ -218,6 +218,41 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
         toolPolicy ?? .preferPointing
     }
 
+    /// Autonomy-adjusted tool policy — the anti-dependency mechanic in course mode.
+    /// A goal authored `canDoForThem` behaves as `helpWhenStuck` for a proficient
+    /// learner, `helpWhenStuck` as `preferPointing`, and (only at `.handsOff`)
+    /// `preferPointing` as `pointOnly`.
+    ///
+    /// INVARIANT — tighten only: this NEVER loosens the author's policy (it only
+    /// ever makes Teachy less willing to act than the author allowed), and it NEVER
+    /// touches the explicit spoken "do it for me" path — LessonPlayer's `doItForMe`
+    /// action keeps building its prompt from the AUTHOR's `resolvedToolPolicy`, not
+    /// this tightened one, so asking for help always still works.
+    func resolvedToolPolicy(autonomyLevel: CoachAutonomyLevel) -> CourseToolPolicy {
+        let basePolicy = resolvedToolPolicy
+
+        // doForThem / doTogether learners get the author's policy unchanged.
+        guard autonomyLevel >= .watchThem else { return basePolicy }
+
+        // watchThem and above: step the policy one notch more restrictive.
+        var tightenedPolicy: CourseToolPolicy
+        switch basePolicy {
+        case .canDoForThem:
+            tightenedPolicy = .helpWhenStuck
+        case .helpWhenStuck:
+            tightenedPolicy = .preferPointing
+        case .preferPointing, .pointOnly:
+            tightenedPolicy = basePolicy
+        }
+
+        // handsOff: additionally collapse preferPointing down to pointOnly.
+        if autonomyLevel == .handsOff, tightenedPolicy == .preferPointing {
+            tightenedPolicy = .pointOnly
+        }
+
+        return tightenedPolicy
+    }
+
     /// Whether this goal should run a teach-back after vision success.
     var shouldRunTeachBack: Bool {
         teachingContext?.skipTeachBack != true
@@ -273,7 +308,16 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
     }
 
     /// Prompt block for the lesson brief + video notes.
-    func teachingBriefPromptSection(activeTeacherVideoNotes: String?) -> String {
+    ///
+    /// `autonomyLevel` is the anti-dependency hook: when non-nil, the TOOL POLICY
+    /// line uses the autonomy-TIGHTENED policy instead of the author's, and a short
+    /// autonomy guidance line is appended so the coach's tone matches. Nil (the
+    /// default, and what the explicit "do it for me" path passes) keeps the author's
+    /// policy verbatim — tighten only, never loosen, never refuse an explicit ask.
+    func teachingBriefPromptSection(
+        activeTeacherVideoNotes: String?,
+        autonomyLevel: CoachAutonomyLevel? = nil
+    ) -> String {
         var blocks: [String] = []
 
         if let why = teachingContext?.whyItMatters?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -289,7 +333,15 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
         if let examples = teachingContext?.successExamples, !examples.isEmpty {
             blocks.append("Success looks like: \(examples.joined(separator: "; "))")
         }
-        blocks.append(resolvedToolPolicy.coachInstructions)
+        // Tighten-only: when an autonomy level is supplied, use the adjusted policy
+        // (never looser than the author's). The explicit "do it for me" path passes
+        // nil here so it always sees the author's original policy.
+        if let autonomyLevel {
+            blocks.append(resolvedToolPolicy(autonomyLevel: autonomyLevel).coachInstructions)
+            blocks.append(CoachAutonomy.promptGuidance(for: autonomyLevel))
+        } else {
+            blocks.append(resolvedToolPolicy.coachInstructions)
+        }
 
         let notes = ClickyCourse.firstNonEmptyVideoURL(activeTeacherVideoNotes, teacherVideoNotes)
         if let notes {
@@ -1124,7 +1176,11 @@ enum ClickyCourseCatalog {
         /// Temporal continuity phrases from `LearnerTemporalContext.continuityLines` —
         /// tells the coach how long since last session, streak, stale skills, personality
         /// trend. Defaults to empty so all existing callers compile unchanged.
-        temporalContinuityLines: [String] = []
+        temporalContinuityLines: [String] = [],
+        /// Derived autonomy level (anti-dependency mechanic). When non-nil the goal's
+        /// TOOL POLICY line is TIGHTENED to match — never loosened. Nil (the default,
+        /// and what the explicit "do it for me" turn passes) keeps the author's policy.
+        autonomyLevel: CoachAutonomyLevel? = nil
     ) -> String {
         let course = session.course
         let goal = session.currentGoal
@@ -1150,7 +1206,10 @@ enum ClickyCourseCatalog {
             tipsSection = ""
         }
 
-        let lessonBrief = goal.teachingBriefPromptSection(activeTeacherVideoNotes: activeTeacherVideoNotes)
+        let lessonBrief = goal.teachingBriefPromptSection(
+            activeTeacherVideoNotes: activeTeacherVideoNotes,
+            autonomyLevel: autonomyLevel
+        )
         let learnerSection = learnerProfile.promptSection
         let globalLearnerSection: String
         if let globalProfile = globalLearnerProfile, globalProfile != CourseLearnerProfile() {

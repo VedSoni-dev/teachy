@@ -573,7 +573,8 @@ final class CoursesManager: ObservableObject {
         for session: ClickyCourseSession,
         personalFacts: [String] = [],
         humorReceptivity: HumorReceptivity? = nil,
-        temporalContinuityLines: [String] = []
+        temporalContinuityLines: [String] = [],
+        autonomyLevel: CoachAutonomyLevel? = nil
     ) -> String {
         ClickyCourseCatalog.courseCoachSystemPrompt(
             for: session,
@@ -582,7 +583,8 @@ final class CoursesManager: ObservableObject {
             activeTeacherVideoNotes: activeTeacherVideoNotes,
             personalFacts: personalFacts,
             humorReceptivity: humorReceptivity,
-            temporalContinuityLines: temporalContinuityLines
+            temporalContinuityLines: temporalContinuityLines,
+            autonomyLevel: autonomyLevel
         )
     }
 

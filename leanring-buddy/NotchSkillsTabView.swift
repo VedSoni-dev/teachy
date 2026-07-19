@@ -115,10 +115,30 @@ struct NotchSkillsTabView: View {
                         .foregroundColor(DS.Colors.textTertiary)
                 }
             }
+
+            // Autonomy transfer — the point of the product made visible: Teachy does
+            // less for you as you level up. Derived (never stored) from proficiency.
+            autonomyRow(learnerModel: learnerModel)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(tint: DS.Colors.skillsAccent, prominent: true)
+    }
+
+    private func autonomyRow(learnerModel: LearnerModel) -> some View {
+        let autonomyLevel = CoachAutonomy.level(for: learnerModel)
+        return HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "graduationcap.fill")
+                .font(.system(size: 10))
+                .foregroundColor(DS.Colors.skillsAccent)
+                .padding(.top, 1)
+            Text("Coach autonomy: \(autonomyLevel.graduationPhrase)")
+                .font(.system(size: 10))
+                .foregroundColor(DS.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 2)
     }
 
     private func retentionReviewCard(reviews: [RetentionCheck]) -> some View {

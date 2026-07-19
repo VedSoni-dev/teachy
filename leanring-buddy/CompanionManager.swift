@@ -1073,8 +1073,19 @@ final class CompanionManager: ObservableObject {
             // We check for an existing task with steps (not newly-started — the plan-intro
             // turn already narrates step 1; the NEXT turn is when we act on `.act` steps)
             // and specifically for the `.act` execution mode on the current step.
+            //
+            // Anti-dependency mechanic: even when the planner emitted `.act`, a capable
+            // learner (autonomy >= .watchThem — proficient or expert overall) should DRIVE
+            // their own mechanical setup. We treat the step as `.coach` for them — skip the
+            // act path and fall through to coaching. This only TIGHTENS (Teachy acts less);
+            // it never forces an act the planner didn't ask for. novice/competent learners
+            // keep the existing `.act` behavior. An explicit spoken "do it for me" still
+            // reaches the direct-action path (`[DO:]`) unchanged, so help is never refused.
+            let learnerAutonomyLevel = CoachAutonomy.level(for: teachyEngine.getLearnerModel())
+            let capableLearnerDrivesOwnSetup = learnerAutonomyLevel >= .watchThem
             if let currentGuidedStepForActing = self.activeGuidedTask?.currentStep,
                currentGuidedStepForActing.executionMode == .act,
+               !capableLearnerDrivesOwnSetup,
                !self.activeGuidedTask!.steps.isEmpty {
 
                 let actingResult = await executeActStep(
@@ -1706,8 +1717,16 @@ final class CompanionManager: ObservableObject {
         // Let the model know whether this is a coach step (user acts, Teachy guides)
         // or an act step (Teachy will execute mechanically — the model's role is to
         // narrate what's happening and transition, not to instruct the user to do it).
-        if currentStep.executionMode == .act {
+        //
+        // Anti-dependency mechanic: for a capable learner (autonomy >= .watchThem) an
+        // authored `.act` step is DOWNGRADED to coaching in the gate above — Teachy no
+        // longer does it for them. Match the prompt to that so the model coaches the
+        // step rather than narrating an automatic action that won't happen.
+        let learnerDrivesOwnSetup = CoachAutonomy.level(for: teachyEngine.getLearnerModel()) >= .watchThem
+        if currentStep.executionMode == .act && !learnerDrivesOwnSetup {
             lines.append("This step is MECHANICAL SETUP — Teachy is handling it automatically with tools. Your role: acknowledge it, narrate briefly what's happening, then transition naturally to the next coaching point. Do NOT instruct the user to do this step themselves.")
+        } else if currentStep.executionMode == .act && learnerDrivesOwnSetup {
+            lines.append("This learner drives their own setup now — they've leveled up, so coach them through this step instead of doing it for them. Point at the one next move and let them do it; only act if they explicitly ask you to.")
         }
 
         // If the plan was recently revised by the reflection model (Layer 3), let the

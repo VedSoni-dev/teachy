@@ -202,11 +202,34 @@ final class TeachyEngine: ObservableObject {
                 session.portfolioItemsCreated.append(item.id)
             }
 
-            // Update skill levels
+            // Update skill levels. Capture the overall autonomy level BEFORE applying the
+            // updates so we can fire the "training wheels came off" moment only on a real
+            // transition (never every completed goal — that would spam).
+            let autonomyLevelBeforeUpdates = CoachAutonomy.level(for: state.learnerModel)
             let skillUpdates = inferSkillUpdatesForGoal(goalID)
+            var mostRecentlyLeveledSkillName: String?
             for update in skillUpdates {
-            state.learnerModel.noteSkillVerified(update.skillID, level: update.newLevel, reason: update.reason)
-                    outputs.append(.skillLevelChanged(skillID: update.skillID, oldLevel: "", newLevel: update.newLevel.displayName))
+                state.learnerModel.noteSkillVerified(update.skillID, level: update.newLevel, reason: update.reason)
+                outputs.append(.skillLevelChanged(skillID: update.skillID, oldLevel: "", newLevel: update.newLevel.displayName))
+                // Track the skill whose new level itself reaches proficient+ — that's the
+                // one most plausibly responsible for a handoff, so we name it out loud.
+                if update.newLevel >= .proficient {
+                    mostRecentlyLeveledSkillName = state.learnerModel.skillNode(byID: update.skillID)?.skillName ?? update.skillID
+                }
+            }
+
+            // Anti-dependency "say it out loud" moment: fire ONLY when the OVERALL autonomy
+            // level actually stepped up (before < after) AND landed at watchThem or handsOff
+            // (proficient / expert). Guarding on the transition means it fires once per
+            // graduation, not on every goal that nudges a skill.
+            let autonomyLevelAfterUpdates = CoachAutonomy.level(for: state.learnerModel)
+            if autonomyLevelAfterUpdates > autonomyLevelBeforeUpdates,
+               autonomyLevelAfterUpdates >= .watchThem {
+                let leveledSkillPhrase = mostRecentlyLeveledSkillName.map { " your \($0)" } ?? " this"
+                outputs.append(.nudge(
+                    text: "You've leveled past me doing\(leveledSkillPhrase) — you're driving that yourself now.",
+                    reason: "autonomy-transfer"
+                ))
             }
 
             state.activeSession = session

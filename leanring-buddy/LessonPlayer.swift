@@ -408,11 +408,14 @@ final class LessonPlayer: ObservableObject {
                 Use tools — navigate, click, type, or run terminal commands as needed (respect TOOL POLICY). \
                 Then point at the result and explain in one short spoken sentence what you did so they still learn.
                 """
+                // Explicit "do it for me" — pass the AUTHOR's policy (no autonomy
+                // tightening) so a capable learner asking for help is never refused.
                 _ = await runCoachAsk(
                     session: session,
                     ask: doItAsk,
                     host: host,
-                    allowActions: true
+                    allowActions: true,
+                    applyAutonomyTightening: false
                 )
                 coursesManager.rememberAcrossGoals("did an action for them on: \(goal.title)")
                 continue
@@ -565,7 +568,12 @@ final class LessonPlayer: ObservableObject {
         session: ClickyCourseSession,
         ask: String,
         host: CompanionManager,
-        allowActions: Bool
+        allowActions: Bool,
+        // Anti-dependency mechanic: when true, the coach system prompt uses the
+        // autonomy-TIGHTENED tool policy (Teachy volunteers to act less as the
+        // learner levels up). The explicit "do it for me" turn passes false so its
+        // prompt keeps the AUTHOR's policy — an explicit ask for help always works.
+        applyAutonomyTightening: Bool = true
     ) async -> Bool {
         setPhase(.coaching)
         coursesManager.setCourseInteractionRunning(true)
@@ -582,11 +590,19 @@ final class LessonPlayer: ObservableObject {
                 model: relationshipMemory,
                 daysSinceLastSession: host.teachyEngine.daysSinceLastSession
             )
+            // Derive the autonomy level from the durable learner model (all domains).
+            // Only pass it into the prompt when this turn should tighten — the explicit
+            // "do it for me" turn passes `applyAutonomyTightening: false`, so it sees the
+            // author's policy and can always act.
+            let autonomyLevelForThisTurn: CoachAutonomyLevel? = applyAutonomyTightening
+                ? CoachAutonomy.level(for: relationshipMemory)
+                : nil
             let systemPrompt = coursesManager.buildCourseSystemPrompt(
                 for: session,
                 personalFacts: relationshipMemory.personalFacts,
                 humorReceptivity: relationshipMemory.humorReceptivity,
-                temporalContinuityLines: temporalContinuityLines
+                temporalContinuityLines: temporalContinuityLines,
+                autonomyLevel: autonomyLevelForThisTurn
             )
             let conversationHistory = coursesManager.tutorConversationHistory(for: session)
             let turn = try await host.runCourseTutorTurn(
