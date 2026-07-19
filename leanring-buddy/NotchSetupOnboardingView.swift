@@ -557,6 +557,14 @@ struct NotchSetupOnboardingView: View {
                     Text("System setting — must be ON for voice input.")
                         .font(.system(size: 10))
                         .foregroundColor(DS.Colors.textTertiary)
+                    // Enabling Dictation also arms macOS's own dictation keyboard shortcut.
+                    // If that shortcut involves the Control key (e.g. "Press Control twice"),
+                    // it collides with Teachy's ctrl+option push-to-talk and Apple's dictation
+                    // popover fires instead — steer users to the globe-key shortcut.
+                    Text("In the same settings, set Dictation's shortcut to \u{1F310} (globe) — if it's set to Control, it'll pop up while you talk to Teachy.")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.warningText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer()

@@ -121,8 +121,21 @@ final class ControlAppTool: BackgroundAgentTool {
     // MARK: Quit
 
     private func quitApplication(named appName: String) async throws -> String {
-        // Use AppleScript `quit` so the app can present any unsaved-changes dialogs —
-        // this matches what the user expects ("gracefully quit", not force-kill).
+        // Prefer NSRunningApplication.terminate() — it's the same graceful quit as
+        // Cmd-Q (unsaved-changes dialogs still appear) but goes through AppKit's
+        // process APIs, NOT scriptable Apple Events, so it needs no Automation
+        // permission and never triggers a "Teachy wants to control X" prompt.
+        if let runningApp = findRunningApplication(named: appName) {
+            let quitRequestSent = runningApp.terminate()
+            if quitRequestSent {
+                return "Quit \(runningApp.localizedName ?? appName)"
+            }
+            // terminate() refused (rare) — fall through to the AppleScript path below.
+        } else {
+            return "App \"\(appName)\" is not currently running — nothing to quit."
+        }
+
+        // AppleScript fallback — requires the Automation permission for the target app.
         let escapedAppName = appName.replacingOccurrences(of: "\"", with: "\\\"")
         let quitScript = "tell application \"\(escapedAppName)\" to quit"
 
@@ -131,9 +144,11 @@ final class ControlAppTool: BackgroundAgentTool {
             var errorInfo: NSDictionary?
             appleScript?.executeAndReturnError(&errorInfo)
             if let errorInfo {
-                let message = errorInfo[NSAppleScript.errorMessage] as? String ?? "AppleScript quit failed"
-                throw NSError(domain: "ControlAppTool", code: -4,
-                              userInfo: [NSLocalizedDescriptionKey: "Could not quit \(appName): \(message)"])
+                throw NativeControlPermissionSupport.actionableError(
+                    from: errorInfo,
+                    domain: "ControlAppTool",
+                    fallbackDescription: "Could not quit \(appName)"
+                )
             }
             return "Quit \(appName)"
         }.value
@@ -282,9 +297,11 @@ final class ControlBrowserTool: BackgroundAgentTool {
             var errorInfo: NSDictionary?
             appleScript?.executeAndReturnError(&errorInfo)
             if let errorInfo {
-                let errorMessage = errorInfo[NSAppleScript.errorMessage] as? String ?? "AppleScript failed"
-                throw NSError(domain: "ControlBrowserTool", code: -3,
-                              userInfo: [NSLocalizedDescriptionKey: "Browser control failed in \(browserDisplayName): \(errorMessage)"])
+                throw NativeControlPermissionSupport.actionableError(
+                    from: errorInfo,
+                    domain: "ControlBrowserTool",
+                    fallbackDescription: "Browser control failed in \(browserDisplayName)"
+                )
             }
             return actionDescription
         }.value
@@ -308,6 +325,40 @@ final class ControlBrowserTool: BackgroundAgentTool {
         default:
             return "Browser action completed in \(browserName)"
         }
+    }
+}
+
+// MARK: - Permission-error mapping
+
+/// Maps raw NSAppleScript failures to messages the agent can actually act on and
+/// speak. The critical case is -1743 (errAEEventNotPermitted): macOS blocked the
+/// Apple Event because the user hasn't approved Teachy under Automation — the raw
+/// error text ("Not authorized to send Apple events") is useless spoken aloud, so
+/// we return concrete guidance instead. -10004 is System Events' privilege
+/// violation (same root cause, Accessibility/Automation not granted).
+enum NativeControlPermissionSupport {
+    static func actionableError(
+        from errorInfo: NSDictionary,
+        domain: String,
+        fallbackDescription: String
+    ) -> NSError {
+        let errorNumber = errorInfo[NSAppleScript.errorNumber] as? Int ?? 0
+        let rawMessage = errorInfo[NSAppleScript.errorMessage] as? String ?? "AppleScript failed"
+
+        if errorNumber == -1743 || errorNumber == -10004 {
+            return NSError(domain: domain, code: errorNumber, userInfo: [
+                NSLocalizedDescriptionKey: """
+                macOS blocked this — Teachy needs the Automation permission for that app. \
+                Tell the user: look for a "Teachy wants to control..." prompt and click OK, \
+                or open System Settings > Privacy & Security > Automation and enable the \
+                toggles under Teachy, then ask me again.
+                """
+            ])
+        }
+
+        return NSError(domain: domain, code: errorNumber, userInfo: [
+            NSLocalizedDescriptionKey: "\(fallbackDescription): \(rawMessage)"
+        ])
     }
 }
 
