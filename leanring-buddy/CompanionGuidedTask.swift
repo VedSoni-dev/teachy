@@ -156,7 +156,8 @@ enum CompanionActionTagParser {
 /// instead of duplicating.
 enum CompanionProjectTagParser {
     static func extractTitleAndStrip(from text: String) -> (cleanedText: String, title: String?) {
-        extractLastTagAndStrip(named: "PROJECT", from: text)
+        let (cleanedText, value) = extractLastTagAndStrip(named: "PROJECT", from: text)
+        return (cleanedText, value)
     }
 }
 
@@ -164,7 +165,8 @@ enum CompanionProjectTagParser {
 /// artifact just went live. Ships the linked project (status, URL, portfolio capture).
 enum CompanionShippedTagParser {
     static func extractURLAndStrip(from text: String) -> (cleanedText: String, url: String?) {
-        extractLastTagAndStrip(named: "SHIPPED", from: text)
+        let (cleanedText, value) = extractLastTagAndStrip(named: "SHIPPED", from: text)
+        return (cleanedText, value)
     }
 }
 
