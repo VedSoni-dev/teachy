@@ -11,23 +11,45 @@ struct OpenRouterModelOption: Identifiable, Equatable {
     let subtitle: String
     let supportsVision: Bool
 
-    static let defaultModelID = "google/gemini-2.5-flash"
+    /// Key-aware default: bring-your-own-key users (direct OpenRouter API, their own
+    /// bill) get the smartest tutor; free worker-path users stay on the free-tier
+    /// default so Sonnet-class calls never land on the developer's worker key.
+    static var defaultModelID: String {
+        TeachyAPIKeyStore.isConfigured ? "anthropic/claude-sonnet-4.6" : "google/gemini-2.5-flash"
+    }
+
     static let visionFallbackModelID = "google/gemini-2.5-flash"
 
     /// Reasoning + vision model used for screen-grounded guided-task planning.
-    /// Must start with "google/gemini", "google/gemma", or "qwen/qwen3-vl" so the
-    /// worker's model-routing allowlist (worker/model-routing.mjs + worker/src/model-routing.ts
-    /// VISION_MODEL_PREFIXES) passes the model through untouched when a screenshot is attached.
-    /// Swapping to a model outside those prefixes would require also allowlisting its prefix
-    /// in both routing files — do not change without updating those files.
-    static let reasoningPlannerModelID = "google/gemini-2.5-pro"
+    /// Key-aware like `defaultModelID`. The free-tier value must start with
+    /// "google/gemini", "google/gemma", or "qwen/qwen3-vl" so the worker's
+    /// model-routing allowlist (worker/model-routing.mjs + worker/src/model-routing.ts
+    /// VISION_MODEL_PREFIXES) passes it through untouched when a screenshot is attached
+    /// ("anthropic/" and "openai/" are also allowlisted there now; direct-key users
+    /// bypass the worker entirely regardless).
+    static var reasoningPlannerModelID: String {
+        TeachyAPIKeyStore.isConfigured ? "anthropic/claude-sonnet-4.6" : "google/gemini-2.5-pro"
+    }
 
     /// One list for the whole app. Pick a model; routing handles screen images when needed.
+    /// models[0] stays the free-tier anchor — `modelOption(forModelID:)` falls back to it.
     static let models: [OpenRouterModelOption] = [
         OpenRouterModelOption(
             id: "google/gemini-2.5-flash",
             displayName: "Gemini 2.5 Flash",
-            subtitle: "Vision + tools · recommended",
+            subtitle: "Vision + tools · free default",
+            supportsVision: true
+        ),
+        OpenRouterModelOption(
+            id: "anthropic/claude-sonnet-4.6",
+            displayName: "Claude Sonnet 4.6",
+            subtitle: "Smartest tutor · needs your own key",
+            supportsVision: true
+        ),
+        OpenRouterModelOption(
+            id: "anthropic/claude-haiku-4.5",
+            displayName: "Claude Haiku 4.5",
+            subtitle: "Fast + sharp · needs your own key",
             supportsVision: true
         ),
         OpenRouterModelOption(

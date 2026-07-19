@@ -53,7 +53,7 @@ export function providerTextModel(provider?: string): string {
 const TEXT_ONLY_MODEL_PREFIXES = ['deepseek/'];
 
 /** Models known to accept image_url blocks on OpenRouter. */
-const VISION_MODEL_PREFIXES = ['google/gemini', 'google/gemma', 'qwen/qwen3-vl'];
+const VISION_MODEL_PREFIXES = ['google/gemini', 'google/gemma', 'qwen/qwen3-vl', 'anthropic/', 'openai/'];
 
 export function supportsVisionOnOpenRouter(modelID?: string): boolean {
   if (!modelID) return false;

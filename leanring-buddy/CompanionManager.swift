@@ -41,11 +41,24 @@ enum ClickyCursorColor: String, CaseIterable, Identifiable {
 }
 
 private func companionManagerInitialModelID() -> String {
+    // One-time upgrade for bring-your-own-key users: a stored "google/gemini-2.5-flash"
+    // is indistinguishable from "never touched the picker" (it was the old default), so
+    // migrate it once to the key-aware default. The flag makes an explicit re-pick of
+    // Flash stick afterward instead of re-migrating on every launch.
+    let claudeDefaultMigrationFlagKey = "teachy_model_default_migrated_to_claude"
+
     for userDefaultsKey in ["selectedModel", "selectedAgentModel", "selectedChatModel"] {
         if let storedModelID = UserDefaults.standard.string(forKey: userDefaultsKey) {
-            let sanitizedModelID = OpenRouterModelOption.sanitizedModelID(storedModelID)
+            var sanitizedModelID = OpenRouterModelOption.sanitizedModelID(storedModelID)
             if sanitizedModelID != storedModelID {
                 print("🔄 Reset unknown model \(storedModelID) → \(sanitizedModelID)")
+            }
+            if !UserDefaults.standard.bool(forKey: claudeDefaultMigrationFlagKey),
+               TeachyAPIKeyStore.isConfigured,
+               sanitizedModelID == "google/gemini-2.5-flash" {
+                sanitizedModelID = OpenRouterModelOption.defaultModelID
+                UserDefaults.standard.set(true, forKey: claudeDefaultMigrationFlagKey)
+                print("🔄 Upgraded default tutor model → \(sanitizedModelID)")
             }
             UserDefaults.standard.set(sanitizedModelID, forKey: "selectedModel")
             return sanitizedModelID
@@ -53,6 +66,7 @@ private func companionManagerInitialModelID() -> String {
     }
     let defaultModelID = OpenRouterModelOption.defaultModelID
     UserDefaults.standard.set(defaultModelID, forKey: "selectedModel")
+    UserDefaults.standard.set(true, forKey: claudeDefaultMigrationFlagKey)
     return defaultModelID
 }
 
