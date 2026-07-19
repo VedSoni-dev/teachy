@@ -202,9 +202,26 @@ struct NotchPortfolioTabView: View {
 
                 Spacer()
 
+                // Live artifact link — populated by shipped projects (v2).
+                if let artifactURL = item.artifactURL, let liveURL = URL(string: artifactURL) {
+                    Button {
+                        NSWorkspace.shared.open(liveURL)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("Live")
+                                .font(.system(size: 9, weight: .semibold))
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .foregroundColor(DS.Colors.success)
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                }
+
                 if item.shareable {
                     Button {
-                        // TODO: Share item
+                        copyShareText(for: item)
                     } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "square.and.arrow.up")
@@ -221,5 +238,26 @@ struct NotchPortfolioTabView: View {
         }
         .padding(12)
         .glassCard(cornerRadius: 12, tint: DS.Colors.portfolioAccent)
+    }
+
+    /// Puts a ready-to-send brag on the clipboard. The live artifact URL is the
+    /// star when there is one; the Teachy share URL rides along as attribution.
+    private func copyShareText(for item: PortfolioItem) {
+        let shareCard = companionManager.teachyEngine.portfolioManager.generateShareCard(
+            for: item,
+            learnerName: "",
+            courseTitle: item.courseID == "project" ? "a Teachy project" : item.courseID
+        )
+        var shareLines = ["I built this: \(item.title)"]
+        if let artifactURL = item.artifactURL, !artifactURL.isEmpty {
+            shareLines.append(artifactURL)
+        }
+        if let shareCard {
+            shareLines.append("(made with Teachy — \(shareCard.shareURL))")
+        }
+        let shareText = shareLines.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(shareText, forType: .string)
+        print("📋 Share text copied for portfolio item: \(item.title)")
     }
 }

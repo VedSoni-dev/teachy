@@ -28,6 +28,7 @@ struct NotchCoursesTabView: View {
                 if let celebration = companionManager.coursesManager.completionCelebration {
                     courseCompletionCard(celebration)
                 }
+                projectsSection
                 coursesCatalogIntroduction
                 if let continueCourse = companionManager.coursesManager.continueCourse {
                     continueLearningCard(course: continueCourse)
@@ -54,6 +55,109 @@ struct NotchCoursesTabView: View {
         .onAppear {
             companionManager.refreshBackendReachability()
         }
+    }
+
+    /// Durable build arcs (v2) — the things they're actually making, above the
+    /// catalog because a build in progress beats browsing for a new one. Shipped
+    /// projects render with their live URL as a small trophy row.
+    @ViewBuilder
+    private var projectsSection: some View {
+        let engineProjects = companionManager.teachyEngine.state.projects
+        let inProgressProjects = engineProjects.filter { $0.status == .active || $0.status == .paused }
+        let shippedProjects = engineProjects.filter { $0.status == .shipped }
+
+        if !inProgressProjects.isEmpty || !shippedProjects.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("YOUR PROJECTS")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .kerning(0.8)
+
+                ForEach(inProgressProjects) { project in
+                    projectCard(project: project)
+                }
+                ForEach(shippedProjects.prefix(3)) { project in
+                    shippedProjectRow(project: project)
+                }
+            }
+        }
+    }
+
+    private func projectCard(project: TeachyProject) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "hammer.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(DS.Colors.learnAccent)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(project.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .lineLimit(1)
+                    Text(project.steps.isEmpty
+                        ? "Planning · last worked \(LearnerTemporalContext.relativeTimeLabel(for: project.lastWorkedAt))"
+                        : "Step \(min(project.currentStepIndex + 1, project.steps.count)) of \(project.steps.count) · last worked \(LearnerTemporalContext.relativeTimeLabel(for: project.lastWorkedAt))")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    companionManager.submitSyntheticCompanionRequest(
+                        "Let's keep going on my project \"\(project.title)\" — pick up where we left off."
+                    )
+                    notchManager.collapse()
+                } label: {
+                    Text("Resume")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(DS.Colors.learnAccent))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard(tint: DS.Colors.learnAccent, prominent: true)
+    }
+
+    private func shippedProjectRow(project: TeachyProject) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 12))
+                .foregroundColor(DS.Colors.success)
+
+            Text(project.title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DS.Colors.textSecondary)
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+
+            if let deployedURL = project.deployedURL, let url = URL(string: deployedURL) {
+                Button {
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text("Live")
+                            .font(.system(size: 10, weight: .semibold))
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundColor(DS.Colors.success)
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .glassCard(cornerRadius: 10, tint: DS.Colors.success)
     }
 
     private func courseCompletionCard(_ celebration: CourseCompletionCelebration) -> some View {

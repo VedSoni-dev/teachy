@@ -925,6 +925,16 @@ final class CompanionManager: ObservableObject {
     /// Routes voice input to an active course (unchanged teaching path) or quick screen Q&A.
     /// Free-form background agent / automation triggers are demoted — Mac tools still run
     /// inside courses via LessonPlayer (“Do it for me”) exactly as before.
+    /// Feeds a synthesized user request into the normal voice-routing flow — exactly
+    /// as if the user had spoken it (course routing, guided tasks, capture, TTS, all
+    /// of it). Used by UI affordances like the project Resume button, and by
+    /// onboarding seeds that start a first build.
+    func submitSyntheticCompanionRequest(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        routeVoiceTranscript(trimmed)
+    }
+
     private func routeVoiceTranscript(_ transcript: String) {
         if coursesManager.isCourseActive {
             // Defensive: a formal Course is active, so the ephemeral companion guided
@@ -985,6 +995,11 @@ final class CompanionManager: ObservableObject {
             // much later — this is a backstop, not the primary exit mechanism (that's
             // the model simply not tagging [GUIDE:...] anymore, handled below).
             if let activeGuidedTask, Date().timeIntervalSince(activeGuidedTask.lastActivityAt) > 2700 {
+                // A linked project pauses instead of vanishing — the ephemeral task
+                // dies, the work waits.
+                if let staleProjectID = activeGuidedTask.projectID {
+                    teachyEngine.pauseProject(withID: staleProjectID)
+                }
                 self.activeGuidedTask = nil
             }
 
@@ -1053,6 +1068,7 @@ final class CompanionManager: ObservableObject {
 
                 if verificationResult.status == .pass {
                     self.activeGuidedTask?.currentStepIndex += 1
+                    syncGuidedTaskProgressToProject(verifiedStepTitle: currentGuidedStep.goal.title)
                 } else {
                     // Layer 3: coach-path divergence. If the verification was off-track
                     // (user hit an obstacle, wrong screen, unexpected state), call the
@@ -1133,14 +1149,44 @@ final class CompanionManager: ObservableObject {
                 // effect like REMEMBER, not a fourth exclusive lane. Set BEFORE any
                 // [DO:] executes so "open ChatGPT + prompt on clipboard" arrives ready
                 // to paste the moment the tool opens.
-                let (spokenText, clipboardTextThisTurn) = CompanionClipboardTagParser.extractClipboardTextAndStrip(from: spokenTextWithoutActionTags)
+                let (spokenTextAfterClipboard, clipboardTextThisTurn) = CompanionClipboardTagParser.extractClipboardTextAndStrip(from: spokenTextWithoutActionTags)
                 if let clipboardTextThisTurn, !clipboardTextThisTurn.isEmpty {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(clipboardTextThisTurn, forType: .string)
                     print("📋 Concierge prompt placed on clipboard (\(clipboardTextThisTurn.count) chars)")
                 }
 
-                let lifecycleOutcome = applyGuidedTaskLifecycle(guideTaskTitleThisTurn: guideTaskTitleThisTurn)
+                // Durable-project tags (v2): [PROJECT: title] marks a build-shaped guided
+                // task; [SHIPPED: url] marks the artifact going live.
+                let (spokenTextAfterProject, projectTitleThisTurn) = CompanionProjectTagParser.extractTitleAndStrip(from: spokenTextAfterClipboard)
+                let (spokenText, shippedURLThisTurn) = CompanionShippedTagParser.extractURLAndStrip(from: spokenTextAfterProject)
+
+                // Shipping is handled BEFORE the lifecycle so the projectID isn't lost
+                // when the model (correctly) stops tagging [GUIDE:] on its wrap-up turn.
+                // A shipped turn also skips the lifecycle entirely — a stray [GUIDE:] on
+                // the same turn must not restart a task for a project that just finished.
+                let lifecycleOutcome: GuidedTaskLifecycleOutcome
+                if let shippedURLThisTurn,
+                   let taskBeingShipped = activeGuidedTask,
+                   let shippedProjectID = taskBeingShipped.projectID {
+                    if let shippedProject = teachyEngine.shipProject(
+                        withID: shippedProjectID,
+                        deployedURL: shippedURLThisTurn.isEmpty ? nil : shippedURLThisTurn
+                    ) {
+                        let liveSuffix = shippedProject.deployedURL.map { " — live at \($0)" } ?? ""
+                        captureEngineOutputs([.celebration(
+                            messageText: "They SHIPPED \(shippedProject.title)\(liveSuffix). A real thing they built is on the internet."
+                        )])
+                        print("🚀 Project shipped: \(shippedProject.title)\(liveSuffix)")
+                    }
+                    activeGuidedTask = nil
+                    lifecycleOutcome = .ended
+                } else {
+                    lifecycleOutcome = applyGuidedTaskLifecycle(
+                        guideTaskTitleThisTurn: guideTaskTitleThisTurn,
+                        projectTitleThisTurn: projectTitleThisTurn
+                    )
+                }
 
                 // Phase L — one-shot native-action fast lane.
                 // Conditions for taking it: a [DO:] action was tagged AND no guided task is
@@ -1269,12 +1315,20 @@ final class CompanionManager: ObservableObject {
     /// coding agent" (explicit user direction) means the caller must synchronously generate
     /// and present the plan on `.newlyStarted` via `presentGuidedTaskPlan` before this turn's
     /// answer is finalized, rather than firing it off in the background after the fact.
-    private func applyGuidedTaskLifecycle(guideTaskTitleThisTurn: String?) -> GuidedTaskLifecycleOutcome {
+    private func applyGuidedTaskLifecycle(
+        guideTaskTitleThisTurn: String?,
+        projectTitleThisTurn: String? = nil
+    ) -> GuidedTaskLifecycleOutcome {
         guard let guideTaskTitleThisTurn, !guideTaskTitleThisTurn.isEmpty else {
             // Tag absent this turn — a task that was active has naturally concluded
-            // (wrapped up, or the conversation moved on). No lingering state.
-            if activeGuidedTask != nil {
-                print("🧭 Guided task ended: \(activeGuidedTask?.title ?? "")")
+            // (wrapped up, or the conversation moved on). No lingering state — but a
+            // linked project isn't done just because today's session is: pause it so
+            // the work waits instead of vanishing.
+            if let endingTask = activeGuidedTask {
+                if let projectID = endingTask.projectID {
+                    teachyEngine.pauseProject(withID: projectID)
+                }
+                print("🧭 Guided task ended: \(endingTask.title)")
                 activeGuidedTask = nil
                 return .ended
             }
@@ -1286,6 +1340,11 @@ final class CompanionManager: ObservableObject {
             // (it's used as the race guard in `presentGuidedTaskPlan`) rather than
             // overwriting it with whatever the model tagged this turn.
             activeGuidedTask?.lastActivityAt = Date()
+            // Late [PROJECT:] tag on an ongoing task (the model realized mid-flow this
+            // is a durable build) — attach now rather than losing the signal.
+            if activeGuidedTask?.projectID == nil, let projectTitleThisTurn, !projectTitleThisTurn.isEmpty {
+                attachProjectToActiveGuidedTask(projectTitle: projectTitleThisTurn, goalDescription: guideTaskTitleThisTurn)
+            }
             return .continuing
         }
 
@@ -1295,6 +1354,13 @@ final class CompanionManager: ObservableObject {
         // the plan instead of guessing at steps that don't exist yet.
         activeGuidedTask = CompanionGuidedTask(title: guideTaskTitleThisTurn)
         print("🧭 Guided task started: \(guideTaskTitleThisTurn)")
+
+        // Durable build? Create-or-resume the project. Resuming a project that already
+        // has steps seeds them straight into the task — `presentGuidedTaskPlan` then
+        // skips regeneration and picks up at the saved step instead of starting over.
+        if let projectTitleThisTurn, !projectTitleThisTurn.isEmpty {
+            attachProjectToActiveGuidedTask(projectTitle: projectTitleThisTurn, goalDescription: guideTaskTitleThisTurn)
+        }
 
         // Recommended-tool registry: if this task's title matches a known go-to tool
         // (e.g. "set up a phone agent" → Vapi), remember it on the task so ongoing
@@ -1308,6 +1374,38 @@ final class CompanionManager: ObservableObject {
         }
 
         return .newlyStarted
+    }
+
+    /// Creates-or-resumes the durable project for a build-shaped guided task and
+    /// links it. A resumed project with saved steps seeds them into the task
+    /// (wrapped as `.coach` — execution modes aren't persisted) along with the
+    /// saved position, so multi-day builds pick up where they left off.
+    private func attachProjectToActiveGuidedTask(projectTitle: String, goalDescription: String) {
+        let project = teachyEngine.createOrResumeProject(title: projectTitle, goalDescription: goalDescription)
+        activeGuidedTask?.projectID = project.id
+        if !project.steps.isEmpty, activeGuidedTask?.steps.isEmpty == true {
+            activeGuidedTask?.steps = project.steps.map { AgenticStep(goal: $0, executionMode: .coach) }
+            activeGuidedTask?.currentStepIndex = min(project.currentStepIndex, max(project.steps.count - 1, 0))
+            print("🧱 Resumed project '\(project.title)' at step \(project.currentStepIndex + 1)/\(project.steps.count)")
+        } else {
+            print("🧱 Project linked: \(project.title)")
+        }
+    }
+
+    /// Writes the guided task's progress through to its linked project (if any) —
+    /// step position, journal entry for the just-verified step, and reactivation.
+    private func syncGuidedTaskProgressToProject(verifiedStepTitle: String?) {
+        guard let task = activeGuidedTask,
+              let projectID = task.projectID,
+              var project = teachyEngine.project(withID: projectID) else { return }
+        project.currentStepIndex = task.currentStepIndex
+        project.status = .active
+        if let verifiedStepTitle, !verifiedStepTitle.isEmpty {
+            project.appendJournalEntry("Done: \(verifiedStepTitle)")
+        } else {
+            project.lastWorkedAt = Date()
+        }
+        teachyEngine.upsertProject(project)
     }
 
     /// Generates the guided-task's step plan SYNCHRONOUSLY — accepting added latency
@@ -1331,40 +1429,63 @@ final class CompanionManager: ObservableObject {
         guard let task = activeGuidedTask else { return (fallbackSpokenText, fallbackFullResponseText) }
 
         do {
-            // Try the screen-grounded reasoning planner first (Layer 1 upgrade).
-            // On any failure, fall through to the fast blind generator below so the
-            // guided task always gets steps rather than silently dying.
-            let generatedSteps: [AgenticStep]
-            do {
-                generatedSteps = try await coursesManager.generateAgenticPlan(
-                    taskDescription: task.title,
-                    screenCapture: cursorScreenCapture,
-                    learnerContext: nil,
-                    groundingKnowledge: task.recommendedTool?.knowledgeBrief,
-                    apiClient: claudeAPI
-                )
-                print("🧭 Reasoning-planned agentic steps ready (\(generatedSteps.count)): \(task.title)")
-            } catch {
-                // Reasoning model failed (slow, rate-limited, model unavailable, etc.) —
-                // fall back to the fast blind generator, wrapping each `CourseLearningGoal`
-                // in an `AgenticStep` with the default `.coach` mode.
-                print("⚠️ Reasoning planner failed (\(error)), falling back to fast generator: \(task.title)")
-                let fallbackCourseLearningGoals = try await coursesManager.generateGuidedTaskSteps(
-                    taskDescription: task.title,
-                    apiClient: claudeAPI,
-                    groundingKnowledge: task.recommendedTool?.knowledgeBrief
-                )
-                generatedSteps = fallbackCourseLearningGoals.map { courseLearningGoal in
-                    AgenticStep(goal: courseLearningGoal, executionMode: .coach)
+            // A resumed project seeds its saved steps into the task before this runs
+            // (see `attachProjectToActiveGuidedTask`) — skip regeneration entirely and
+            // present a "picking back up" intro at the saved position instead of
+            // planning the whole build from scratch again.
+            let isResumedProject = !task.steps.isEmpty
+            let plannedSteps: [AgenticStep]
+
+            if isResumedProject {
+                plannedSteps = task.steps
+                print("🧭 Resuming with \(plannedSteps.count) saved project steps at step \(task.currentStepIndex + 1): \(task.title)")
+            } else {
+                // Try the screen-grounded reasoning planner first (Layer 1 upgrade).
+                // On any failure, fall through to the fast blind generator below so the
+                // guided task always gets steps rather than silently dying.
+                let generatedSteps: [AgenticStep]
+                do {
+                    generatedSteps = try await coursesManager.generateAgenticPlan(
+                        taskDescription: task.title,
+                        screenCapture: cursorScreenCapture,
+                        learnerContext: nil,
+                        groundingKnowledge: task.recommendedTool?.knowledgeBrief,
+                        apiClient: claudeAPI
+                    )
+                    print("🧭 Reasoning-planned agentic steps ready (\(generatedSteps.count)): \(task.title)")
+                } catch {
+                    // Reasoning model failed (slow, rate-limited, model unavailable, etc.) —
+                    // fall back to the fast blind generator, wrapping each `CourseLearningGoal`
+                    // in an `AgenticStep` with the default `.coach` mode.
+                    print("⚠️ Reasoning planner failed (\(error)), falling back to fast generator: \(task.title)")
+                    let fallbackCourseLearningGoals = try await coursesManager.generateGuidedTaskSteps(
+                        taskDescription: task.title,
+                        apiClient: claudeAPI,
+                        groundingKnowledge: task.recommendedTool?.knowledgeBrief
+                    )
+                    generatedSteps = fallbackCourseLearningGoals.map { courseLearningGoal in
+                        AgenticStep(goal: courseLearningGoal, executionMode: .coach)
+                    }
+                    print("🧭 Fast-fallback steps ready (\(generatedSteps.count)): \(task.title)")
                 }
-                print("🧭 Fast-fallback steps ready (\(generatedSteps.count)): \(task.title)")
+                plannedSteps = generatedSteps
             }
 
             // Race guard: task may have ended / been superseded / a Course may have
             // started while generation was in flight.
             guard activeGuidedTask?.title == task.title else { return (fallbackSpokenText, fallbackFullResponseText) }
-            activeGuidedTask?.steps = generatedSteps
-            print("🧭 Guided task steps ready (\(generatedSteps.count)): \(task.title)")
+            if !isResumedProject {
+                activeGuidedTask?.steps = plannedSteps
+                // Fresh plan for a durable project — persist the steps so the build
+                // survives relaunches and can resume at the right position later.
+                if let projectID = task.projectID,
+                   var linkedProject = teachyEngine.project(withID: projectID) {
+                    linkedProject.steps = plannedSteps.map(\.goal)
+                    linkedProject.currentStepIndex = 0
+                    teachyEngine.upsertProject(linkedProject)
+                }
+            }
+            print("🧭 Guided task steps ready (\(plannedSteps.count)): \(task.title)")
 
             // The tool's site was just auto-opened — the images captured at turn start
             // predate it, so the coach literally couldn't see the page it opened (the
@@ -1385,7 +1506,7 @@ final class CompanionManager: ObservableObject {
 
             // Reach through `.goal` (the nested `CourseLearningGoal`) to build the
             // plan-intro summary — each `AgenticStep` wraps a `CourseLearningGoal`.
-            let stepSummary = generatedSteps.enumerated()
+            let stepSummary = plannedSteps.enumerated()
                 .map { "\($0.offset + 1). \($0.element.goal.title) — \($0.element.goal.goal)" }
                 .joined(separator: "; ")
 
@@ -1399,15 +1520,29 @@ final class CompanionManager: ObservableObject {
             Keep guiding turn after turn until this is done; never open a door and just stand there.
             """
 
-            let planIntroPrompt = """
-            You just figured out the plan for "\(task.title)": \(stepSummary).
+            let planIntroPrompt: String
+            if isResumedProject {
+                let resumeStepNumber = min(task.currentStepIndex + 1, plannedSteps.count)
+                planIntroPrompt = """
+                You're picking the project "\(task.title)" back up with them — the saved plan: \(stepSummary). \
+                They're at step \(resumeStepNumber) of \(plannedSteps.count).
 
-            Give a short, warm, SPOKEN introduction of this plan in your own natural voice — not a
-            bullet list, just talk through it like you would out loud ("first we'll..., then...").
-            Then transition straight into coaching them on step 1. Only say "here"/"right here" if
-            you're including a [POINT:...] tag with it — if you can't confidently point at something
-            specific yet, describe it in words instead. Tag [GUIDE: \(task.title)] to keep guidance going.\(toolOpenCoachingAddendum)
-            """
+                Give a short, warm SPOKEN welcome-back in your own voice — remind them in one breath where
+                you both left off, then coach the current step against what's actually on screen right now.
+                Only say "here"/"right here" if you're including a [POINT:...] tag with it. Tag
+                [GUIDE: \(task.title)] to keep guidance going.\(toolOpenCoachingAddendum)
+                """
+            } else {
+                planIntroPrompt = """
+                You just figured out the plan for "\(task.title)": \(stepSummary).
+
+                Give a short, warm, SPOKEN introduction of this plan in your own natural voice — not a
+                bullet list, just talk through it like you would out loud ("first we'll..., then...").
+                Then transition straight into coaching them on step 1. Only say "here"/"right here" if
+                you're including a [POINT:...] tag with it — if you can't confidently point at something
+                specific yet, describe it in words instead. Tag [GUIDE: \(task.title)] to keep guidance going.\(toolOpenCoachingAddendum)
+                """
+            }
 
             let (planResponseText, _) = try await claudeAPI.analyzeImageStreaming(
                 images: planIntroImages,
@@ -1440,6 +1575,15 @@ final class CompanionManager: ObservableObject {
     /// When no task is active, instructs the model on when it's appropriate to start one.
     private func guidedTaskPromptSection() -> String {
         guard let activeGuidedTask else {
+            // Existing durable projects — tell the model to reattach by exact title
+            // instead of spawning duplicates when the user picks a build back up.
+            let existingProjects = teachyEngine.activeProjects
+            let projectReattachLine = existingProjects.isEmpty ? "" : """
+
+            Unfinished projects they can pick back up (reattach by tagging [PROJECT:] with the EXACT title, \
+            don't create near-duplicates): \(existingProjects.map { "\"\($0.title)\" (step \(min($0.currentStepIndex + 1, max($0.steps.count, 1))) of \(max($0.steps.count, 1)))" }.joined(separator: ", "))
+            """
+
             return """
 
             If this question genuinely needs multiple concrete steps (not just an explanation), and you have
@@ -1448,6 +1592,9 @@ final class CompanionManager: ObservableObject {
             enough context yet (e.g. what they need something FOR changes the right guidance), just ask — check
             what you already remember about them first (personal facts, past context) so you're not asking
             something you should already know.
+            When the task is a durable BUILD — a website, an agent, a real artifact that will take more than
+            one sitting — ALSO tag [PROJECT: short project title] alongside [GUIDE:]. Projects persist across
+            days; quick walkthroughs (an API key, a setting) don't need one.\(projectReattachLine)
             \(Self.recommendedToolRegistrySummaryLine())
             """
         }
@@ -1490,6 +1637,9 @@ final class CompanionManager: ObservableObject {
         // `CourseLearningGoal`) for the human-readable success description.
         lines.append("Current step: \(currentStep.goal.goal)")
         lines.append("Adapt depth to their familiarity — if memory says they're new to this tool, guide signup/onboarding as real steps, not assumed prerequisites.")
+        if activeGuidedTask.projectID != nil {
+            lines.append("This is durable project work — progress persists across days. The moment the thing actually goes LIVE at a real URL, tag [SHIPPED: the url] so it lands in their portfolio.")
+        }
 
         // Let the model know whether this is a coach step (user acts, Teachy guides)
         // or an act step (Teachy will execute mechanically — the model's role is to
@@ -1669,6 +1819,7 @@ final class CompanionManager: ObservableObject {
             }
             self.activeGuidedTask?.currentStepIndex += 1
             self.activeGuidedTask?.lastActivityAt = Date()
+            syncGuidedTaskProgressToProject(verifiedStepTitle: taskSnapshot.currentStep?.goal.title)
 
             // Apply pointing to the post-action screen so the cursor flies to the
             // right place on the new screen state when the agent mentions a location.
@@ -1956,6 +2107,10 @@ final class CompanionManager: ObservableObject {
             // A formal Course is now active — the two systems must never overlap
             // (Course has its own HUD/verify/progress machinery; the ephemeral
             // guided task has none of that and would be redundant/confusing).
+            // A linked project pauses so the build waits for them after the course.
+            if let displacedProjectID = activeGuidedTask?.projectID {
+                teachyEngine.pauseProject(withID: displacedProjectID)
+            }
             activeGuidedTask = nil
 
             _ = teachyEngine.startSession(adapterID: "macos", courseID: courseID)
@@ -2921,7 +3076,10 @@ final class CompanionManager: ObservableObject {
             let (spokenTextWithoutActionTags, _) = CompanionActionTagParser.extractActionAndStrip(from: spokenTextWithoutGuideTags)
             // [CLIPBOARD:...] carries the full crafted prompt — definitely not bubble text.
             let (spokenTextWithoutClipboardTags, _) = CompanionClipboardTagParser.extractClipboardTextAndStrip(from: spokenTextWithoutActionTags)
-            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenTextWithoutClipboardTags)
+            // [PROJECT:...] / [SHIPPED:...] — same defense-in-depth strip as the rest.
+            let (spokenTextWithoutProjectTags, _) = CompanionProjectTagParser.extractTitleAndStrip(from: spokenTextWithoutClipboardTags)
+            let (spokenTextWithoutShippedTags, _) = CompanionShippedTagParser.extractURLAndStrip(from: spokenTextWithoutProjectTags)
+            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenTextWithoutShippedTags)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedSpokenText.isEmpty else { return nil }
             return cleanedSpokenText

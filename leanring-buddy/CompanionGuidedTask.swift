@@ -50,6 +50,11 @@ struct CompanionGuidedTask {
     /// Caps at `CompanionGuidedTask.maximumReflectionRevisionsPerTask` so divergence
     /// can't loop the reflection call indefinitely.
     var reflectionRevisionCount: Int = 0
+    /// When this task is a durable BUILD (the model tagged [PROJECT: title]), the
+    /// `TeachyProject` it writes through to. The ephemeral task still dies on
+    /// staleness/course-start — but a linked project pauses instead of vanishing,
+    /// and step progress persists across relaunches.
+    var projectID: String? = nil
 
     /// Maximum number of reasoning-model reflection/replanning calls allowed per task.
     /// After this cap, divergence falls through to coaching the current step as-is.
@@ -142,6 +147,50 @@ enum CompanionActionTagParser {
         }
         return (cleaned, combinedAction)
     }
+}
+
+/// Extracts and strips `[PROJECT: short title]` tags — emitted alongside [GUIDE:]
+/// when a guided task is a durable BUILD (a site, an agent, a real artifact that
+/// spans sessions) rather than a quick walkthrough. The title keys create-or-resume:
+/// the model is told about existing active projects so it reattaches by exact title
+/// instead of duplicating.
+enum CompanionProjectTagParser {
+    static func extractTitleAndStrip(from text: String) -> (cleanedText: String, title: String?) {
+        extractLastTagAndStrip(named: "PROJECT", from: text)
+    }
+}
+
+/// Extracts and strips `[SHIPPED: url]` tags — the model's signal that the project's
+/// artifact just went live. Ships the linked project (status, URL, portfolio capture).
+enum CompanionShippedTagParser {
+    static func extractURLAndStrip(from text: String) -> (cleanedText: String, url: String?) {
+        extractLastTagAndStrip(named: "SHIPPED", from: text)
+    }
+}
+
+/// Shared single-tag extraction used by the PROJECT/SHIPPED parsers — same regex
+/// shape and whitespace-collapse behavior as the GUIDE parser above.
+private func extractLastTagAndStrip(named tagName: String, from text: String) -> (cleanedText: String, value: String?) {
+    guard let regex = try? NSRegularExpression(pattern: "\\[\(tagName):\\s*([^\\]]+)\\]", options: [.caseInsensitive]) else {
+        return (text, nil)
+    }
+    let range = NSRange(text.startIndex..., in: text)
+    let matches = regex.matches(in: text, options: [], range: range)
+    let values = matches.compactMap { match -> String? in
+        guard match.numberOfRanges >= 2, let contentRange = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        return String(text[contentRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    let cleaned = regex.stringByReplacingMatches(
+        in: text,
+        options: [],
+        range: range,
+        withTemplate: ""
+    )
+    .replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+    return (cleaned, values.last)
 }
 
 /// Extracts and strips `[CLIPBOARD: full text]` tags — the prompt-concierge lane.

@@ -49,6 +49,9 @@ struct TeachyEngineState: Codable {
     var pendingRetentionChecks: [RetentionCheck]
     var pendingTransfers: [SkillTransfer]
     var sessionHistory: [CoachingSession]
+    /// Durable build arcs (v2) — survive across days/relaunches, unlike ephemeral
+    /// guided tasks. See `TeachyProject`.
+    var projects: [TeachyProject]
 
     init() {
         self.learnerModel = LearnerModel()
@@ -57,6 +60,26 @@ struct TeachyEngineState: Codable {
         self.pendingRetentionChecks = []
         self.pendingTransfers = []
         self.sessionHistory = []
+        self.projects = []
+    }
+
+    /// Custom decode with `decodeIfPresent ?? default` for EVERY field. Synthesized
+    /// Codable would hard-fail on any missing key — meaning adding a new field (like
+    /// `projects`) would make every existing engine-state.json undecodable and
+    /// silently reset the learner's entire memory. This decoder makes the state file
+    /// forward-compatible with future field additions once and for all. Encoding
+    /// stays synthesized.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        activeSession = try container.decodeIfPresent(CoachingSession.self, forKey: .activeSession)
+        learnerModel = try container.decodeIfPresent(LearnerModel.self, forKey: .learnerModel) ?? LearnerModel()
+        skillGraph = try container.decodeIfPresent(SkillGraph.self, forKey: .skillGraph) ?? BundledSkillGraph.aiFluencyGraph
+        config = try container.decodeIfPresent(TeachyEngineConfig.self, forKey: .config) ?? .default
+        lastRetentionCheckDate = try container.decodeIfPresent(Date.self, forKey: .lastRetentionCheckDate)
+        pendingRetentionChecks = try container.decodeIfPresent([RetentionCheck].self, forKey: .pendingRetentionChecks) ?? []
+        pendingTransfers = try container.decodeIfPresent([SkillTransfer].self, forKey: .pendingTransfers) ?? []
+        sessionHistory = try container.decodeIfPresent([CoachingSession].self, forKey: .sessionHistory) ?? []
+        projects = try container.decodeIfPresent([TeachyProject].self, forKey: .projects) ?? []
     }
 }
 
@@ -415,6 +438,80 @@ final class TeachyEngine: ObservableObject {
         }
         saveState()
         return newlyCrossedThresholdAppName
+    }
+
+    // MARK: - Projects (durable build arcs)
+
+    var activeProjects: [TeachyProject] {
+        state.projects.filter { $0.status == .active || $0.status == .paused }
+    }
+
+    func project(withID projectID: String) -> TeachyProject? {
+        state.projects.first { $0.id == projectID }
+    }
+
+    /// Insert or replace by id, then persist.
+    func upsertProject(_ project: TeachyProject) {
+        if let existingIndex = state.projects.firstIndex(where: { $0.id == project.id }) {
+            state.projects[existingIndex] = project
+        } else {
+            state.projects.append(project)
+        }
+        saveState()
+    }
+
+    /// Reattach to an existing non-abandoned project with a matching title, or
+    /// create a fresh one. Matching by title (case-insensitive) is what lets the
+    /// model say "[PROJECT: Food truck site]" across sessions and land on the same
+    /// arc instead of duplicating it.
+    func createOrResumeProject(title: String, goalDescription: String) -> TeachyProject {
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let existingIndex = state.projects.firstIndex(where: {
+            $0.status != .abandoned && $0.title.caseInsensitiveCompare(normalizedTitle) == .orderedSame
+        }) {
+            state.projects[existingIndex].status = .active
+            state.projects[existingIndex].lastWorkedAt = Date()
+            saveState()
+            return state.projects[existingIndex]
+        }
+        let newProject = TeachyProject(title: normalizedTitle, goalDescription: goalDescription)
+        state.projects.append(newProject)
+        saveState()
+        return newProject
+    }
+
+    /// A guided task around this project went stale — the work waits, it doesn't die.
+    func pauseProject(withID projectID: String) {
+        guard let index = state.projects.firstIndex(where: { $0.id == projectID }),
+              state.projects[index].status == .active else { return }
+        state.projects[index].status = .paused
+        saveState()
+    }
+
+    /// Ships the project: status, URL, portfolio capture (first real use of
+    /// `PortfolioItem.artifactURL`). Returns the updated project for celebration copy.
+    @discardableResult
+    func shipProject(withID projectID: String, deployedURL: String?) -> TeachyProject? {
+        guard let index = state.projects.firstIndex(where: { $0.id == projectID }) else { return nil }
+        state.projects[index].status = .shipped
+        if let deployedURL, !deployedURL.isEmpty {
+            state.projects[index].deployedURL = deployedURL
+        }
+        state.projects[index].appendJournalEntry("Shipped\(deployedURL.map { " — \($0)" } ?? "")")
+
+        let project = state.projects[index]
+        let portfolioItem = portfolioManager.createItem(
+            courseID: "project",
+            goalID: project.id,
+            kind: .project,
+            title: project.title,
+            description: project.goalDescription,
+            artifactURL: project.deployedURL,
+            skillsUsed: project.steps.map(\.title)
+        )
+        state.projects[index].portfolioItemID = portfolioItem.id
+        saveState()
+        return state.projects[index]
     }
 
     /// Get skills in a specific domain.

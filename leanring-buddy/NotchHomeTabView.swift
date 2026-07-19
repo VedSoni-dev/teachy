@@ -201,9 +201,58 @@ struct NotchHomeTabView: View {
         return Date().timeIntervalSince(lastCheckIn) > 86400
     }
 
+    /// A project that's been idle at least a day — the check-in card offers to
+    /// resume it (project momentum beats small talk when both are available).
+    private var staleResumableProject: TeachyProject? {
+        companionManager.teachyEngine.activeProjects
+            .filter { !$0.steps.isEmpty && Date().timeIntervalSince($0.lastWorkedAt) > 86400 }
+            .sorted { $0.lastWorkedAt > $1.lastWorkedAt }
+            .first
+    }
+
     @ViewBuilder
     private var relationshipCheckInSection: some View {
-        if shouldShowRelationshipCheckIn {
+        if let staleProject = staleResumableProject, !isCheckInDismissed {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Want to keep going on \(staleProject.title)? You're at step \(min(staleProject.currentStepIndex + 1, staleProject.steps.count)) of \(staleProject.steps.count).")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    Button {
+                        isCheckInDismissed = true
+                        companionManager.submitSyntheticCompanionRequest(
+                            "Let's keep going on my project \"\(staleProject.title)\" — pick up where we left off."
+                        )
+                    } label: {
+                        Text("Resume")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Color.black.opacity(0.85))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(DS.Colors.learnAccent))
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+
+                    Button {
+                        isCheckInDismissed = true
+                    } label: {
+                        Text("Not now")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(DS.Colors.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassCard(tint: DS.Colors.learnAccent, prominent: true)
+        } else if shouldShowRelationshipCheckIn {
             VStack(alignment: .leading, spacing: 10) {
                 Text(cachedRelationshipCheckInLine ?? relationshipCheckInLine())
                     .font(.system(size: 12, weight: .medium))
