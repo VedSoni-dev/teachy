@@ -945,6 +945,35 @@ final class CoursesManager: ObservableObject {
         }
     }
 
+    /// Parses `[AgenticStep]` from raw plan JSON, reading each step's `goal` fields AND its
+    /// `executionMode` from the SAME JSON dict in one pass. This avoids the positional-index
+    /// misalignment that arises when `parseCourseLearningGoals` drops a malformed step via
+    /// `compactMap`: pairing goal→executionMode by array index against the *unfiltered*
+    /// `stepsJSON` would then pull a later step's mode from an earlier (dropped) step's JSON,
+    /// which could wrongly promote a `.coach` step to `.act` and auto-execute it.
+    /// `executionMode` defaults to `.coach` when absent or unrecognized — never silently act.
+    private static func parseAgenticSteps(fromStepsJSON stepsJSON: [[String: Any]]) -> [AgenticStep] {
+        stepsJSON.compactMap { stepJSON -> AgenticStep? in
+            guard let id = stepJSON["id"] as? String,
+                  let title = stepJSON["title"] as? String,
+                  let goal = stepJSON["goal"] as? String,
+                  let coachAsk = stepJSON["coachAsk"] as? String,
+                  let doneWhen = stepJSON["doneWhen"] as? String else {
+                return nil
+            }
+            let courseLearningGoal = CourseLearningGoal(
+                id: id,
+                title: title,
+                goal: goal,
+                coachAsk: coachAsk,
+                doneWhen: doneWhen
+            )
+            let rawExecutionMode = stepJSON["executionMode"] as? String ?? "coach"
+            let executionMode = GuidedStepExecutionMode(rawValue: rawExecutionMode) ?? .coach
+            return AgenticStep(goal: courseLearningGoal, executionMode: executionMode)
+        }
+    }
+
     /// Lightweight sibling of `generateCustomCoursePlan`, for the companion's ephemeral
     /// guided walkthroughs (`CompanionGuidedTask`). Same generation mechanism (one
     /// `ClaudeAPI.generateText` call, JSON-in) but asks for 2-5 short ad-hoc steps only —
@@ -1125,14 +1154,7 @@ final class CoursesManager: ObservableObject {
             )
         }
 
-        let revisedCourseLearningGoals = Self.parseCourseLearningGoals(fromGoalsJSON: stepsJSON)
-
-        return revisedCourseLearningGoals.enumerated().map { index, courseLearningGoal in
-            let rawStepJSON = index < stepsJSON.count ? stepsJSON[index] : [:]
-            let rawExecutionMode = rawStepJSON["executionMode"] as? String ?? "coach"
-            let executionMode = GuidedStepExecutionMode(rawValue: rawExecutionMode) ?? .coach
-            return AgenticStep(goal: courseLearningGoal, executionMode: executionMode)
-        }
+        return Self.parseAgenticSteps(fromStepsJSON: stepsJSON)
     }
 
     /// Screen-grounded, reasoning-model plan generator — Layer 1 upgrade over `generateGuidedTaskSteps`.
