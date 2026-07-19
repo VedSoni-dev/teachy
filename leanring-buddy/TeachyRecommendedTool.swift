@@ -50,6 +50,60 @@ enum TeachyRecommendedToolRegistry {
             provision a phone number (Vapi-provided or bring-your-own via Twilio) to call it for real.
             There's usually an API keys section under account/settings for programmatic use.
             """
+        ),
+
+        TeachyRecommendedTool(
+            id: "claude-code",
+            displayName: "Claude Code",
+            url: "https://claude.com/claude-code",
+            triggerKeywords: [
+                "claude code", "coding agent", "ai that writes code", "build an app with ai",
+                "code with ai", "ai that codes", "let ai write the code", "ai developer",
+                "ai programmer", "have ai build it"
+            ],
+            knowledgeBrief: """
+            Claude Code is a terminal-based agentic coding tool made by Anthropic. You describe
+            what you want in plain language — in the terminal, inside your project folder — and it
+            reads your codebase, edits files, runs commands, and reports back what it did. It works
+            on real projects in real file systems, not just snippets.
+
+            How to instruct it well:
+            - Name the specific file or feature area if you know it (e.g. "in the header component"
+              or "in App.swift"). Agents guess wrong when the scope is ambiguous.
+            - State the acceptance criteria — what should be true when the task is done, not just
+              what to change ("the button should be blue and centered", not just "fix the button").
+            - Say what NOT to touch, especially when you have fragile code nearby.
+            - One task per message. Piling multiple unrelated requests leads to tangled edits.
+            - When something fails, paste the error back verbatim with a short note about what you
+              were trying to do — don't paraphrase the error, the exact text is what the agent needs.
+            """
+        ),
+
+        TeachyRecommendedTool(
+            id: "cursor",
+            displayName: "Cursor",
+            url: "https://cursor.com",
+            triggerKeywords: [
+                "cursor", "ai code editor", "ai ide", "cursor editor", "cursor app",
+                "ai editor for coding", "cursor ai"
+            ],
+            knowledgeBrief: """
+            Cursor is an AI code editor — a full IDE (built on VS Code) where an AI model lives
+            inside the editor itself. You can chat with it in a side panel about your whole codebase,
+            ask it to make inline edits directly in a file, and review proposed changes as a diff
+            before accepting them. It understands the project's full context, not just the file
+            you're looking at.
+
+            How to instruct it well:
+            - Reference the exact file or symbol using @ (e.g. "@App.swift" or "@headerComponent").
+              This pins context so the model isn't guessing what code you mean.
+            - Keep asks scoped to one clear change at a time. "Refactor everything" produces
+              unpredictable diffs; "rename this function and update all call sites" is concrete.
+            - Review the diff before accepting — Cursor will show exactly what changed, line by line.
+              Get in the habit of reading it before hitting Accept All.
+            - State acceptance criteria, not just the change: what should be true when it's done?
+            - When something fails, paste the error back verbatim — don't paraphrase.
+            """
         )
     ]
 

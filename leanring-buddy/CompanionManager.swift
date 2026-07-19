@@ -838,6 +838,49 @@ final class CompanionManager: ObservableObject {
 
     // MARK: - AI Response Pipeline
 
+    /// Returns the display name of the frontmost app if it is a known AI coding tool
+    /// (Cursor, VS Code, Xcode, or a terminal that likely hosts Claude Code or similar),
+    /// or nil when the user is in any other app.
+    ///
+    /// Matching is intentionally permissive: a false positive just adds a harmless
+    /// INTERPRETER MODE section to the prompt, while a false negative silently drops
+    /// the feature. Bundle-ID prefix matching is the primary signal; a localizedName
+    /// fallback catches unsigned or renamed builds of the same tools.
+    private func frontmostCodingToolName() -> String? {
+        guard let frontmostApplication = NSWorkspace.shared.frontmostApplication else { return nil }
+        let bundleID = frontmostApplication.bundleIdentifier ?? ""
+        let appName = frontmostApplication.localizedName ?? ""
+
+        // Known bundle ID prefixes for coding tools and terminals.
+        // Cursor's bundle ID is the Todesktop-packaged Electron app ID.
+        let codingToolBundleIDPrefixes = [
+            "com.todesktop.230313mzl4w4u92",  // Cursor
+            "com.microsoft.VSCode",            // VS Code (stable)
+            "com.microsoft.VSCodeInsiders",    // VS Code Insiders
+            "com.apple.dt.Xcode",             // Xcode
+            "com.apple.Terminal",             // macOS Terminal
+            "com.googlecode.iterm2",          // iTerm2
+            "dev.warp.Warp-Stable",           // Warp
+            "com.mitchellh.ghostty",          // Ghostty
+            "net.kovidgoyal.kitty"            // kitty
+        ]
+
+        if codingToolBundleIDPrefixes.contains(where: { bundleID.hasPrefix($0) }) {
+            return appName
+        }
+
+        // Fallback: name-based matching catches unsigned builds, rebranded forks,
+        // or bundle IDs that drift with new releases (e.g. Cursor beta channels).
+        let codingToolNameSubstrings = ["Cursor", "VS Code", "Visual Studio Code", "Xcode",
+                                        "Terminal", "iTerm", "Warp", "Ghostty", "kitty",
+                                        "Claude Code"]
+        if codingToolNameSubstrings.contains(where: { appName.contains($0) }) {
+            return appName
+        }
+
+        return nil
+    }
+
     /// Builds the companion system prompt, optionally injecting a temporal continuity
     /// line when the learner is returning after a gap (e.g. "last chat was 3 days ago —
     /// be warm, don't reintroduce yourself"). The continuity line is sourced from
@@ -889,6 +932,23 @@ final class CompanionManager: ObservableObject {
 
         let guidedTaskSection = guidedTaskPromptSection()
 
+        // Present only when a coding tool (Cursor, VS Code, Xcode, a terminal running Claude Code,
+        // etc.) is the frontmost app — this is the interpreter-mode wedge for non-technical users.
+        let interpreterModeSection: String
+        if let codingToolName = frontmostCodingToolName() {
+            interpreterModeSection = """
+
+
+            INTERPRETER MODE — they're in \(codingToolName), likely working with an AI coding agent:
+            - When they say what they want changed ("make the header blue", "add a contact form"), do NOT explain how to code it. Craft the instruction the coding agent needs — name the file or feature area if visible on screen, state the acceptance criteria (what should be true when done), say what not to touch — and hand it over with [CLIPBOARD: the instruction]. Tell them it's ready to paste into the agent.
+            - After the agent runs and they ask what happened (or you can see the result on screen), explain WHAT CHANGED in one or two plain sentences — no code speak — then the ONE thing they should check.
+            - Each handoff, teach one short thing about why the instruction was shaped that way ("I named the file because agents guess wrong otherwise"). That's the fluency lesson.
+            - If an error is visible on screen, read its first line in plain words and craft the paste-back instruction for the agent via [CLIPBOARD:].
+            """
+        } else {
+            interpreterModeSection = ""
+        }
+
         return """
         You are Teachy — a real person sitting next to them at their Mac, looking at the same screen.
         They just talked to you. Your reply is spoken out loud, so talk like a human coach in the room —
@@ -909,7 +969,7 @@ final class CompanionManager: ObservableObject {
           say "here" with nothing backing it, that's worse than not pointing at all.
         - Feel like a sharp friend who actually wants them to get it — not a lecture.
         - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)\(proactiveMomentsSection)\(workflowSection)
-        \(guidedTaskSection)
+        \(guidedTaskSection)\(interpreterModeSection)
 
         You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
         - Compound direct commands are fine ("close all my tabs and open Figma") — emit one [DO:] tag per action, in order. They execute as one sequence.
