@@ -210,6 +210,11 @@ final class CompanionManager: ObservableObject {
     /// turn's answer. Cleared once the prompt for that turn has been built.
     private var pendingGuidedTaskVerificationResult: CourseVerificationResult?
 
+    /// The frontmost browser's active tab (URL + title) captured for this turn —
+    /// refreshed in `buildLabeledAnnotatedImages` at capture time, consumed by
+    /// `buildCompanionVoiceResponseSystemPrompt`, cleared after the prompt is built.
+    private var currentBrowserTabContext: String?
+
     /// The currently running AI response task, if any. Cancelled when the user
     /// speaks again so a new response can begin immediately.
     private var currentResponseTask: Task<Void, Never>?
@@ -833,6 +838,11 @@ final class CompanionManager: ObservableObject {
         let allOpenApplicationsSection = AccessibilityElementDetector.allOpenApplicationsContext()
             .map { "\n\n\($0)." } ?? ""
 
+        // The exact page they're on, when the frontmost app is a browser — window
+        // titles alone often omit the URL entirely.
+        let browserTabSection = currentBrowserTabContext
+            .map { "\n\nThe browser tab they're on right now: \($0)." } ?? ""
+
         let guidedTaskSection = guidedTaskPromptSection()
 
         return """
@@ -854,7 +864,7 @@ final class CompanionManager: ObservableObject {
           references like "that tab" without a clear match), describe it in words instead — don't
           say "here" with nothing backing it, that's worse than not pointing at all.
         - Feel like a sharp friend who actually wants them to get it — not a lecture.
-        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)
+        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)
         \(guidedTaskSection)
 
         You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT, SINGLE native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
@@ -1037,6 +1047,7 @@ final class CompanionManager: ObservableObject {
                 // after — it's only meant to influence this single turn's prompt.
                 let systemPromptForThisTurn = buildCompanionVoiceResponseSystemPrompt()
                 pendingGuidedTaskVerificationResult = nil
+                currentBrowserTabContext = nil
 
                 let (fullResponseText, _) = try await claudeAPI.analyzeImageStreaming(
                     images: labeledImages,
@@ -2266,6 +2277,13 @@ final class CompanionManager: ObservableObject {
 
         // Store in the registry so applyPointingFromResponse can look up by id.
         currentAXElementRegistry = detectedAXElements
+
+        // Refresh the active browser-tab context (URL + title) for this turn while
+        // we're already doing capture-time work. Nil when the frontmost app isn't a
+        // browser or Automation isn't granted; consumed by the companion prompt
+        // builder and cleared after the prompt is built (same transient-per-turn
+        // hygiene as pendingGuidedTaskVerificationResult).
+        currentBrowserTabContext = await BrowserActiveTabReader.activeTabContext()
 
         // Build a compact text block the model can reference to pick an element by ax:ID.
         // Only built when the list is non-empty.

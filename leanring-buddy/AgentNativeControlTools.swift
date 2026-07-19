@@ -367,7 +367,9 @@ enum NativeControlPermissionSupport {
 /// Encapsulates the AppleScript vocabulary differences between Safari and
 /// Chromium-family browsers (Chrome, Arc, Brave, Edge). Safari uses `document`
 /// and `current tab of front window`; Chrome-family uses `tab` and `active tab`.
-private struct BrowserAppleScriptDialect {
+/// Internal (not private) so `BrowserActiveTabReader` can reuse the bundle-ID
+/// mapping instead of duplicating it.
+struct BrowserAppleScriptDialect {
     let applicationName: String
     let isSafari: Bool
 
@@ -454,6 +456,22 @@ private struct BrowserAppleScriptDialect {
                     make new tab
                 end tell
             end if
+        end tell
+        """
+    }
+
+    /// Returns a two-item list {URL, title} of the active tab in the front window.
+    func scriptForActiveTabInfo() -> String {
+        if isSafari {
+            return """
+            tell application "Safari"
+                get {URL of current tab of front window, name of current tab of front window}
+            end tell
+            """
+        }
+        return """
+        tell application "\(applicationName)"
+            get {URL of active tab of front window, title of active tab of front window}
         end tell
         """
     }
