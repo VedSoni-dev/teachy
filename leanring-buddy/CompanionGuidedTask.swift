@@ -143,3 +143,37 @@ enum CompanionActionTagParser {
         return (cleaned, combinedAction)
     }
 }
+
+/// Extracts and strips `[CLIPBOARD: full text]` tags — the prompt-concierge lane.
+/// The model crafts a strong, ready-to-paste prompt for whatever AI tool the user
+/// wants to use, and hands it over via the clipboard instead of reading it aloud.
+///
+/// Limitation (documented to the model in the system prompt): the tag ends at the
+/// first `]` after the content, so clipboard text must avoid `]` characters. A
+/// non-greedy multiline match keeps multi-paragraph prompts intact otherwise.
+enum CompanionClipboardTagParser {
+    /// Returns the last tagged clipboard payload in `text` (a turn should only carry
+    /// one), with every `[CLIPBOARD: ...]` occurrence removed from `cleanedText`.
+    static func extractClipboardTextAndStrip(from text: String) -> (cleanedText: String, clipboardText: String?) {
+        guard let regex = try? NSRegularExpression(pattern: "\\[CLIPBOARD:\\s*([\\s\\S]+?)\\]", options: [.caseInsensitive]) else {
+            return (text, nil)
+        }
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = regex.matches(in: text, options: [], range: range)
+        let payloads = matches.compactMap { match -> String? in
+            guard match.numberOfRanges >= 2, let contentRange = Range(match.range(at: 1), in: text) else {
+                return nil
+            }
+            return String(text[contentRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let cleaned = regex.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: range,
+            withTemplate: ""
+        )
+        .replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (cleaned, payloads.last)
+    }
+}

@@ -904,6 +904,9 @@ final class CompanionManager: ObservableObject {
         - For tasks that require planning, teaching, or working WITH the user step by step, use [GUIDE:] instead — not [DO:].
         - NEVER tag [DO:] for anything that deletes user data, spends money, sends an email or message on their behalf, or cannot be easily undone. For those, explain and let them act.
         - Examples of safe [DO:] use: "Opening Spotify for you. [DO: open app Spotify]" — "Sure, closing this tab. [DO: close active browser tab]" — "Switching over to Arc. [DO: activate app Arc]".
+
+        PROMPT CONCIERGE — this is how they build real AI fluency:
+        When they want to use an AI tool (ChatGPT, Claude, Midjourney, anything) for a task, don't just point them at it — most people type a bland two-word prompt and get bland results. If the goal is vague, ask 1–2 quick questions first (what's it for, who's it for, what style or constraints). Then CRAFT the strong prompt FOR them — specific, contextual, with the details a pro would include — and hand it over with [CLIPBOARD: the full prompt]. The tag is stripped from speech and its contents land on their clipboard. Tell them it's on the clipboard ready to paste, and teach the ONE thing that made this prompt better than what they'd have typed (one sentence — that's the lesson). Pair with [DO: open ...] when the tool isn't already open. Don't use ] inside the clipboard text, and never put secrets in it.
         \(ScreenGridAnnotationUtility.modelInstructions)
         """
     }
@@ -1113,7 +1116,18 @@ final class CompanionManager: ObservableObject {
                 // This runs after REMEMBER and GUIDE so all three tags are removed from
                 // the final spoken text. The extracted action string drives the fast lane
                 // below; the cleaned text is what TTS actually speaks.
-                let (spokenText, directNativeActionThisTurn) = CompanionActionTagParser.extractActionAndStrip(from: spokenTextWithoutGuideTags)
+                let (spokenTextWithoutActionTags, directNativeActionThisTurn) = CompanionActionTagParser.extractActionAndStrip(from: spokenTextWithoutGuideTags)
+
+                // Prompt concierge: [CLIPBOARD: crafted prompt] — an independent side
+                // effect like REMEMBER, not a fourth exclusive lane. Set BEFORE any
+                // [DO:] executes so "open ChatGPT + prompt on clipboard" arrives ready
+                // to paste the moment the tool opens.
+                let (spokenText, clipboardTextThisTurn) = CompanionClipboardTagParser.extractClipboardTextAndStrip(from: spokenTextWithoutActionTags)
+                if let clipboardTextThisTurn, !clipboardTextThisTurn.isEmpty {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(clipboardTextThisTurn, forType: .string)
+                    print("📋 Concierge prompt placed on clipboard (\(clipboardTextThisTurn.count) chars)")
+                }
 
                 let lifecycleOutcome = applyGuidedTaskLifecycle(guideTaskTitleThisTurn: guideTaskTitleThisTurn)
 
@@ -2863,10 +2877,10 @@ final class CompanionManager: ObservableObject {
     }
 
     /// Shared helper: sets `detectedElementBubbleText` from a parse result.
-    /// Strips [REMEMBER:...], [GUIDE:...], and [DO:...] tags so raw structured tags
-    /// never reach the speech bubble. This path re-parses the raw response text
-    /// independently of `sendCompanionChatResponse`, so it needs the same
-    /// defense-in-depth stripping for all three tag types.
+    /// Strips [REMEMBER:...], [GUIDE:...], [DO:...], and [CLIPBOARD:...] tags so raw
+    /// structured tags never reach the speech bubble. This path re-parses the raw
+    /// response text independently of `sendCompanionChatResponse`, so it needs the
+    /// same defense-in-depth stripping for every tag type.
     private func applyBubbleText(from parseResult: PointingParseResult, fallbackResponseText: String) {
         detectedElementBubbleText = {
             let spokenText = parseResult.spokenText.isEmpty ? fallbackResponseText : parseResult.spokenText
@@ -2879,7 +2893,9 @@ final class CompanionManager: ObservableObject {
             // [DO:...] is the Phase L one-shot action tag — same defense-in-depth strip
             // so the raw action instruction never surfaces in the speech bubble.
             let (spokenTextWithoutActionTags, _) = CompanionActionTagParser.extractActionAndStrip(from: spokenTextWithoutGuideTags)
-            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenTextWithoutActionTags)
+            // [CLIPBOARD:...] carries the full crafted prompt — definitely not bubble text.
+            let (spokenTextWithoutClipboardTags, _) = CompanionClipboardTagParser.extractClipboardTextAndStrip(from: spokenTextWithoutActionTags)
+            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenTextWithoutClipboardTags)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedSpokenText.isEmpty else { return nil }
             return cleanedSpokenText
