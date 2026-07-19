@@ -230,7 +230,8 @@ final class ControlBrowserTool: BackgroundAgentTool {
     Prefer this over run_applescript for tab/window control. \
     Supports Safari, Chrome, Arc, Brave, and Edge. \
     action="new_tab" opens a URL (or blank tab) in a new tab; \
-    "close_tab" closes the active tab; "close_window" closes the front window; \
+    "close_tab" closes the active tab; "close_all_tabs" closes every tab in the front window; \
+    "close_other_tabs" closes everything except the active tab; "close_window" closes the front window; \
     "next_tab" / "previous_tab" switch tabs. \
     The optional url parameter is only used with new_tab.
     """
@@ -240,7 +241,7 @@ final class ControlBrowserTool: BackgroundAgentTool {
         "properties": [
             "action": [
                 "type": "string",
-                "enum": ["new_tab", "close_tab", "close_window", "next_tab", "previous_tab"],
+                "enum": ["new_tab", "close_tab", "close_all_tabs", "close_other_tabs", "close_window", "next_tab", "previous_tab"],
                 "description": "Tab/window action to perform in the frontmost browser."
             ],
             "url": [
@@ -278,6 +279,10 @@ final class ControlBrowserTool: BackgroundAgentTool {
             appleScriptSource = browserDialect.scriptForNewTab(url: urlArgument)
         case "close_tab":
             appleScriptSource = browserDialect.scriptForCloseActiveTab()
+        case "close_all_tabs":
+            appleScriptSource = browserDialect.scriptForCloseAllTabs()
+        case "close_other_tabs":
+            appleScriptSource = browserDialect.scriptForCloseOtherTabs()
         case "close_window":
             appleScriptSource = browserDialect.scriptForCloseFrontWindow()
         case "next_tab":
@@ -316,6 +321,10 @@ final class ControlBrowserTool: BackgroundAgentTool {
             return "Opened a new blank tab in \(browserName)"
         case "close_tab":
             return "Closed the active tab in \(browserName)"
+        case "close_all_tabs":
+            return "Closed all tabs in \(browserName)'s front window"
+        case "close_other_tabs":
+            return "Closed every tab except the active one in \(browserName)"
         case "close_window":
             return "Closed the front window in \(browserName)"
         case "next_tab":
@@ -487,6 +496,41 @@ struct BrowserAppleScriptDialect {
         return """
         tell application "\(applicationName)"
             close active tab of front window
+        end tell
+        """
+    }
+
+    func scriptForCloseAllTabs() -> String {
+        // Same verb in both dialects. Closing the last tab closes the window too —
+        // that's the expected outcome of "close all my tabs".
+        return """
+        tell application "\(applicationName)"
+            close every tab of front window
+        end tell
+        """
+    }
+
+    func scriptForCloseOtherTabs() -> String {
+        if isSafari {
+            // Safari tabs are addressed by index; snapshot the current tab's index
+            // and close the rest. AppleScript resolves the `whose` list before
+            // closing, so shifting indices during the close don't skip tabs.
+            return """
+            tell application "Safari"
+                tell front window
+                    set keepIndex to index of current tab
+                    close (every tab whose index is not keepIndex)
+                end tell
+            end tell
+            """
+        }
+        // Chromium tabs carry a stable `id` — safer than index while tabs close.
+        return """
+        tell application "\(applicationName)"
+            tell front window
+                set keepId to id of active tab
+                close (every tab whose id is not keepId)
+            end tell
         end tell
         """
     }

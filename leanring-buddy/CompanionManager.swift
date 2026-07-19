@@ -867,9 +867,10 @@ final class CompanionManager: ObservableObject {
         - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)
         \(guidedTaskSection)
 
-        You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT, SINGLE native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
-        - Use [DO:] only for a direct, single, reversible native command (app open/quit/activate/hide, tab/window open/close/switch).
-        - For multi-step tasks or anything that requires planning and teaching, use [GUIDE:] instead — not [DO:].
+        You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
+        - Compound direct commands are fine ("close all my tabs and open Figma") — emit one [DO:] tag per action, in order. They execute as one sequence.
+        - Use [DO:] only for direct, reversible native commands (app open/quit/activate/hide, tab/window open/close/switch — including "close all tabs" / "close the other tabs").
+        - For tasks that require planning, teaching, or working WITH the user step by step, use [GUIDE:] instead — not [DO:].
         - NEVER tag [DO:] for anything that deletes user data, spends money, sends an email or message on their behalf, or cannot be easily undone. For those, explain and let them act.
         - Examples of safe [DO:] use: "Opening Spotify for you. [DO: open app Spotify]" — "Sure, closing this tab. [DO: close active browser tab]" — "Switching over to Arc. [DO: activate app Arc]".
         \(ScreenGridAnnotationUtility.modelInstructions)

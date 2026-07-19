@@ -101,9 +101,13 @@ enum CompanionGuideTagParser {
 /// the model emits the spoken heads-up and the action description together, so
 /// the tag is stripped before TTS but the action string is kept for execution.
 enum CompanionActionTagParser {
-    /// Returns the last action string in `text` (if any), with every `[DO: ...]`
+    /// Returns the tagged action(s) in `text` (if any), with every `[DO: ...]`
     /// occurrence removed from `cleanedText`. Whitespace is collapsed after removal
     /// so the spoken text flows naturally without gaps.
+    ///
+    /// Multiple tags in one reply become a single numbered sequence ("1. close the
+    /// active tab\n2. open Figma") so compound commands ("close my tabs and open
+    /// Figma") execute as one ordered action run — the tool loop handles each step.
     static func extractActionAndStrip(from text: String) -> (cleanedText: String, action: String?) {
         guard let regex = try? NSRegularExpression(pattern: "\\[DO:\\s*([^\\]]+)\\]", options: [.caseInsensitive]) else {
             return (text, nil)
@@ -124,6 +128,18 @@ enum CompanionActionTagParser {
         )
         .replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
         .trimmingCharacters(in: .whitespacesAndNewlines)
-        return (cleaned, actions.last)
+
+        let combinedAction: String?
+        switch actions.count {
+        case 0:
+            combinedAction = nil
+        case 1:
+            combinedAction = actions[0]
+        default:
+            combinedAction = actions.enumerated()
+                .map { "\($0.offset + 1). \($0.element)" }
+                .joined(separator: "\n")
+        }
+        return (cleaned, combinedAction)
     }
 }
