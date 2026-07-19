@@ -416,6 +416,14 @@ final class TeachyEngine: ObservableObject {
         saveState()
     }
 
+    /// Stamps onboarding-complete timestamp the first time it's called.
+    /// Idempotent — subsequent calls are no-ops so re-entrant callers are safe.
+    func recordOnboardingCompleted() {
+        guard state.learnerModel.onboardingCompletedAt == nil else { return }
+        state.learnerModel.onboardingCompletedAt = Date()
+        saveState()
+    }
+
     /// Session-independent recorder for app-context sightings (mirrors `recordPersonalFact`).
     /// Returns the app name when THIS sighting pushed the app over the recommendation
     /// threshold (≥5 sightings across ≥2 distinct days, not previously suggested) — the
@@ -510,6 +518,19 @@ final class TeachyEngine: ObservableObject {
             skillsUsed: project.steps.map(\.title)
         )
         state.projects[index].portfolioItemID = portfolioItem.id
+
+        // North-star metric: record the first-ever ship timestamp and fire the
+        // time-to-first-ship event when we also have an onboarding timestamp.
+        if state.learnerModel.firstShippedAt == nil {
+            let firstShipDate = Date()
+            state.learnerModel.firstShippedAt = firstShipDate
+            if let onboardingDate = state.learnerModel.onboardingCompletedAt {
+                let secondsSinceOnboarding = Int(firstShipDate.timeIntervalSince(onboardingDate))
+                ClickyAnalytics.trackFirstShip(secondsSinceOnboarding: secondsSinceOnboarding)
+                print("Teachy north-star: \(secondsSinceOnboarding)s from onboarding to first ship")
+            }
+        }
+
         saveState()
         return state.projects[index]
     }

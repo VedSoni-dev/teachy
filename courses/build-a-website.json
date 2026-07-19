@@ -279,7 +279,7 @@
       "goal": "Turn your GitHub repo into a live website with a public URL anyone can visit.",
       "outcome": "Your site is live at https://yourusername.github.io/repo-name/ and you can share the link.",
       "coachAsk": "My code is on GitHub. Help me deploy it to GitHub Pages so I can share a live link with anyone.",
-      "doneWhen": "The GitHub Pages URL loads in a browser and shows the deployed site.",
+      "doneWhen": "A browser is visible showing the site loaded at a public https://username.github.io/... URL — not a local file:// path — with the site content visible and no 404 error.",
       "tips": [
         "Settings → Pages → Source: main branch → Save",
         "It takes 1-2 minutes to deploy the first time",
@@ -315,7 +315,7 @@
       "goal": "Open your live site, verify everything works, and share the link.",
       "outcome": "You've opened your live site in a browser, confirmed it looks right, and have the URL ready to share.",
       "coachAsk": "My site is deployed! Help me open it, check that everything looks right, and grab the link so I can share it.",
-      "doneWhen": "The learner has opened their live site, verified the content and navigation work, and can state their URL.",
+      "doneWhen": "A browser window is visible showing the deployed site at a public GitHub Pages URL (https://username.github.io/...) — not a local file:// path — with the correct content and styling visible.",
       "tips": [
         "Open in a private/incognito window to see the fresh version",
         "Test every link and page",

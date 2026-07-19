@@ -253,6 +253,12 @@ struct LearnerModel: Codable, Equatable {
     var portfolioItemCount: Int
     var createdAt: Date
     var updatedAt: Date
+    /// When the user first completed onboarding (first-time only). Used to compute
+    /// the north-star metric: time from download → first deployed URL.
+    var onboardingCompletedAt: Date?
+    /// When the user first shipped a project (first-time only). When this is set
+    /// alongside `onboardingCompletedAt`, the delta is the north-star metric.
+    var firstShippedAt: Date?
 
     /// Computed accessor over `datedPersonalFacts` — returns plain text strings.
     /// All existing callers (prompt builders, UI, relationship check-in card) use
@@ -307,6 +313,8 @@ struct LearnerModel: Codable, Equatable {
         case portfolioItemCount
         case createdAt
         case updatedAt
+        case onboardingCompletedAt
+        case firstShippedAt
     }
 
     /// Decodes from persisted JSON. If `datedPersonalFacts` is absent (old format),
@@ -337,6 +345,8 @@ struct LearnerModel: Codable, Equatable {
         portfolioItemCount = try container.decodeIfPresent(Int.self, forKey: .portfolioItemCount) ?? 0
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+        onboardingCompletedAt = try container.decodeIfPresent(Date.self, forKey: .onboardingCompletedAt)
+        firstShippedAt = try container.decodeIfPresent(Date.self, forKey: .firstShippedAt)
 
         // Migration: decode `datedPersonalFacts` if present (new format), otherwise
         // fall back to the legacy `personalFacts: [String]` key. The legacy key is
@@ -379,6 +389,8 @@ struct LearnerModel: Codable, Equatable {
         try container.encode(portfolioItemCount, forKey: .portfolioItemCount)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encodeIfPresent(onboardingCompletedAt, forKey: .onboardingCompletedAt)
+        try container.encodeIfPresent(firstShippedAt, forKey: .firstShippedAt)
     }
 
     /// Separate coding key enum for the legacy `personalFacts: [String]` key.

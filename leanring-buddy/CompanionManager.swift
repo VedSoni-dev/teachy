@@ -381,6 +381,8 @@ final class CompanionManager: ObservableObject {
         teachyScreenProofTask?.cancel()
         teachyScreenProofTask = nil
         ClickyAnalytics.trackOnboardingStarted()
+        // Stamp the onboarding-complete date for the north-star metric (first-time only).
+        teachyEngine.recordOnboardingCompleted()
         fadeOutOnboardingMusic()
 
         if isClickyCursorEnabled {
@@ -2340,12 +2342,31 @@ final class CompanionManager: ObservableObject {
     }
 
     func handleLessonPlayerCourseFinished() {
-        if let courseID = coursesManager.activeSession?.course.id {
+        // Capture course data before the session is cleared by the hide/end flow below.
+        let finishedCourseID = coursesManager.activeSession?.course.id
+        let finishedCourseTitle = coursesManager.activeSession?.course.title
+        let finishedCourseDescription = coursesManager.activeSession?.course.description
+        let finishedCourseHasArtifact = coursesManager.activeSession?.course.artifact != nil
+
+        if let courseID = finishedCourseID {
             Task {
                 let engineOutputs = await teachyEngine.processEvent(.courseCompleted(courseID: courseID))
                 captureEngineOutputs(engineOutputs)
             }
         }
+
+        // Courses that produce a built artifact (website, app, etc.) land in the
+        // Projects system — same portfolio arc as guided-task builds.
+        if finishedCourseHasArtifact,
+           let courseTitle = finishedCourseTitle,
+           let courseDescription = finishedCourseDescription {
+            let project = teachyEngine.createOrResumeProject(
+                title: courseTitle,
+                goalDescription: courseDescription
+            )
+            teachyEngine.shipProject(withID: project.id, deployedURL: nil)
+        }
+
         courseLessonHUDManager.hide()
         courseModeNotchDockManager.hide()
         applyVoiceKeytermsForActiveCourse()

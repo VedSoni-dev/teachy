@@ -307,33 +307,15 @@ struct NotchSetupOnboardingView: View {
                         .pointerCursor()
                     }
                 } else if isLastPage {
+                    // Quiet secondary — browse the full catalog without a guided seed.
                     Button {
                         finishTeachyProductOnboarding(startFirstWin: false)
                     } label: {
                         Text("Browse paths")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(DS.Colors.textPrimary)
+                            .foregroundColor(DS.Colors.textSecondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 7)
-                            .background(
-                                Capsule().fill(Color.white.opacity(0.08))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-
-                    Button {
-                        companionManager.playTeachyUISound(.celebration)
-                        finishTeachyProductOnboarding(startFirstWin: true)
-                    } label: {
-                        Text("Start First Win")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                Capsule().fill(DS.Colors.learnAccent)
-                            )
                     }
                     .buttonStyle(.plain)
                     .pointerCursor()
@@ -359,6 +341,24 @@ struct NotchSetupOnboardingView: View {
             }
 
             if isLastPage {
+                // Three tappable seeds — each completes onboarding, collapses the
+                // panel, and hands a build-shaped request to the companion so the
+                // [GUIDE:]/[PROJECT:] machinery takes over immediately.
+                VStack(spacing: 6) {
+                    firstShipSeedButton(
+                        label: "A page for someone I love",
+                        seedRequest: "I want to build my first ever website — a little page for someone I love — and actually put it online today. Walk me through the whole thing like I've never done this before."
+                    )
+                    firstShipSeedButton(
+                        label: "A site for my work or side thing",
+                        seedRequest: "I want to build my first website for my work or side project and get it live online today. Walk me through everything from scratch — I've never built a site before."
+                    )
+                    firstShipSeedButton(
+                        label: "Surprise me",
+                        seedRequest: "Pick something small and fun for my very first website and walk me through building it and putting it online today — I've never done this before, make it something I'll want to show people."
+                    )
+                }
+
                 Button {
                     companionManager.triggerOnboarding()
                     notchManager.collapse()
@@ -407,6 +407,36 @@ struct NotchSetupOnboardingView: View {
             companionManager.startClickyCourse(courseID: "build-a-website")
             notchManager.collapse()
         }
+    }
+
+    /// A full-width tappable seed button for the "What should your first ship be?"
+    /// final onboarding page. Completes onboarding, collapses the panel, then
+    /// fires a synthesized companion request so the build arc starts immediately.
+    private func firstShipSeedButton(label: String, seedRequest: String) -> some View {
+        Button {
+            companionManager.playTeachyUISound(.celebration)
+            companionManager.completeTeachyProductOnboarding()
+            notchManager.collapse()
+            companionManager.submitSyntheticCompanionRequest(seedRequest)
+        } label: {
+            HStack {
+                Text(label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.7))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(DS.Colors.learnAccent)
+            )
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
     }
 
     private var permissionsList: some View {
@@ -701,7 +731,7 @@ private enum TeachyOnboardingPage: Int, CaseIterable {
         case .seeYourScreen:
             return "I can see your screen"
         case .ready:
-            return "Start with a tiny First Win"
+            return "What should your first ship be?"
         }
     }
 
@@ -716,7 +746,7 @@ private enum TeachyOnboardingPage: Int, CaseIterable {
         case .seeYourScreen:
             return "Same vibe as the intro — collapse Teachy, and your blue buddy will fly to something real on your desk."
         case .ready:
-            return "First Win takes about ten minutes and shows the whole loop. Or browse paths — AI, coding, GitHub, YouTube, and more."
+            return "Let's make something real that goes live today. Pick what you want to build and Teachy will walk you through the whole thing — code, deploy, live URL."
         }
     }
 

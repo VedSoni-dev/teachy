@@ -163,4 +163,16 @@ enum ClickyAnalytics {
             "task_prompt_length": taskPrompt.count,
         ])
     }
+
+    // MARK: - North-star metric
+
+    /// Time from onboarding completion to the user's first shipped project.
+    /// This is the product's north-star: how fast does Teachy get someone to a
+    /// live URL in their first session? Fired exactly once per install.
+    static func trackFirstShip(secondsSinceOnboarding: Int) {
+        PostHogSDK.shared.capture("first_ship", properties: [
+            "seconds_since_onboarding": secondsSinceOnboarding,
+            "minutes_since_onboarding": secondsSinceOnboarding / 60,
+        ])
+    }
 }
