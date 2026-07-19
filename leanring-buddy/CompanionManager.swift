@@ -874,6 +874,17 @@ final class CompanionManager: ObservableObject {
         skip entirely if it doesn't fit the conversation): \(pendingProactiveMoments.joined(separator: " | "))
         """
 
+        // What they actually do day-to-day (from conversation-moment app sightings) —
+        // grounds AI-fluency recommendations in their real work, not generic advice.
+        let workflowSection = LearnerTemporalContext.recurringWorkflowSummary(from: teachyEngine.getLearnerModel())
+            .map { """
+
+
+            \($0). When there's a natural beat — not every turn — connect an answer to ONE specific \
+            AI workflow that would save time in what they really do, and offer to walk them through \
+            it (that becomes a [GUIDE:] task if they say yes).
+            """ } ?? ""
+
         let guidedTaskSection = guidedTaskPromptSection()
 
         return """
@@ -895,7 +906,7 @@ final class CompanionManager: ObservableObject {
           references like "that tab" without a clear match), describe it in words instead — don't
           say "here" with nothing backing it, that's worse than not pointing at all.
         - Feel like a sharp friend who actually wants them to get it — not a lecture.
-        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)\(proactiveMomentsSection)
+        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)\(proactiveMomentsSection)\(workflowSection)
         \(guidedTaskSection)
 
         You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
@@ -2389,6 +2400,21 @@ final class CompanionManager: ObservableObject {
         // builder and cleared after the prompt is built (same transient-per-turn
         // hygiene as pendingGuidedTaskVerificationResult).
         currentBrowserTabContext = await BrowserActiveTabReader.activeTabContext()
+
+        // Workflow signal: note what app the user was in at this conversation moment
+        // (only ever captured when they're already talking to Teachy — no background
+        // observation). Feeds the "what do they actually do day-to-day" AI-fluency
+        // recommendations; when an app crosses the recurring-use threshold, queue a
+        // one-time proactive suggestion through the existing moments pipeline.
+        if let frontmostContext = AccessibilityElementDetector.frontmostApplicationContext() {
+            let workflowSignalText = String(frontmostContext.prefix(100))
+            if let thresholdCrossedAppName = teachyEngine.recordWorkflowSignal(workflowSignalText) {
+                captureEngineOutputs([.nudge(
+                    text: "You spend real time in \(thresholdCrossedAppName) — there are AI workflows that could genuinely speed that up. Ask me about it when you're curious.",
+                    reason: "recurring workflow app"
+                )])
+            }
+        }
 
         // Build a compact text block the model can reference to pick an element by ax:ID.
         // Only built when the list is non-empty.

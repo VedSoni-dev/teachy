@@ -233,6 +233,13 @@ struct LearnerModel: Codable, Equatable {
     var detectedMood: String?
     /// Short dated history of mood detections. Trimmed to last 12 entries.
     var moodHistory: [DatedSignal<String>]
+    /// Dated app-context sightings ("AppName — window fragment") captured only at
+    /// moments the user talks to Teachy — the raw material for "what do they
+    /// actually do day-to-day" AI-workflow recommendations. Trimmed to last 40.
+    var workflowSignals: [TimestampedFact]
+    /// Apps a workflow recommendation has already been queued for, so each app is
+    /// only ever suggested once across sessions.
+    var workflowAppsAlreadySuggested: [String]
     /// Last time the outside-lesson relationship check-in card (Home tab) was shown
     /// and reacted to — gates re-showing it (see `TeachyEngine.recordRelationshipCheckInReaction`).
     var lastRelationshipCheckInAt: Date?
@@ -261,6 +268,8 @@ struct LearnerModel: Codable, Equatable {
         self.datedPersonalFacts = []
         self.humorReceptivityHistory = []
         self.moodHistory = []
+        self.workflowSignals = []
+        self.workflowAppsAlreadySuggested = []
         self.totalCoursesCompleted = 0
         self.totalGoalsCompleted = 0
         self.totalSessionMinutes = 0
@@ -285,6 +294,8 @@ struct LearnerModel: Codable, Equatable {
         case humorReceptivityHistory
         case detectedMood
         case moodHistory
+        case workflowSignals
+        case workflowAppsAlreadySuggested
         case lastRelationshipCheckInAt
         case prefersHintsOverAutomation
         case totalCoursesCompleted
@@ -313,6 +324,8 @@ struct LearnerModel: Codable, Equatable {
         humorReceptivityHistory = try container.decodeIfPresent([DatedSignal<HumorReceptivity>].self, forKey: .humorReceptivityHistory) ?? []
         detectedMood = try container.decodeIfPresent(String.self, forKey: .detectedMood)
         moodHistory = try container.decodeIfPresent([DatedSignal<String>].self, forKey: .moodHistory) ?? []
+        workflowSignals = try container.decodeIfPresent([TimestampedFact].self, forKey: .workflowSignals) ?? []
+        workflowAppsAlreadySuggested = try container.decodeIfPresent([String].self, forKey: .workflowAppsAlreadySuggested) ?? []
         lastRelationshipCheckInAt = try container.decodeIfPresent(Date.self, forKey: .lastRelationshipCheckInAt)
         prefersHintsOverAutomation = try container.decodeIfPresent(Bool.self, forKey: .prefersHintsOverAutomation)
         totalCoursesCompleted = try container.decodeIfPresent(Int.self, forKey: .totalCoursesCompleted) ?? 0
@@ -353,6 +366,8 @@ struct LearnerModel: Codable, Equatable {
         try container.encode(humorReceptivityHistory, forKey: .humorReceptivityHistory)
         try container.encodeIfPresent(detectedMood, forKey: .detectedMood)
         try container.encode(moodHistory, forKey: .moodHistory)
+        try container.encode(workflowSignals, forKey: .workflowSignals)
+        try container.encode(workflowAppsAlreadySuggested, forKey: .workflowAppsAlreadySuggested)
         try container.encodeIfPresent(lastRelationshipCheckInAt, forKey: .lastRelationshipCheckInAt)
         try container.encodeIfPresent(prefersHintsOverAutomation, forKey: .prefersHintsOverAutomation)
         try container.encode(totalCoursesCompleted, forKey: .totalCoursesCompleted)
@@ -508,6 +523,31 @@ struct LearnerModel: Codable, Equatable {
         // Keep at most 20 facts — trim from the oldest end.
         datedPersonalFacts = Array(datedPersonalFacts.suffix(20))
         updatedAt = Date()
+    }
+
+    /// Records an app-context sighting ("AppName — window fragment"). Throttled:
+    /// skipped when the most recent signal is the same app within 30 minutes, so a
+    /// long conversation inside one app doesn't flood all 40 slots with duplicates.
+    mutating func appendWorkflowSignal(_ signalText: String) {
+        let trimmed = signalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let appName = Self.workflowSignalAppName(from: trimmed)
+        if let latestSignal = workflowSignals.last,
+           Self.workflowSignalAppName(from: latestSignal.text) == appName,
+           Date().timeIntervalSince(latestSignal.capturedAt) < 1800 {
+            return
+        }
+
+        workflowSignals.append(TimestampedFact(text: trimmed, capturedAt: Date()))
+        workflowSignals = Array(workflowSignals.suffix(40))
+        updatedAt = Date()
+    }
+
+    /// The app-name portion of a workflow signal — the text before the first " — ".
+    static func workflowSignalAppName(from signalText: String) -> String {
+        signalText.components(separatedBy: " — ").first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? signalText
     }
 
     mutating func updateHumorReceptivity(_ value: HumorReceptivity) {

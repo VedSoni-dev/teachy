@@ -393,6 +393,30 @@ final class TeachyEngine: ObservableObject {
         saveState()
     }
 
+    /// Session-independent recorder for app-context sightings (mirrors `recordPersonalFact`).
+    /// Returns the app name when THIS sighting pushed the app over the recommendation
+    /// threshold (≥5 sightings across ≥2 distinct days, not previously suggested) — the
+    /// caller queues a proactive AI-workflow moment for it. Marks the app as suggested
+    /// in the same mutation so it can only ever fire once per app.
+    func recordWorkflowSignal(_ signalText: String) -> String? {
+        state.learnerModel.appendWorkflowSignal(signalText)
+
+        let appName = LearnerModel.workflowSignalAppName(from: signalText)
+        var newlyCrossedThresholdAppName: String?
+        if !state.learnerModel.workflowAppsAlreadySuggested.contains(appName) {
+            let appSignals = state.learnerModel.workflowSignals.filter {
+                LearnerModel.workflowSignalAppName(from: $0.text) == appName
+            }
+            let distinctDays = Set(appSignals.map { Calendar.current.startOfDay(for: $0.capturedAt) })
+            if appSignals.count >= 5, distinctDays.count >= 2 {
+                state.learnerModel.workflowAppsAlreadySuggested.append(appName)
+                newlyCrossedThresholdAppName = appName
+            }
+        }
+        saveState()
+        return newlyCrossedThresholdAppName
+    }
+
     /// Get skills in a specific domain.
     func skills(inDomain domain: String) -> [LearnerSkillNode] {
         state.learnerModel.skills(inDomain: domain)

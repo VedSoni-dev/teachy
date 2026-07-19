@@ -87,6 +87,36 @@ enum LearnerTemporalContext {
         }
     }
 
+    // MARK: - Daily-workflow recognition
+
+    /// Summarizes which apps the learner recurringly works in, from `workflowSignals`
+    /// (sightings captured only at conversation moments). Returns nil until at least
+    /// one app has been seen 3+ times across 2+ distinct days — one-off sightings are
+    /// noise, not a workflow. Feeds the companion prompt's AI-fluency recommendations.
+    static func recurringWorkflowSummary(from model: LearnerModel) -> String? {
+        let calendar = Calendar.current
+        var sightingCountByApp: [String: Int] = [:]
+        var distinctDaysByApp: [String: Set<Date>] = [:]
+
+        for signal in model.workflowSignals {
+            let appName = LearnerModel.workflowSignalAppName(from: signal.text)
+            guard !appName.isEmpty else { continue }
+            sightingCountByApp[appName, default: 0] += 1
+            distinctDaysByApp[appName, default: []].insert(calendar.startOfDay(for: signal.capturedAt))
+        }
+
+        let recurringApps = sightingCountByApp
+            .filter { appName, count in
+                count >= 3 && (distinctDaysByApp[appName]?.count ?? 0) >= 2
+            }
+            .sorted { $0.value > $1.value }
+            .prefix(4)
+            .map { "\($0.key) (\($0.value)×)" }
+
+        guard !recurringApps.isEmpty else { return nil }
+        return "They regularly work in: \(recurringApps.joined(separator: ", "))"
+    }
+
     // MARK: - UI helper — relative date label
 
     /// Human-readable relative time label for use in the "Teachy remembers" UI.
