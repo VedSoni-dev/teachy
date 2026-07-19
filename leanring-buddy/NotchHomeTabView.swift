@@ -29,6 +29,8 @@ struct NotchHomeTabView: View {
         VStack(alignment: .leading, spacing: 14) {
             relationshipCheckInSection
 
+            proactiveMomentsSection
+
             pushToTalkInstructions
 
             trustAndPrivacySection
@@ -46,6 +48,35 @@ struct NotchHomeTabView: View {
             watchIntroAgainButton
 
             dmFeedbackButton
+        }
+    }
+
+    /// Engine-computed wins and nudges (level-ups, retention reminders, celebrations)
+    /// queued since the last chat. They also get offered to the coach's next spoken
+    /// turn and are consumed there — this card is the visual mirror until that happens.
+    @ViewBuilder
+    private var proactiveMomentsSection: some View {
+        if !companionManager.pendingProactiveMoments.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.Colors.learnAccent)
+                    Text("Since last time")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                }
+
+                ForEach(companionManager.pendingProactiveMoments, id: \.self) { momentText in
+                    Text("· \(momentText)")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassCard(tint: DS.Colors.learnAccent, prominent: true)
         }
     }
 

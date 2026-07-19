@@ -215,6 +215,13 @@ final class CompanionManager: ObservableObject {
     /// `buildCompanionVoiceResponseSystemPrompt`, cleared after the prompt is built.
     private var currentBrowserTabContext: String?
 
+    /// Engine-computed moments (celebrations, skill level-ups, retention nudges)
+    /// waiting to be surfaced. The engine has always produced these but every call
+    /// site discarded them — captured here instead, shown in the Home tab, and woven
+    /// into the next companion turn's prompt (then consumed — deliver-once). Capped
+    /// small: these are garnishes, not a feed.
+    @Published private(set) var pendingProactiveMoments: [String] = []
+
     /// The currently running AI response task, if any. Cancelled when the user
     /// speaks again so a new response can begin immediately.
     private var currentResponseTask: Task<Void, Never>?
@@ -843,6 +850,16 @@ final class CompanionManager: ObservableObject {
         let browserTabSection = currentBrowserTabContext
             .map { "\n\nThe browser tab they're on right now: \($0)." } ?? ""
 
+        // Engine moments (level-ups, retention nudges, celebrations) queued since the
+        // last turn — offered to the model as optional garnish, consumed after this
+        // prompt is built so each moment is only ever offered once.
+        let proactiveMomentsSection = pendingProactiveMoments.isEmpty ? "" : """
+
+
+        Good news you could mention if there's a natural beat this turn (one short line max, \
+        skip entirely if it doesn't fit the conversation): \(pendingProactiveMoments.joined(separator: " | "))
+        """
+
         let guidedTaskSection = guidedTaskPromptSection()
 
         return """
@@ -864,7 +881,7 @@ final class CompanionManager: ObservableObject {
           references like "that tab" without a clear match), describe it in words instead — don't
           say "here" with nothing backing it, that's worse than not pointing at all.
         - Feel like a sharp friend who actually wants them to get it — not a lecture.
-        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)
+        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)\(proactiveMomentsSection)
         \(guidedTaskSection)
 
         You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
@@ -1049,6 +1066,7 @@ final class CompanionManager: ObservableObject {
                 let systemPromptForThisTurn = buildCompanionVoiceResponseSystemPrompt()
                 pendingGuidedTaskVerificationResult = nil
                 currentBrowserTabContext = nil
+                pendingProactiveMoments = []
 
                 let (fullResponseText, _) = try await claudeAPI.analyzeImageStreaming(
                     images: labeledImages,
@@ -2072,9 +2090,38 @@ final class CompanionManager: ObservableObject {
         speakErrorMessage(companionAPIErrorUtterance(for: error))
     }
 
+    /// Distills engine outputs into short one-liners worth proactively mentioning.
+    /// Only celebration-shaped outputs qualify — coaching/verification outputs are
+    /// the engine's in-lesson machinery, not moments to bring up later.
+    func captureEngineOutputs(_ engineOutputs: [CoachingOutput]) {
+        for engineOutput in engineOutputs {
+            let momentText: String?
+            switch engineOutput {
+            case .celebration(let messageText):
+                momentText = messageText
+            case .nudge(let text, _):
+                momentText = text
+            case .skillLevelChanged(let skillID, let oldLevel, let newLevel):
+                let readableSkillName = skillID.replacingOccurrences(of: "-", with: " ")
+                momentText = "Their \(readableSkillName) skill just moved up: \(oldLevel) → \(newLevel)."
+            default:
+                momentText = nil
+            }
+            if let momentText, !momentText.isEmpty, !pendingProactiveMoments.contains(momentText) {
+                pendingProactiveMoments.append(momentText)
+            }
+        }
+        if pendingProactiveMoments.count > 3 {
+            pendingProactiveMoments.removeFirst(pendingProactiveMoments.count - 3)
+        }
+    }
+
     func handleLessonPlayerCourseFinished() {
         if let courseID = coursesManager.activeSession?.course.id {
-            Task { _ = await teachyEngine.processEvent(.courseCompleted(courseID: courseID)) }
+            Task {
+                let engineOutputs = await teachyEngine.processEvent(.courseCompleted(courseID: courseID))
+                captureEngineOutputs(engineOutputs)
+            }
         }
         courseLessonHUDManager.hide()
         courseModeNotchDockManager.hide()

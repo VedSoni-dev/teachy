@@ -828,7 +828,10 @@ final class LessonPlayer: ObservableObject {
                 coursesManager.noteLearnerConfusedBy(item)
             }
 
-            Task { _ = await host.teachyEngine.processEvent(.teachBackResponse(responseText: answer)) }
+            Task {
+                let engineOutputs = await host.teachyEngine.processEvent(.teachBackResponse(responseText: answer))
+                host.captureEngineOutputs(engineOutputs)
+            }
 
             if assessment.understood {
                 if let concepts = goal.teachingContext?.concepts {
@@ -1002,10 +1005,13 @@ final class LessonPlayer: ObservableObject {
             voiceInitiated: true
         )
 
-        Task { _ = await host.teachyEngine.processEvent(.goalCompleted(
-            goalID: session.currentGoal.id,
-            verificationSummary: "completed: \(session.currentGoal.title)"
-        )) }
+        Task {
+            let engineOutputs = await host.teachyEngine.processEvent(.goalCompleted(
+                goalID: session.currentGoal.id,
+                verificationSummary: "completed: \(session.currentGoal.title)"
+            ))
+            host.captureEngineOutputs(engineOutputs)
+        }
 
         if coursesManager.advanceToNextStep() != nil {
             host.setCourseVoiceStateResponding()
