@@ -1341,11 +1341,39 @@ final class CompanionManager: ObservableObject {
             activeGuidedTask?.steps = generatedSteps
             print("🧭 Guided task steps ready (\(generatedSteps.count)): \(task.title)")
 
+            // The tool's site was just auto-opened — the images captured at turn start
+            // predate it, so the coach literally couldn't see the page it opened (the
+            // "opened Vapi and just stood there" bug). Give the page a beat to load,
+            // then re-capture so the plan intro coaches step 1 against what's ACTUALLY
+            // on screen now. The re-capture also refreshes the AX element registry and
+            // browser tab context for the new page, so pointing resolves against it.
+            var planIntroImages = images
+            if task.recommendedTool != nil {
+                try? await Task.sleep(for: .milliseconds(2500))
+                if let freshScreenCaptures = try? await CompanionScreenCaptureUtility.captureAllScreensAsJPEG() {
+                    planIntroImages = await buildLabeledAnnotatedImages(
+                        screenCaptures: freshScreenCaptures,
+                        mouseOutlineContext: nil
+                    )
+                }
+            }
+
             // Reach through `.goal` (the nested `CourseLearningGoal`) to build the
             // plan-intro summary — each `AgenticStep` wraps a `CourseLearningGoal`.
             let stepSummary = generatedSteps.enumerated()
                 .map { "\($0.offset + 1). \($0.element.goal.title) — \($0.element.goal.goal)" }
                 .joined(separator: "; ")
+
+            let toolOpenCoachingAddendum = task.recommendedTool == nil ? "" : """
+
+
+            The tool's site was just opened for them — their screen shows it right now. Coach step 1 \
+            against what's ACTUALLY on that page, pointing at the first real thing to look at or click. \
+            Gauge their familiarity from memory and what they've said: brand-new to this tool means \
+            walking them into signup/onboarding first — don't assume an account or prior knowledge. \
+            Keep guiding turn after turn until this is done; never open a door and just stand there.
+            """
+
             let planIntroPrompt = """
             You just figured out the plan for "\(task.title)": \(stepSummary).
 
@@ -1353,11 +1381,11 @@ final class CompanionManager: ObservableObject {
             bullet list, just talk through it like you would out loud ("first we'll..., then...").
             Then transition straight into coaching them on step 1. Only say "here"/"right here" if
             you're including a [POINT:...] tag with it — if you can't confidently point at something
-            specific yet, describe it in words instead. Tag [GUIDE: \(task.title)] to keep guidance going.
+            specific yet, describe it in words instead. Tag [GUIDE: \(task.title)] to keep guidance going.\(toolOpenCoachingAddendum)
             """
 
             let (planResponseText, _) = try await claudeAPI.analyzeImageStreaming(
-                images: images,
+                images: planIntroImages,
                 systemPrompt: buildCompanionVoiceResponseSystemPrompt(),
                 conversationHistory: historyForAPI,
                 userPrompt: planIntroPrompt,
@@ -1436,6 +1464,7 @@ final class CompanionManager: ObservableObject {
         // `currentStep` is `AgenticStep` — reach through `.goal` (the nested
         // `CourseLearningGoal`) for the human-readable success description.
         lines.append("Current step: \(currentStep.goal.goal)")
+        lines.append("Adapt depth to their familiarity — if memory says they're new to this tool, guide signup/onboarding as real steps, not assumed prerequisites.")
 
         // Let the model know whether this is a coach step (user acts, Teachy guides)
         // or an act step (Teachy will execute mechanically — the model's role is to
