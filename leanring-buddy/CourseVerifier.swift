@@ -25,6 +25,10 @@ struct CourseVerificationResult: Codable {
     let whatsGood: String
     let whatsMissing: String?
     let suggestedNextAction: String?
+    /// One plain-words sentence describing any error message, stack trace, or
+    /// failure state visible on screen. Nil when no error is visible. Optional
+    /// so old-shaped model responses that omit this field parse without failure.
+    let visibleErrorSummary: String?
 }
 
 struct CourseVerifyResult {
@@ -88,7 +92,8 @@ enum CourseVerifier {
                 status: .pass,
                 whatsGood: "user confirmed advance with no vision criteria",
                 whatsMissing: nil,
-                suggestedNextAction: nil
+                suggestedNextAction: nil,
+                visibleErrorSummary: nil
             )
         }
 
@@ -111,14 +116,16 @@ enum CourseVerifier {
                     status: .pass,
                     whatsGood: "user advance with no criteria to check",
                     whatsMissing: nil,
-                    suggestedNextAction: nil
+                    suggestedNextAction: nil,
+                    visibleErrorSummary: nil
                 )
             }
             return CourseVerificationResult(
                 status: .offTrack,
                 whatsGood: "",
                 whatsMissing: "no success criteria defined for this goal",
-                suggestedNextAction: "try the goal step and say next step when done"
+                suggestedNextAction: "try the goal step and say next step when done",
+                visibleErrorSummary: nil
             )
         }
 
@@ -136,7 +143,8 @@ enum CourseVerifier {
                     status: .pass,
                     whatsGood: "could not capture screen — soft passing",
                     whatsMissing: nil,
-                    suggestedNextAction: nil
+                    suggestedNextAction: nil,
+                    visibleErrorSummary: nil
                 )
             }
         }
@@ -151,7 +159,7 @@ enum CourseVerifier {
         you verify whether a course goal is complete. look at the screenshot only.
 
         reply with ONLY a JSON object:
-        {"status":"pass"|"partial"|"offTrack","whatsGood":"short description of what IS correct on screen","whatsMissing":"what's still missing or wrong — null if pass","suggestedNextAction":"one specific next move the learner should take — null if pass"}
+        {"status":"pass"|"partial"|"offTrack","whatsGood":"short description of what IS correct on screen","whatsMissing":"what's still missing or wrong — null if pass","suggestedNextAction":"one specific next move the learner should take — null if pass","visibleErrorSummary":"one plain-words sentence describing any error message, stack trace, or failure state visible on screen — null if none"}
 
         rules:
         - status "pass" = the goal is clearly complete on screen.
@@ -160,6 +168,7 @@ enum CourseVerifier {
         - whatsGood should always name something concrete the learner did or that is visible — never leave it empty.
         - suggestedNextAction should be one short, specific instruction — not a list.
         - be honest but kind. "close" is partial, not offTrack.
+        - visibleErrorSummary: set this ONLY when an actual error message, exception, stack trace, or failure state is clearly visible on screen. null otherwise — do not set it for a missing feature or incomplete state.
         """
 
         let userPrompt = """
@@ -181,19 +190,23 @@ enum CourseVerifier {
                 status: .offTrack,
                 whatsGood: "",
                 whatsMissing: "vision check failed — \(error.localizedDescription)",
-                suggestedNextAction: "try the step and say next step when done"
+                suggestedNextAction: "try the step and say next step when done",
+                visibleErrorSummary: nil
             )
         }
 
         let parsed = parseStructuredResult(from: rawResponse)
 
         // Soft pass when the author allows user advance and the learner confirmed.
+        // Preserve visibleErrorSummary even on a soft pass — if there's an error on
+        // screen the coach protocol should still fire, even though we're advancing.
         if parsed.status == .offTrack && treatAsUserAdvance && allowsUserAdvance {
             return CourseVerificationResult(
                 status: .pass,
                 whatsGood: parsed.whatsGood.isEmpty ? "user confirmed" : parsed.whatsGood,
                 whatsMissing: nil,
-                suggestedNextAction: nil
+                suggestedNextAction: nil,
+                visibleErrorSummary: parsed.visibleErrorSummary
             )
         }
 
@@ -220,14 +233,16 @@ enum CourseVerifier {
                     status: .pass,
                     whatsGood: "vision confirmed completion",
                     whatsMissing: nil,
-                    suggestedNextAction: nil
+                    suggestedNextAction: nil,
+                    visibleErrorSummary: nil
                 )
             }
             return CourseVerificationResult(
                 status: .offTrack,
                 whatsGood: "",
                 whatsMissing: "could not parse verification response",
-                suggestedNextAction: "try the step and say next step"
+                suggestedNextAction: "try the step and say next step",
+                visibleErrorSummary: nil
             )
         }
 
@@ -245,12 +260,15 @@ enum CourseVerifier {
         let whatsGood = (object["whatsGood"] as? String) ?? ""
         let whatsMissing = object["whatsMissing"] as? String
         let suggestedNextAction = object["suggestedNextAction"] as? String
+        // New optional field — nil when absent so old-shaped model responses parse safely.
+        let visibleErrorSummary = object["visibleErrorSummary"] as? String
 
         return CourseVerificationResult(
             status: status,
             whatsGood: whatsGood,
             whatsMissing: whatsMissing,
-            suggestedNextAction: suggestedNextAction
+            suggestedNextAction: suggestedNextAction,
+            visibleErrorSummary: visibleErrorSummary
         )
     }
 }

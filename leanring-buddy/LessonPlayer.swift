@@ -489,11 +489,30 @@ final class LessonPlayer: ObservableObject {
                         try? await host.speechSynthesizer.speakText(
                             "you're close — here's what's still needed."
                         )
+                        // Debugging-coach protocol appended when an error is visible on
+                        // screen. Course responses go through CourseCoachMessageParts which
+                        // only strips [INFO]/[TODO]/[REMEMBER] — NOT [CLIPBOARD:] — so this
+                        // variant uses dictate/point instead of clipboard to stay safe.
+                        let partialErrorProtocolBlock: String
+                        if let errorSummary = structuredResult.visibleErrorSummary, !errorSummary.isEmpty {
+                            host.teachyEngine.recordErrorReadingPractice()
+                            partialErrorProtocolBlock = """
+
+                            AN ERROR IS VISIBLE ON THEIR SCREEN: \(errorSummary). Debug-coach protocol: \
+                            (1) one calm breath — errors are information, not failure, say so in half a \
+                            sentence; (2) read the FIRST line of the error out loud, in plain words; \
+                            (3) dictate the exact error text and what they were trying to do so they \
+                            can paste it into their AI tool — point at the error text on screen; \
+                            (4) verify the fix on screen before moving on. Teach the protocol by doing it.
+                            """
+                        } else {
+                            partialErrorProtocolBlock = ""
+                        }
                         let partialAsk = """
                         The screen check came back PARTIAL for "\(goal.title)".
                         What they got right: \(structuredResult.whatsGood)
                         \(missingDetail)
-                        \(nextAction)
+                        \(nextAction)\(partialErrorProtocolBlock)
                         Acknowledge what they did right first, then guide them to the ONE missing piece. \
                         Point at it. Don't re-teach what already worked.
                         """
@@ -526,12 +545,31 @@ final class LessonPlayer: ObservableObject {
                         try? await host.speechSynthesizer.speakText(
                             "not quite yet — let me help you finish this."
                         )
+                        // Debugging-coach protocol appended when an error is visible on
+                        // screen. Course responses go through CourseCoachMessageParts which
+                        // only strips [INFO]/[TODO]/[REMEMBER] — NOT [CLIPBOARD:] — so this
+                        // variant uses dictate/point instead of clipboard to stay safe.
+                        let offTrackErrorProtocolBlock: String
+                        if let errorSummary = structuredResult.visibleErrorSummary, !errorSummary.isEmpty {
+                            host.teachyEngine.recordErrorReadingPractice()
+                            offTrackErrorProtocolBlock = """
+
+                            AN ERROR IS VISIBLE ON THEIR SCREEN: \(errorSummary). Debug-coach protocol: \
+                            (1) one calm breath — errors are information, not failure, say so in half a \
+                            sentence; (2) read the FIRST line of the error out loud, in plain words; \
+                            (3) dictate the exact error text and what they were trying to do so they \
+                            can paste it into their AI tool — point at the error text on screen; \
+                            (4) verify the fix on screen before moving on. Teach the protocol by doing it.
+                            """
+                        } else {
+                            offTrackErrorProtocolBlock = ""
+                        }
                         let offTrackAsk: String
                         if failureCount >= 2, goal.toolPolicy == .canDoForThem || goal.toolPolicy == .helpWhenStuck {
                             offTrackAsk = """
                             They've tried this goal "\(goal.title)" multiple times and are still off track.
                             What they got right: \(structuredResult.whatsGood)
-                            What's missing: \(structuredResult.whatsMissing ?? "the goal isn't done yet")
+                            What's missing: \(structuredResult.whatsMissing ?? "the goal isn't done yet")\(offTrackErrorProtocolBlock)
                             They seem frustrated. Since tool policy allows it, offer to do the specific \
                             automatable part for them — then explain what you did so they still learn. \
                             Be direct and kind.
@@ -540,7 +578,7 @@ final class LessonPlayer: ObservableObject {
                             offTrackAsk = """
                             They tried to move on but this goal isn't done: \(goal.goal).
                             What they got right: \(structuredResult.whatsGood)
-                            What's missing: \(structuredResult.whatsMissing ?? "the goal isn't done yet")
+                            What's missing: \(structuredResult.whatsMissing ?? "the goal isn't done yet")\(offTrackErrorProtocolBlock)
                             Acknowledge what they did right, then help them finish — point at what still matters, \
                             or do a small action if they're stuck.
                             """

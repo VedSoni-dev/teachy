@@ -1705,6 +1705,22 @@ final class CompanionManager: ObservableObject {
                 verificationLine += " Still missing: \(whatsMissing)."
             }
             lines.append(verificationLine)
+
+            // Debugging-coach protocol: fires whenever a visible error is detected on
+            // screen during a verification turn. This is the moment people quit — make
+            // it the moment they learn. Record skill practice immediately so the engine
+            // tracks exposure across sessions regardless of what the model says next.
+            if let errorSummary = verification.visibleErrorSummary, !errorSummary.isEmpty {
+                teachyEngine.recordErrorReadingPractice()
+                lines.append("""
+                AN ERROR IS VISIBLE ON THEIR SCREEN: \(errorSummary). Debug-coach protocol — this is the moment \
+                people quit, make it the moment they learn: (1) one calm breath — errors are information, \
+                not failure, say so in half a sentence; (2) read the FIRST line of the error together, out \
+                loud, in plain words; (3) craft the paste-back message for their AI tool with [CLIPBOARD: ...] \
+                — the error verbatim plus one line of framing about what they were trying to do; (4) after \
+                they paste it, verify the fix on screen before moving on. Teach the protocol by doing it.
+                """)
+            }
         }
         // `currentStep` is `AgenticStep` — reach through `.goal` (the nested
         // `CourseLearningGoal`) for the human-readable success description.

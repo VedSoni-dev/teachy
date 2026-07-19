@@ -439,6 +439,23 @@ final class TeachyEngine: ObservableObject {
         saveState()
     }
 
+    /// Record one practice occurrence of the "reading errors" skill — the single most
+    /// transferable builder skill, made visible in the Skills tab alongside the others.
+    /// Called each time the debugging-coach protocol fires (an error was visible on
+    /// screen during a verification turn) to track exposure over time. Uses
+    /// `noteSkillUsed` (practice mark) rather than `noteSkillVerified` (proficiency
+    /// jump) because seeing one error does not prove mastery — repeated exposure across
+    /// sessions builds the skill naturally through the SM-2 review path.
+    func recordErrorReadingPractice() {
+        state.learnerModel.noteSkillUsed(
+            "reading-errors",
+            skillName: "Reading errors",
+            domain: "programming",
+            context: "error-visible-during-verification"
+        )
+        saveState()
+    }
+
     /// Stamps onboarding-complete timestamp the first time it's called.
     /// Idempotent — subsequent calls are no-ops so re-entrant callers are safe.
     func recordOnboardingCompleted() {
