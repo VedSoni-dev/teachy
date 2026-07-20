@@ -14,6 +14,7 @@
 
 import AVFoundation
 import AppKit
+import Combine
 import SwiftUI
 
 /// The permissions walked through by the choreography, in presentation order.
