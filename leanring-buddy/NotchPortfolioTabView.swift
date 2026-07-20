@@ -14,6 +14,7 @@ struct NotchPortfolioTabView: View {
     @ViewBuilder
     var body: some View {
         let portfolio = companionManager.teachyEngine.portfolioManager
+        let learnerModel = companionManager.teachyEngine.getLearnerModel()
 
         VStack(alignment: .leading, spacing: 14) {
             portfolioHeader
@@ -34,6 +35,8 @@ struct NotchPortfolioTabView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
+
+            teachingDemosSection(learnerModel: learnerModel)
         }
     }
 
@@ -238,6 +241,71 @@ struct NotchPortfolioTabView: View {
         }
         .padding(12)
         .glassCard(cornerRadius: 12, tint: DS.Colors.portfolioAccent)
+    }
+
+    /// "In your own words" — teaching demos captured when a teach-back was run at
+    /// teach-someone-else depth. Only that depth produces a `TeachingDemo`
+    /// (see `TeachBackEngine.runTeachSomeoneElse`), so this section is empty for
+    /// learners who've only done quick checks or full explanations.
+    private func teachingDemosSection(learnerModel: LearnerModel) -> some View {
+        let recentDemos = learnerModel.teachingDemos
+            .sorted { $0.recordedAt > $1.recordedAt }
+            .prefix(5)
+
+        guard !recentDemos.isEmpty else { return AnyView(EmptyView()) }
+
+        return AnyView(
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: "quote.bubble")
+                        .font(.system(size: 12))
+                        .foregroundColor(DS.Colors.portfolioAccent)
+                    Text("In Your Own Words")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                }
+
+                ForEach(Array(recentDemos)) { demo in
+                    teachingDemoRow(demo: demo, learnerModel: learnerModel)
+                }
+            }
+            .padding(14)
+            .glassCard(tint: DS.Colors.portfolioAccent)
+        )
+    }
+
+    private func teachingDemoRow(demo: TeachingDemo, learnerModel: LearnerModel) -> some View {
+        let skillDisplayName = learnerModel.skillNode(byID: demo.skillID)?.skillName
+            ?? demo.skillID.replacingOccurrences(of: "-", with: " ")
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(skillDisplayName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.Colors.textPrimary)
+
+                Spacer()
+
+                Text("\(Int(demo.qualityScore * 100))%")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundColor(DS.Colors.portfolioAccent)
+            }
+
+            Text(demo.transcriptText)
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textTertiary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(demo.recordedAt, style: .relative)
+                .font(.system(size: 9))
+                .foregroundColor(DS.Colors.textTertiary)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DS.Colors.portfolioAccent.opacity(0.06))
+        )
     }
 
     /// Puts a ready-to-send brag on the clipboard. The live artifact URL is the

@@ -1025,6 +1025,19 @@ struct NotchCoursesTabView: View {
                                     )
                             }
 
+                            if companionManager.coursesManager.recentlyAutoUpdatedCourseIDs.contains(course.id) {
+                                // Silent auto-update just refreshed this course —
+                                // the chip clears the next time it's started.
+                                Text("updated")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(DS.Colors.success)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule().fill(DS.Colors.success.opacity(0.16))
+                                    )
+                            }
+
                             if isCompleted {
                                 Image(systemName: "checkmark.circle.fill")
                                     .font(.system(size: 12))
