@@ -34,7 +34,10 @@ if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
     export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 fi
 
-GITHUB_REPO="VedSoni-dev/teachy"
+# Public distribution repo — DMG releases, Sparkle appcast, and the course
+# registry live here so the (now private) code repo can stay private without
+# breaking downloads or auto-updates.
+GITHUB_REPO="VedSoni-dev/teachy-releases"
 SPARKLE_KEYCHAIN_ACCOUNT="teachy"
 NOTARIZE="${NOTARIZE:-0}"
 
@@ -268,12 +271,12 @@ else
     GATEKEEPER_NOTES="$(cat <<'NOTES'
 ### First open (Gatekeeper)
 
-This community build is **not** Apple-notarized (Teachy is free OSS without the paid Developer Program).
+This community build is **not** Apple-notarized (keeps Teachy free).
 
 1. Drag **Teachy.app** to Applications
 2. **Right-click** Teachy → **Open** → click **Open**
    - Or: open once, then System Settings → Privacy & Security → **Open Anyway**
-3. Grant Microphone, Screen Recording, and Accessibility
+3. Teachy walks you through permissions, then asks for your free OpenRouter key — no server or setup needed
 
 Later updates via Sparkle keep working after that first allow.
 NOTES
@@ -287,7 +290,7 @@ gh release create "${TAG}" "${DMG_PATH}" \
     --notes "$(cat <<EOF
 ## Teachy ${MARKETING_VERSION}
 
-Free macOS download. Run a Teachy proxy (see README), then coach yourself through real work on screen.
+Free macOS download. Paste your free OpenRouter key in-app and coach yourself through real work on screen — no server needed.
 
 **Direct download:** https://github.com/${GITHUB_REPO}/releases/download/${TAG}/${DMG_FILENAME}
 
@@ -298,15 +301,23 @@ EOF
 )" \
     --latest
 
-echo "📝 Committing appcast.xml…"
-cd "${PROJECT_DIR}"
-git add appcast.xml
-if git diff --cached --quiet; then
-    echo "   (appcast already up to date)"
+echo "📝 Publishing appcast.xml to ${GITHUB_REPO}…"
+# The Sparkle feed URL baked into the app points at the PUBLIC releases repo,
+# so the generated appcast is published there via the GitHub contents API —
+# the (private) code repo keeps a local copy purely as generator state.
+APPCAST_CONTENT_B64=$(base64 -i "${PROJECT_DIR}/appcast.xml" | tr -d '\n')
+APPCAST_EXISTING_SHA=$(gh api "repos/${GITHUB_REPO}/contents/appcast.xml" --jq .sha 2>/dev/null || echo "")
+if [ -n "${APPCAST_EXISTING_SHA}" ]; then
+    gh api -X PUT "repos/${GITHUB_REPO}/contents/appcast.xml" \
+        -f message="Update Sparkle appcast for v${MARKETING_VERSION}" \
+        -f content="${APPCAST_CONTENT_B64}" \
+        -f sha="${APPCAST_EXISTING_SHA}" > /dev/null
 else
-    git commit -m "Update Sparkle appcast for v${MARKETING_VERSION}"
-    git push origin HEAD || echo "   (push failed — push appcast.xml manually)"
+    gh api -X PUT "repos/${GITHUB_REPO}/contents/appcast.xml" \
+        -f message="Update Sparkle appcast for v${MARKETING_VERSION}" \
+        -f content="${APPCAST_CONTENT_B64}" > /dev/null
 fi
+echo "✅ appcast published"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"

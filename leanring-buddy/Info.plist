@@ -4,8 +4,19 @@
 <dict>
 	<key>LSUIElement</key>
 	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>app.teachy.mac.deeplink</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>teachy</string>
+			</array>
+		</dict>
+	</array>
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy/main/appcast.xml</string>
+	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy-releases/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>Re+Pudwbgsw2tWRFX+mKoAZXmBLgsiv5sraFnXKdLmk=</string>
 	<key>SUEnableAutomaticChecks</key>
@@ -15,11 +26,11 @@
 	<key>WorkerBaseURL</key>
 	<string>http://localhost:8787</string>
 	<key>TeachyAcademyRegistryURL</key>
-	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy/main/academy/registry.json</string>
+	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy-releases/main/registry.json</string>
 	<key>TeachyAcademyWebsiteURL</key>
 	<string>https://vedsoni-dev.github.io/teachy/</string>
 	<key>ClickyAcademyRegistryURL</key>
-	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy/main/academy/registry.json</string>
+	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy-releases/main/registry.json</string>
 	<key>ClickyAcademyWebsiteURL</key>
 	<string>https://vedsoni-dev.github.io/teachy/</string>
 	<key>NSMicrophoneUsageDescription</key>

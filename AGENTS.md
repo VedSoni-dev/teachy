@@ -13,7 +13,7 @@ Push-to-talk (ctrl+option) captures voice, transcribed via AssemblyAI (or Apple 
 
 **Teachy Academy:** Free open platform — static site in `academy/` (retro Facebook-style wall) + `registry.json`. App Learn tab installs course JSON from URL/GitHub into `~/.teachy/courses/` (legacy `~/.clicky/courses/` still works).
 
-**Distribution:** Free macOS DMGs via GitHub Releases. Default shipping is a **community build** (ad-hoc signed, no Apple notarization — no paid Developer Program required). Users right-click → Open once for Gatekeeper. Sparkle (`TeachySoftwareUpdater`) checks `appcast.xml` on `main` and verifies EdDSA signatures before updating. Optional `NOTARIZE=1` path exists if a maintainer later has Developer ID.
+**Distribution:** Free (closed-source, BYOK) macOS DMGs via GitHub Releases on the PUBLIC `VedSoni-dev/teachy-releases` repo — DMGs, `appcast.xml` (Sparkle feed), `registry.json`, and the free course library live there so this code repo can be private without breaking downloads/updates/installs. `scripts/release.sh` builds locally and publishes to that repo (appcast via the GitHub contents API). Default shipping is a **community build** (ad-hoc signed, no Apple notarization). Users right-click → Open once for Gatekeeper. Sparkle (`TeachySoftwareUpdater`) verifies EdDSA signatures before updating. The app registers the `teachy://` URL scheme — `teachy://install?url=<course JSON>` is the osu!-style one-click install path from the Academy website's `academy/courses.html` store page.
 
 All API keys live on the Teachy proxy (local dev server or Cloudflare Worker) — nothing sensitive ships in the app.
 

@@ -1,9 +1,8 @@
 # Teachy
 
-**Teachy** is free & open-source macOS software — the ultimate free teaching companion. A 1:1 tutor in your menu bar that sees your screen, points at real UI, and coaches you until something actually runs.
+**Teachy** is free macOS software — the ultimate free teaching companion. A 1:1 tutor in your menu bar that sees your screen, points at real UI, and coaches you until something actually runs. Free to use, bring your own key; the code is proprietary.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Download](https://img.shields.io/badge/download-macOS%20DMG-black.svg)](https://github.com/VedSoni-dev/teachy/releases/latest)
+[![Download](https://img.shields.io/badge/download-macOS%20DMG-black.svg)](https://github.com/VedSoni-dev/teachy-releases/releases/latest)
 [![Website](https://img.shields.io/badge/website-live-brightgreen.svg)](https://vedsoni-dev.github.io/teachy/)
 
 > **North star:** free 1:1 teaching for everyone — practice on the real screen, not another video player.
@@ -16,7 +15,7 @@ Born from Farza’s [Clicky](https://www.heyclicky.com/) experiments. This line 
 
 ## Free download
 
-**→ [Download Teachy.dmg](https://github.com/VedSoni-dev/teachy/releases/latest/download/Teachy.dmg)** · [All releases](https://github.com/VedSoni-dev/teachy/releases/latest)
+**→ [Download Teachy.dmg](https://github.com/VedSoni-dev/teachy-releases/releases/latest/download/Teachy.dmg)** · [All releases](https://github.com/VedSoni-dev/teachy-releases/releases)
 
 ### First open (Gatekeeper)
 
@@ -39,7 +38,7 @@ Installed apps can **Check for Updates…** under Home → Updates (Sparkle).
 - **Teacher clips** — optional videos beside the cursor, then hands-on coaching
 - **Open curriculum** — course JSON + Mux/HLS videos via `courses/` and Teachy Academy
 
-MIT licensed. Hack on it, ship courses, build companies — go wild.
+Free to use forever. Courses are an open format — author your own and share them; the course library and registry live in the public [teachy-releases](https://github.com/VedSoni-dev/teachy-releases) repo.
 
 ## Quick start (from source)
 
@@ -133,7 +132,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.
 
 ## License
 
-MIT — [LICENSE](LICENSE). Third-party notices: [NOTICE](NOTICE).
+Proprietary — the app is free to use; see [LICENSE](LICENSE). Course JSON in the public [teachy-releases](https://github.com/VedSoni-dev/teachy-releases) repo is free to use and share. Third-party notices: [NOTICE](NOTICE). (Releases up to v1.1 were published under MIT and remain so.)
 
 ## Credits
 
