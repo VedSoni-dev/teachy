@@ -22,6 +22,12 @@ final class LessonPlayer: ObservableObject {
     private weak var host: CompanionManager?
     private var playerTask: Task<Void, Never>?
     private var yourTurnContinuation: CheckedContinuation<YourTurnAction, Never>?
+    /// A HUD tap (Hint / Do it / I did it) that arrived while the coach was
+    /// still speaking or thinking — the your-turn wait isn't armed yet, so the
+    /// tap is buffered here (and the speech cut short) instead of being
+    /// silently dropped. Consumed the moment the lesson loop reaches its
+    /// your-turn wait.
+    private var pendingYourTurnAction: YourTurnAction?
     private var hintTimeoutTask: Task<Void, Never>?
     private var didOpenStartURL = false
     private var didPlayCourseIntroVideo = false
@@ -1091,16 +1097,29 @@ final class LessonPlayer: ObservableObject {
     // MARK: - Your-turn waiting
 
     private func waitForYourTurnAction() async -> YourTurnAction {
-        await withCheckedContinuation { continuation in
+        // A tap buffered while the coach was still talking applies immediately —
+        // this is what makes button interruptions feel instant instead of lost.
+        if let bufferedAction = pendingYourTurnAction {
+            pendingYourTurnAction = nil
+            return bufferedAction
+        }
+        return await withCheckedContinuation { continuation in
             yourTurnContinuation?.resume(returning: .cancel)
             yourTurnContinuation = continuation
         }
     }
 
     private func resumeYourTurn(_ action: YourTurnAction) {
-        guard let continuation = yourTurnContinuation else { return }
-        yourTurnContinuation = nil
-        continuation.resume(returning: action)
+        if let continuation = yourTurnContinuation {
+            yourTurnContinuation = nil
+            continuation.resume(returning: action)
+            return
+        }
+        // The your-turn wait isn't armed — the coach is mid-speech or mid-think.
+        // Buffer the tap and cut the speech short so the action lands the moment
+        // the lesson loop reaches its wait, instead of talking over the user.
+        pendingYourTurnAction = action
+        host?.speechSynthesizer.stopPlayback()
     }
 
     private func scheduleHintTimeout(alreadyOffered: Bool) {
@@ -1109,7 +1128,11 @@ final class LessonPlayer: ObservableObject {
         hintTimeoutTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(22))
             guard !Task.isCancelled else { return }
-            self?.resumeYourTurn(.hint)
+            // Auto-hint only fires while the your-turn wait is actually armed —
+            // it must never buffer like a user tap (that would cut off whatever
+            // the coach is saying for a hint nobody asked for).
+            guard let self, self.yourTurnContinuation != nil else { return }
+            self.resumeYourTurn(.hint)
         }
     }
 
@@ -1122,6 +1145,9 @@ final class LessonPlayer: ObservableObject {
         playerTask?.cancel()
         playerTask = nil
         cancelHintTimeout()
+        // A tap buffered against a now-dead lesson must not leak into the next
+        // course's first your-turn wait.
+        pendingYourTurnAction = nil
         if let placementAnswerContinuation {
             self.placementAnswerContinuation = nil
             placementAnswerContinuation.resume(returning: "I'm brand new — explain everything")
