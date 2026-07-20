@@ -6,7 +6,6 @@
 //  setup, and the in-panel Teachy product tour.
 //
 
-import AVFoundation
 import SwiftUI
 
 struct NotchSetupOnboardingView: View {
@@ -17,23 +16,31 @@ struct NotchSetupOnboardingView: View {
     @State private var apiKeyIsValidating: Bool = false
     @State private var apiKeyError: String?
     @State private var teachyOnboardingPageIndex: Int = 0
+    // The Automation (Apple Events) permission can't be pre-granted — macOS only
+    // prompts the moment Teachy first sends an Apple Event — so it isn't part of
+    // `allPermissionsGranted`. This flag gates a one-time explainer stage that
+    // would otherwise never appear: the instant the last required permission is
+    // granted, the wizard branch below is yanked away by SwiftUI.
+    @AppStorage("teachyHasSeenAutomationPermissionExplainer") private var hasSeenAutomationPermissionExplainer = false
 
     @ViewBuilder
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if !companionManager.allPermissionsGranted {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Almost ready")
+                    Text("Let's get set up")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(DS.Colors.textPrimary)
 
-                    Text("Teachy needs a few permissions to see your screen and hear you.")
+                    Text("I'll walk you through each permission — watch for the prompts.")
                         .font(.system(size: 11))
                         .foregroundColor(DS.Colors.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                permissionsList
+                PermissionChoreographyView(companionManager: companionManager)
+            } else if !hasSeenAutomationPermissionExplainer {
+                automationPermissionExplainer
             } else if !TeachyAPIKeyStore.isConfigured {
                 apiKeySetupView
             } else if !companionManager.hasCompletedOnboarding {
@@ -439,266 +446,103 @@ struct NotchSetupOnboardingView: View {
         .pointerCursor()
     }
 
-    private var permissionsList: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(spacing: 4) {
-                permissionRow(label: "Microphone", icon: "mic", isGranted: companionManager.hasMicrophonePermission) {
-                    let status = AVCaptureDevice.authorizationStatus(for: .audio)
-                    if status == .notDetermined {
-                        AVCaptureDevice.requestAccess(for: .audio) { _ in }
-                    } else if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
+    /// One-time heads-up about macOS Automation (Apple Events) prompts. Shown
+    /// after the permission choreography finishes because Automation can't be
+    /// pre-granted — macOS only asks the first time Teachy sends an Apple Event
+    /// to another app (managing tabs, opening/quitting apps).
+    private var automationPermissionExplainer: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("One heads-up")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(DS.Colors.textPrimary)
 
-                if companionManager.requiresSpeechRecognitionPermission {
-                    speechRecognitionPermissionSection
-                }
-
-                accessibilityPermissionRow
-
-                screenRecordingPermissionRow
-
-                automationSystemSettingRow
-            }
-        }
-    }
-
-    /// Automation (Apple Events) lets Teachy natively control apps for you — open/quit
-    /// apps, manage browser tabs. macOS grants this per-app on first use (you'll see
-    /// "Teachy wants to control X" prompts), so this is an informational row that just
-    /// points to the Automation settings pane rather than a live granted/not-granted
-    /// toggle like the others.
-    private var automationSystemSettingRow: some View {
-        HStack {
-            HStack(spacing: 8) {
-                Image(systemName: "wand.and.rays")
+                Text("Later, when Teachy opens apps or manages tabs for you, macOS will ask each time with a dialog like this — just click OK.")
                     .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.warning)
-                    .frame(width: 14)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Automation")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
-                    Text("Lets Teachy open apps and manage tabs. Allow each prompt as it appears.")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.Colors.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer()
-            Button(action: {
-                WindowPositionManager.openAutomationSettings()
-            }) {
-                Text("Settings")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(DS.Colors.accent))
-            }
-            .buttonStyle(.plain)
-            .pointerCursor()
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var screenRecordingPermissionRow: some View {
-        HStack {
-            HStack(spacing: 8) {
-                Image(systemName: "rectangle.dashed.badge.record")
-                    .font(.system(size: 11))
-                    .foregroundColor(companionManager.hasScreenRecordingPermission ? DS.Colors.textTertiary : DS.Colors.warning)
-                    .frame(width: 14)
-                Text("Screen Recording")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.Colors.textSecondary)
-            }
-            Spacer()
-            if companionManager.hasScreenRecordingPermission {
-                Text("Granted")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.Colors.success)
-            } else {
-                HStack(spacing: 6) {
-                    Button(action: {
-                        WindowPositionManager.requestScreenRecordingPermission()
-                    }) {
-                        Text("Grant")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(DS.Colors.accent))
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-
-                    Button(action: {
-                        WindowPositionManager.fixScreenRecordingAfterRebuild()
-                    }) {
-                        Text("Fix")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(DS.Colors.textSecondary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(Color.white.opacity(0.08)))
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    private var speechRecognitionPermissionSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            permissionRow(
-                label: "Speech Recognition",
-                icon: "waveform",
-                isGranted: companionManager.hasSpeechRecognitionPermission
-            ) {
-                WindowPositionManager.requestSpeechRecognitionPermission()
-            }
-
-            dictationSystemSettingRow
-
-            if !companionManager.hasSpeechRecognitionPermission {
-                Text("Tap Grant, then allow Teachy in the Speech Recognition list.")
-                    .font(.system(size: 10))
                     .foregroundColor(DS.Colors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
 
-    private var dictationSystemSettingRow: some View {
-        HStack {
-            HStack(spacing: 8) {
-                Image(systemName: "keyboard")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.warning)
-                    .frame(width: 14)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Dictation")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
-                    Text("System setting — must be ON for voice input.")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.Colors.textTertiary)
-                    // Enabling Dictation also arms macOS's own dictation keyboard shortcut.
-                    // If that shortcut involves the Control key (e.g. "Press Control twice"),
-                    // it collides with Teachy's ctrl+option push-to-talk and Apple's dictation
-                    // popover fires instead — steer users to the globe-key shortcut.
-                    Text("In the same settings, set Dictation's shortcut to \u{1F310} (globe) — if it's set to Control, it'll pop up while you talk to Teachy.")
-                        .font(.system(size: 10))
-                        .foregroundColor(DS.Colors.warningText)
-                        .fixedSize(horizontal: false, vertical: true)
+            AutomationPromptMockView()
+
+            Button {
+                companionManager.playTeachyUISound(.pageAdvance)
+                withAnimation(.smooth(duration: 0.22)) {
+                    hasSeenAutomationPermissionExplainer = true
                 }
-            }
-            Spacer()
-            Button(action: {
-                WindowPositionManager.openDictationSettings()
-            }) {
-                Text("Turn On")
-                    .font(.system(size: 10, weight: .semibold))
+            } label: {
+                Text("Got it")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(DS.Colors.learnAccent)
+                    )
                     .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(DS.Colors.accent))
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+
+            Button {
+                WindowPositionManager.openAutomationSettings()
+            } label: {
+                Text("Automation settings")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .underline()
             }
             .buttonStyle(.plain)
             .pointerCursor()
         }
-        .padding(.vertical, 4)
     }
+}
 
-    private var accessibilityPermissionRow: some View {
-        HStack {
+/// Animated mock of the macOS Automation consent dialog, with the OK button
+/// gently pulsing so users know exactly which button to click when the real
+/// dialog appears mid-task.
+private struct AutomationPromptMockView: View {
+    @State private var okButtonIsPulsing: Bool = false
+
+    var body: some View {
+        VStack(spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "hand.raised")
-                    .font(.system(size: 11))
-                    .foregroundColor(companionManager.hasAccessibilityPermission ? DS.Colors.textTertiary : DS.Colors.warning)
-                    .frame(width: 14)
-                Text("Accessibility")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.Colors.textSecondary)
-            }
-            Spacer()
-            if companionManager.hasAccessibilityPermission {
-                Text("Granted")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.Colors.success)
-            } else {
-                HStack(spacing: 6) {
-                    Button(action: {
-                        WindowPositionManager.requestAccessibilityPermission()
-                    }) {
-                        Text("Grant")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(DS.Colors.accent))
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
+                Image(systemName: "wand.and.rays")
+                    .font(.system(size: 13))
+                    .foregroundColor(DS.Colors.warning)
 
-                    Button(action: {
-                        WindowPositionManager.revealAppInFinder()
-                        WindowPositionManager.openAccessibilitySettings()
-                    }) {
-                        Text("Find App")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(DS.Colors.textSecondary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(Color.white.opacity(0.08)))
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                }
+                Text("\u{201C}Teachy\u{201D} wants access to control \u{201C}Safari\u{201D}.")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 6) {
+                Spacer(minLength: 0)
+
+                Text("Don't Allow")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.white.opacity(0.08)))
+
+                Text("OK")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(DS.Colors.learnAccent))
+                    .scaleEffect(okButtonIsPulsing ? 1.08 : 1.0)
+                    .shadow(color: DS.Colors.learnAccent.opacity(okButtonIsPulsing ? 0.5 : 0.0), radius: 6)
+                    .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: okButtonIsPulsing)
             }
         }
-        .padding(.vertical, 4)
-    }
-
-    private func permissionRow(
-        label: String,
-        icon: String,
-        isGranted: Bool,
-        grantAction: @escaping () -> Void
-    ) -> some View {
-        HStack {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 11))
-                    .foregroundColor(isGranted ? DS.Colors.textTertiary : DS.Colors.warning)
-                    .frame(width: 14)
-                Text(label)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.Colors.textSecondary)
-            }
-            Spacer()
-            if isGranted {
-                Text("Granted")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.Colors.success)
-            } else {
-                Button(action: grantAction) {
-                    Text("Grant")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(DS.Colors.accent))
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-            }
+        .padding(10)
+        .glassCard(cornerRadius: 10, tint: DS.Colors.learnAccent)
+        .onAppear {
+            okButtonIsPulsing = true
         }
-        .padding(.vertical, 4)
     }
 }
 

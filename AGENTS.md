@@ -148,7 +148,8 @@ npm run harness                      # validate all routes
 | `NotchPanelColors.swift` | ~20 | Shared color tokens (`NotchPanelColors`) for the notch panel UI; also referenced directly by `CourseLessonHUDWindow.swift`. |
 | `NotchPanelSharedComponents.swift` | ~135 | Dependency-free shared views/helpers: `KeyboardKeyLabel`, `FlowLayout`, and the free-function `openRouterModelPickerRow`. |
 | `NotchHomeTabView.swift` | ~265 | Home tab — push-to-talk instructions, trust copy, software updates, cursor color, model picker, feedback link. |
-| `NotchSetupOnboardingView.swift` | ~720 | Permissions list, API key setup, and the in-panel Teachy product tour (`TeachyOnboardingPage`). |
+| `NotchSetupOnboardingView.swift` | ~630 | Setup stage router — permission choreography, one-time Automation explainer, API key setup, and the in-panel Teachy product tour (`TeachyOnboardingPage`). |
+| `PermissionChoreographyView.swift` | ~430 | One-permission-at-a-time setup wizard: auto-fires system prompts, animated System Settings toggle mock, 1s poll auto-advances on grant. |
 | `NotchCoursesTabView.swift` | ~910 | Courses tab — catalog, active course session, Teachy Academy install/featured sections, custom course builder entry point. |
 | `NotchPortfolioTabView.swift` | ~245 | Portfolio tab — shareable artifacts captured from completed course goals. |
 | `NotchSkillsTabView.swift` | ~365 | Skills tab — learner model proficiency, retention review, at-risk skills, domain breakdown, streaks. |
