@@ -21,6 +21,24 @@ For **your own teaching**, use the same beside-cursor video player as Farza’s 
 
 GitHub blob links are auto-converted to raw URLs.
 
+### Publishing & continuous updates
+
+Ship (or fix) a course with one command — it copies the JSON into the public
+`teachy-releases` repo and upserts its store registry entry:
+
+```bash
+./scripts/publish-course.sh courses/my-course.json --blurb "Store card one-liner" --track "How to do"
+```
+
+Installed copies **auto-update**: on every app launch and Academy refresh,
+Teachy re-fetches each installed course from its source URL and silently
+swaps in the new version (never mid-lesson). Publishing a fix upstream is
+all it takes to update every learner.
+
+**Rule: keep goal `id`s stable across updates.** Learner progress is keyed
+by goal id — renaming an id makes completed steps look incomplete. Add new
+goals with new ids and edit existing goals freely, but don't rename ids.
+
 ## Teacher videos (Farza-style, every part)
 
 Do **not** paste normal YouTube watch URLs into the course UI. Upload your clips (Mux, Cloudflare Stream, or any **HLS `.m3u8` / progressive `.mp4`** CDN) and put the stream URL on the course and/or each goal.

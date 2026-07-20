@@ -673,6 +673,55 @@ final class CoursesManager: ObservableObject {
         return course
     }
 
+    /// Silently keeps installed courses current: re-fetches each installed
+    /// course's remembered source URL, and when the hosted JSON has changed,
+    /// swaps the local copy atomically. B2C continuous updates — no version
+    /// numbers to bump, no user action; publishing a course fix upstream is
+    /// enough. The active session's course is never swapped mid-lesson, and
+    /// a changed file must still decode to the SAME course id before it
+    /// replaces anything (a hijacked/retargeted URL can't overwrite a course).
+    func autoUpdateInstalledCoursesFromSources() async {
+        guard !installedCourseSourcesByID.isEmpty else { return }
+
+        var updatedCourseTitles: [String] = []
+        for (courseID, sourceURLString) in installedCourseSourcesByID {
+            if activeSession?.course.id == courseID { continue }
+            guard let sourceURL = URL(string: sourceURLString) else { continue }
+            do {
+                let (remoteData, response) = try await URLSession.shared.data(from: sourceURL)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode)
+                else { continue }
+
+                let localFileURL = courseFileURL(forCourseID: courseID)
+                let localData = try? Data(contentsOf: localFileURL)
+                guard remoteData != localData else { continue }
+
+                let updatedCourse = try JSONDecoder().decode(ClickyCourse.self, from: remoteData)
+                guard updatedCourse.id == courseID else {
+                    print("⚠️ Course auto-update skipped: \(sourceURLString) now serves '\(updatedCourse.id)', expected '\(courseID)'")
+                    continue
+                }
+
+                ensureCoursesDirectoryExists()
+                try remoteData.write(to: localFileURL, options: .atomic)
+                updatedCourseTitles.append(updatedCourse.title)
+                print("📚 Auto-updated installed course: \(courseID)")
+            } catch {
+                // Offline or a transient fetch/decode problem — keep the local
+                // copy untouched and try again on the next refresh.
+                print("⚠️ Course auto-update skipped for \(courseID): \(error.localizedDescription)")
+            }
+        }
+
+        if !updatedCourseTitles.isEmpty {
+            reloadCourseCatalog()
+            courseInstallStatusMessage = updatedCourseTitles.count == 1
+                ? "Updated “\(updatedCourseTitles[0])” to the latest version."
+                : "Updated \(updatedCourseTitles.count) courses to the latest versions."
+        }
+    }
+
     func uninstallInstalledCourse(courseID: String) throws {
         guard !Self.bundledCourseIDs.contains(courseID) else { return }
         let fileURL = courseFileURL(forCourseID: courseID)

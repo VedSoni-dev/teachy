@@ -342,6 +342,12 @@ final class CompanionManager: ObservableObject {
         // well before the onboarding demo fires at ~40s into the video.
         _ = claudeAPI
 
+        // Continuous course updates: every launch, silently refresh installed
+        // courses from their source URLs (publish upstream → users current).
+        Task {
+            await coursesManager.autoUpdateInstalledCoursesFromSources()
+        }
+
         // If the user already completed onboarding AND all permissions are
         // still granted, show the cursor overlay immediately. If permissions
         // were revoked (e.g. signing change), don't show the cursor — the
@@ -2150,6 +2156,9 @@ final class CompanionManager: ObservableObject {
     func refreshAcademyRegistry() {
         Task {
             await coursesManager.refreshAcademyRegistry()
+            // Piggyback the silent installed-course update check on every
+            // registry refresh — courses stay current without user action.
+            await coursesManager.autoUpdateInstalledCoursesFromSources()
         }
     }
 
