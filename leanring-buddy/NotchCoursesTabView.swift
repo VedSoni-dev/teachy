@@ -14,6 +14,9 @@ struct NotchCoursesTabView: View {
     @ObservedObject var notchManager: NotchWindowManager
     @State private var courseInstallURLText: String = ""
     @State private var courseQuestionText: String = ""
+    /// ID of the catalog row currently expanded to show its preview content.
+    /// Only one row can be expanded at a time; tapping the same row again collapses it.
+    @State private var expandedCourseID: String? = nil
 
     @ViewBuilder
     var body: some View {
@@ -855,6 +858,38 @@ struct NotchCoursesTabView: View {
         .frame(height: 4)
     }
 
+    /// Thin inline progress bar shown on catalog rows for a course with partial progress.
+    /// `completedMainGoalCount` is the count of completed non-remediation goals;
+    /// `totalMainGoalCount` is the total non-remediation goal count for the course.
+    private func catalogRowProgressBar(
+        completedMainGoalCount: Int,
+        totalMainGoalCount: Int
+    ) -> some View {
+        let progressFraction = totalMainGoalCount > 0
+            ? Double(completedMainGoalCount) / Double(totalMainGoalCount)
+            : 0.0
+        return VStack(alignment: .leading, spacing: 3) {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                        .frame(height: 3)
+                    Capsule()
+                        .fill(DS.Colors.learnAccent)
+                        .frame(
+                            width: max(3, geometry.size.width * progressFraction),
+                            height: 3
+                        )
+                }
+            }
+            .frame(height: 3)
+
+            Text("\(completedMainGoalCount) of \(totalMainGoalCount) steps")
+                .font(.system(size: 9))
+                .foregroundColor(DS.Colors.textTertiary)
+        }
+    }
+
     private var coursesCatalogList: some View {
         VStack(alignment: .leading, spacing: 16) {
             ForEach(companionManager.coursesManager.catalogSections) { section in
@@ -911,58 +946,103 @@ struct NotchCoursesTabView: View {
         let anotherCourseIsActive = companionManager.coursesManager.isCourseActive && !isActive
         let prerequisitesMet = companionManager.coursesManager.isPrerequisiteLikelyMet(for: course)
         let isCompleted = progress?.isFullyCompleted == true
+        let isExpanded = expandedCourseID == course.id
 
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: course.iconSystemName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(DS.Colors.learnAccent)
-                    .frame(width: 36, height: 36)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(DS.Colors.learnAccent.opacity(0.12))
-                    )
+        // Non-remediation goals are the learner-visible "main" steps. Remediation goals
+        // are supplemental re-teach goals that are not counted in the stated step count.
+        let mainGoals = course.goals.filter { $0.remediationGoalID == nil }
+        let totalMainGoalCount = mainGoals.count
 
-                VStack(alignment: .leading, spacing: 3) {
-                    if let trackPartLabel = course.trackPartLabel {
-                        Text(trackPartLabel)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(DS.Colors.learnAccent)
+        // Partial progress: at least one main step completed and course not yet finished.
+        let completedMainGoalCount = progress.map { p in
+            mainGoals.filter { p.completedStepIDs.contains($0.id) }.count
+        } ?? 0
+        let hasPartialProgress = completedMainGoalCount > 0 && !isCompleted
+
+        // Resume step number shown in the action button (1-based for human display).
+        let resumeStepIndex = companionManager.coursesManager.resumeStepIndex(for: course)
+
+        // Whether any main goal has an interactive widget — used to label the row hint.
+        let hasAnyInteractiveGoal = mainGoals.contains {
+            $0.interactiveMultipleChoice != nil
+                || $0.interactiveChecklist != nil
+                || $0.interactiveFillInBlank != nil
+        }
+
+        return VStack(alignment: .leading, spacing: 0) {
+
+            // MARK: Row header — always visible; tapping it toggles the expanded preview.
+            Button {
+                withAnimation(.smooth(duration: 0.22)) {
+                    if expandedCourseID == course.id {
+                        expandedCourseID = nil
+                    } else {
+                        expandedCourseID = course.id
                     }
-
-                    HStack(spacing: 6) {
-                        Text(course.title)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(DS.Colors.textPrimary)
-                            .lineLimit(1)
-
-                        if course.hasTeacherVideos {
-                            Text("video")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundColor(DS.Colors.learnAccent)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule().fill(DS.Colors.learnAccent.opacity(0.16))
-                                )
-                        }
-
-                        if isCompleted {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 12))
-                                .foregroundColor(DS.Colors.success)
-                        }
-                    }
-
-                    Text(course.subtitle)
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.textTertiary)
-                        .lineLimit(2)
                 }
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: course.iconSystemName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(DS.Colors.learnAccent)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(DS.Colors.learnAccent.opacity(0.12))
+                        )
 
-                Spacer(minLength: 0)
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let trackPartLabel = course.trackPartLabel {
+                            Text(trackPartLabel)
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(DS.Colors.learnAccent)
+                        }
+
+                        HStack(spacing: 6) {
+                            Text(course.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(DS.Colors.textPrimary)
+                                .lineLimit(1)
+
+                            if course.hasTeacherVideos {
+                                Text("video")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(DS.Colors.learnAccent)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule().fill(DS.Colors.learnAccent.opacity(0.16))
+                                    )
+                            }
+
+                            if isCompleted {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(DS.Colors.success)
+                            }
+                        }
+
+                        Text(course.subtitle)
+                            .font(.system(size: 11))
+                            .foregroundColor(DS.Colors.textTertiary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    // Chevron signals the row is expandable; rotates 180° when open.
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                        .animation(.smooth(duration: 0.22), value: isExpanded)
+                        .padding(.top, 2)
+                }
             }
+            .buttonStyle(.plain)
+            .pointerCursor()
 
+            // MARK: Prerequisite notice (always visible when relevant).
             if !prerequisitesMet, let prerequisiteIDs = course.prerequisiteCourseIDs {
                 let prerequisiteTitles = prerequisiteIDs.compactMap { id in
                     companionManager.coursesManager.course(withID: id)?.title
@@ -971,9 +1051,127 @@ struct NotchCoursesTabView: View {
                     Text("Best after: \(prerequisiteTitles.joined(separator: ", "))")
                         .font(.system(size: 10))
                         .foregroundColor(DS.Colors.textTertiary)
+                        .padding(.top, 6)
                 }
             }
 
+            // MARK: Inline progress bar — shown only when the learner has started but not finished.
+            if hasPartialProgress {
+                catalogRowProgressBar(
+                    completedMainGoalCount: completedMainGoalCount,
+                    totalMainGoalCount: totalMainGoalCount
+                )
+                .padding(.top, 8)
+            }
+
+            // MARK: Expandable preview — meta chips, learning outcomes, step list.
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 10) {
+
+                    // Meta chip row: duration, step count, interaction hint.
+                    HStack(spacing: 8) {
+                        Label("~\(course.estimatedMinutes) min", systemImage: "clock")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(DS.Colors.textTertiary)
+
+                        Label("\(totalMainGoalCount) steps", systemImage: "list.bullet")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(DS.Colors.textTertiary)
+
+                        if hasAnyInteractiveGoal {
+                            Text("quiz + hands-on")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(DS.Colors.textTertiary)
+                        } else {
+                            Text("hands-on")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundColor(DS.Colors.textTertiary)
+                        }
+                    }
+                    .padding(.top, 2)
+
+                    // What you'll learn — capped at 5 outcomes with a "+N more" overflow line.
+                    if !course.learningOutcomes.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("What you'll learn")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(DS.Colors.textSecondary)
+
+                            let visibleOutcomes = Array(course.learningOutcomes.prefix(5))
+                            let hiddenOutcomeCount = course.learningOutcomes.count - visibleOutcomes.count
+
+                            ForEach(visibleOutcomes, id: \.self) { outcome in
+                                HStack(alignment: .top, spacing: 6) {
+                                    // Bullet dot — matches the style used in other list rows
+                                    // in this panel (small filled circle).
+                                    Image(systemName: "circle.fill")
+                                        .font(.system(size: 4))
+                                        .foregroundColor(DS.Colors.textTertiary)
+                                        .padding(.top, 4)
+
+                                    Text(outcome)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(DS.Colors.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+
+                            if hiddenOutcomeCount > 0 {
+                                Text("+\(hiddenOutcomeCount) more")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(DS.Colors.textTertiary)
+                                    .padding(.leading, 10)
+                            }
+                        }
+                    }
+
+                    // Step list — one compact row per non-remediation goal.
+                    // Completed steps show a filled checkmark; upcoming steps show the step number.
+                    if !mainGoals.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Steps")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(DS.Colors.textSecondary)
+                                .padding(.bottom, 4)
+
+                            ForEach(Array(mainGoals.enumerated()), id: \.element.id) { index, goal in
+                                let isGoalCompleted = progress?.completedStepIDs.contains(goal.id) == true
+
+                                HStack(alignment: .top, spacing: 8) {
+                                    // Step number or completed checkmark.
+                                    if isGoalCompleted {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(DS.Colors.success)
+                                            .frame(width: 16)
+                                    } else {
+                                        Text("\(index + 1)")
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundColor(DS.Colors.textTertiary)
+                                            .frame(width: 16)
+                                    }
+
+                                    Text(goal.title)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(
+                                            isGoalCompleted
+                                                ? DS.Colors.textTertiary
+                                                : DS.Colors.textSecondary
+                                        )
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .padding(.vertical, 3)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 8)
+                // Clip so the expanding content doesn't bleed outside the card during animation.
+                .clipped()
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            // MARK: Row footer — action buttons, always visible in both states.
             HStack {
                 Text("\(course.stepCount) goals · ~\(course.estimatedMinutes) min")
                     .font(.system(size: 10))
@@ -1006,16 +1204,20 @@ struct NotchCoursesTabView: View {
                         companionManager.startClickyCourse(courseID: course.id)
                         notchManager.collapse()
                     }) {
+                        // Label is "Retake" for fully completed courses, "Resume · step N"
+                        // when there is partial progress, and "Start" for untouched courses.
                         Text(
                             isCompleted
                                 ? "Retake"
-                                : (companionManager.coursesManager.resumeStepIndex(for: course) > 0 ? "Continue" : "Start")
+                                : (hasPartialProgress
+                                    ? "Resume · step \(resumeStepIndex + 1)"
+                                    : "Start")
                         )
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 6)
-                            .background(Capsule().fill(DS.Colors.learnAccent))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(DS.Colors.learnAccent))
                     }
                     .buttonStyle(.plain)
                     .pointerCursor()
@@ -1023,6 +1225,7 @@ struct NotchCoursesTabView: View {
                     .opacity(anotherCourseIsActive || !companionManager.isBackendReachable ? 0.4 : 1)
                 }
             }
+            .padding(.top, 10)
         }
         .padding(14)
         .glassCard(tint: DS.Colors.learnAccent, prominent: isActive)

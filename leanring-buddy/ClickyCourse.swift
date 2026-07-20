@@ -788,6 +788,9 @@ enum ClickyCourseResponseTags {
 enum ClickyCourseCatalog {
     static let bundledCourses: [ClickyCourse] = [
         buildAWebsiteCourse,
+        TeachyCourseCodeWithAI.course,
+        TeachyCoursePhoneAgent.course,
+        TeachyCourseAIFluency.course,
     ]
 
     static let webFundamentalsTrackID = "web-fundamentals"
@@ -796,6 +799,7 @@ enum ClickyCourseCatalog {
     /// Featured IDs shown first for new learners.
     static let featuredLearnerCourseIDs: [String] = [
         "build-a-website",
+        "code-with-ai",
     ]
 
     static let buildAWebsiteCourse = ClickyCourse(

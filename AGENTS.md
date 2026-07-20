@@ -97,6 +97,9 @@ npm run harness                      # validate all routes
 | `CompanionManager.swift` | ~3020 | Central state machine. Owns dictation, shortcut monitoring, screen capture, companion chat, Teachy Courses sessions, local TTS, and overlay management. Tracks voice state, conversation history, chat/agent model selection, and cursor visibility. Layer 2 `executeActStep` runs `.act` guided-task steps via the agent tool loop with announce-before-act ordering; Layer 3 `reflectAndReplaceRemainingSteps` calls the reasoning model on divergence to revise the living plan. |
 | `CompanionGuidedTask.swift` | ~96 | Ephemeral guided-task model. `GuidedStepExecutionMode` (`.coach`/`.act`), `AgenticStep`, `CompanionGuidedTask` with `reflectionRevisionCount` and `maximumReflectionRevisionsPerTask` cap. |
 | `ClickyCourse.swift` | ~1380 | Goal-based courses; **First Win** + **Use AI to Code** flagship; Teachy catalog + lesson briefs. |
+| `TeachyCourseCodeWithAI.swift` | ~325 | Bundled course "Code with AI" — the instruct → verify → iterate loop for directing coding agents. |
+| `TeachyCoursePhoneAgent.swift` | ~295 | Bundled course "Build a Phone Agent" — Vapi voice assistant from account to tested web call. |
+| `TeachyCourseAIFluency.swift` | ~260 | Bundled course "AI Fluency Essentials" — prompting, tool choice, verification; widget-heavy. |
 | `CoursesManager.swift` | ~1250 | Catalog, sessions, learner profile memory, tool step log. `generateAgenticPlan` (reasoning-model screen-grounded planner) and `reflectAndRevisePlan` (Layer 3 reflection model call returning revised remaining steps). |
 | `TeachyDataPaths.swift` | ~40 | Resolves `~/.teachy/{courses,connectors}` with legacy `~/.clicky/` fallback. |
 | `LessonPlayer.swift` | ~730 | Goal auto-prompter — video parts → tutor turns → verify → teach-back. |
@@ -150,7 +153,7 @@ npm run harness                      # validate all routes
 | `NotchHomeTabView.swift` | ~265 | Home tab — push-to-talk instructions, trust copy, software updates, cursor color, model picker, feedback link. |
 | `NotchSetupOnboardingView.swift` | ~630 | Setup stage router — permission choreography, one-time Automation explainer, API key setup, and the in-panel Teachy product tour (`TeachyOnboardingPage`). |
 | `PermissionChoreographyView.swift` | ~430 | One-permission-at-a-time setup wizard: auto-fires system prompts, animated System Settings toggle mock, 1s poll auto-advances on grant. |
-| `NotchCoursesTabView.swift` | ~910 | Courses tab — catalog, active course session, Teachy Academy install/featured sections, custom course builder entry point. |
+| `NotchCoursesTabView.swift` | ~1230 | Courses tab — catalog with expandable course previews + progress bars, active course session, Teachy Academy install/featured sections, custom course builder entry point. |
 | `NotchPortfolioTabView.swift` | ~245 | Portfolio tab — shareable artifacts captured from completed course goals. |
 | `NotchSkillsTabView.swift` | ~365 | Skills tab — learner model proficiency, retention review, at-risk skills, domain breakdown, streaks. |
 | `NotchCustomCourseBuilderSheet.swift` | ~115 | Sheet for describing a custom course and generating a plan via the Teachy proxy. |
