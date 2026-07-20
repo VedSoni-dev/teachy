@@ -22,6 +22,11 @@ struct NotchSetupOnboardingView: View {
     // would otherwise never appear: the instant the last required permission is
     // granted, the wizard branch below is yanked away by SwiftUI.
     @AppStorage("teachyHasSeenAutomationPermissionExplainer") private var hasSeenAutomationPermissionExplainer = false
+    // Mirrors NotchPanelView's setup gate — set by "I'll set it up later" so
+    // key-less users can continue to the tour and the app instead of being
+    // re-trapped on the key screen. The Home tab's AI Brain section is the
+    // add-a-key-later path.
+    @AppStorage("teachyHasSkippedAPIKeySetup") private var hasSkippedAPIKeySetup = false
 
     @ViewBuilder
     var body: some View {
@@ -41,7 +46,7 @@ struct NotchSetupOnboardingView: View {
                 PermissionChoreographyView(companionManager: companionManager)
             } else if !hasSeenAutomationPermissionExplainer {
                 automationPermissionExplainer
-            } else if !TeachyAPIKeyStore.isConfigured {
+            } else if !TeachyAPIKeyStore.isConfigured && !hasSkippedAPIKeySetup {
                 apiKeySetupView
             } else if !companionManager.hasCompletedOnboarding {
                 teachyProductOnboarding
@@ -105,9 +110,10 @@ struct NotchSetupOnboardingView: View {
             .disabled(apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || apiKeyIsValidating)
 
             Button {
-                // Skip for now — they can set it later
-                withAnimation {
-                    companionManager.completeTeachyProductOnboarding()
+                // Skip for now — the tour still plays, and the Home tab's
+                // AI Brain section is where they can add the key later.
+                withAnimation(.smooth(duration: 0.22)) {
+                    hasSkippedAPIKeySetup = true
                 }
             } label: {
                 Text("I'll set it up later")

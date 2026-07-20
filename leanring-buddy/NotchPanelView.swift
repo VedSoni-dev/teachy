@@ -20,6 +20,10 @@ enum NotchPanelTab: String, CaseIterable {
 struct NotchPanelView: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject var notchManager: NotchWindowManager
+    // "I'll set it up later" on the API key step — without this flag the setup
+    // view would re-trap key-less users forever, and the Home tab (where the key
+    // can be added later) would be unreachable.
+    @AppStorage("teachyHasSkippedAPIKeySetup") private var hasSkippedAPIKeySetup = false
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -46,7 +50,9 @@ struct NotchPanelView: View {
     }
 
     private var needsSetup: Bool {
-        !companionManager.allPermissionsGranted || !TeachyAPIKeyStore.isConfigured || !companionManager.hasCompletedOnboarding
+        !companionManager.allPermissionsGranted
+            || (!TeachyAPIKeyStore.isConfigured && !hasSkippedAPIKeySetup)
+            || !companionManager.hasCompletedOnboarding
     }
 
     @ViewBuilder

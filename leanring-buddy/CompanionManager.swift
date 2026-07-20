@@ -2133,6 +2133,13 @@ final class CompanionManager: ObservableObject {
 
     /// Starts a guided course session after verifying the proxy is reachable.
     func refreshBackendReachability() {
+        // BYO-key users talk to OpenRouter directly — no proxy required, so the
+        // health probe would only produce a false "backend offline" for them.
+        if TeachyAPIKeyStore.isConfigured {
+            isBackendReachable = true
+            backendConnectionHint = nil
+            return
+        }
         Task {
             let healthResult = await ClickyProxyHealthChecker.fetchHealth()
             isBackendReachable = healthResult.isReachable && healthResult.isOpenRouterConfigured
@@ -2180,20 +2187,24 @@ final class CompanionManager: ObservableObject {
         speechSynthesizer.stopPlayback()
 
         currentResponseTask = Task {
-            let healthResult = await ClickyProxyHealthChecker.fetchHealth()
-            guard healthResult.isReachable, healthResult.isOpenRouterConfigured else {
-                isBackendReachable = false
-                backendConnectionHint = Self.localProxyStartHint
-                voiceState = .responding
-                do {
-                    try await speechSynthesizer.speakText(
-                        "can't reach the backend yet — start the proxy in the worker folder, then hit start again."
-                    )
-                } catch {
-                    print("⚠️ Course proxy hint TTS error: \(error)")
+            // BYO-key users skip the proxy health gate — their course calls go
+            // straight to OpenRouter with their own key.
+            if !TeachyAPIKeyStore.isConfigured {
+                let healthResult = await ClickyProxyHealthChecker.fetchHealth()
+                guard healthResult.isReachable, healthResult.isOpenRouterConfigured else {
+                    isBackendReachable = false
+                    backendConnectionHint = Self.localProxyStartHint
+                    voiceState = .responding
+                    do {
+                        try await speechSynthesizer.speakText(
+                            "i need an AI backend first — paste your OpenRouter key in the Home tab, then hit start again."
+                        )
+                    } catch {
+                        print("⚠️ Course proxy hint TTS error: \(error)")
+                    }
+                    voiceState = .idle
+                    return
                 }
-                voiceState = .idle
-                return
             }
 
             isBackendReachable = true
@@ -2405,7 +2416,9 @@ final class CompanionManager: ObservableObject {
     func speakCourseError(_ error: Error) {
         if isBackendConnectionError(error) {
             isBackendReachable = false
-            backendConnectionHint = Self.localProxyStartHint
+            // With a key configured a connection error means OpenRouter itself is
+            // unreachable (network trouble) — the proxy hint would mislead.
+            backendConnectionHint = TeachyAPIKeyStore.isConfigured ? nil : Self.localProxyStartHint
         }
         speakErrorMessage(companionAPIErrorUtterance(for: error))
     }

@@ -450,20 +450,30 @@ struct NotchCoursesTabView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 11))
                     .foregroundColor(DS.Colors.warning)
-                Text("backend offline")
+                Text(TeachyAPIKeyStore.isConfigured ? "can't reach OpenRouter" : "Teachy needs an AI backend")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundColor(DS.Colors.warning)
             }
 
-            Text("Courses need the local proxy. In Terminal:")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textSecondary)
+            if TeachyAPIKeyStore.isConfigured {
+                // Direct-key users only land here on a genuine network problem —
+                // their calls go straight to OpenRouter, no proxy involved.
+                Text("Your key talks to OpenRouter directly — check your internet connection and try again.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Easiest: paste your free OpenRouter API key in the Home tab. Developers can run the local proxy instead:")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            Text(companionManager.backendConnectionHint ?? "cd worker && npm run local")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(DS.Colors.textTertiary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+                Text(companionManager.backendConnectionHint ?? "cd worker && npm run local")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Button(action: {
                 companionManager.refreshBackendReachability()
