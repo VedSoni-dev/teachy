@@ -25,16 +25,18 @@ Community builds ship **without** Apple’s paid Developer ID / notarization (ke
 1. Drag **Teachy** to Applications  
 2. **Right-click** → **Open** → **Open**  
    (or System Settings → Privacy & Security → **Open Anyway**)  
-3. Grant Microphone, Screen Recording, Accessibility  
-4. Run the local Teachy proxy (below) with an OpenRouter key
+3. Teachy walks you through permissions one at a time — just follow the prompts  
+4. Paste your free [OpenRouter](https://openrouter.ai) API key when Teachy asks — **that's it, no server or setup**. (You can also add or change the key later in Home → AI Brain.)
 
 Installed apps can **Check for Updates…** under Home → Updates (Sparkle).
 
 ## What it does
 
-- **Learn paths** — goal-based courses (First Win with AI, Use AI to Code, GitHub, and more)
+- **Learn paths** — goal-based courses that end in real things: **Build & Deploy a Website** (live URL on GitHub Pages), **Code with AI** (direct a coding agent like a pro), **Build a Phone Agent** (a working Vapi voice assistant), **AI Fluency Essentials** — plus build-your-own courses generated from a sentence
+- **Live coaching** — Teachy sees your screen, points at the real UI, gives hints, does steps for you when you're stuck, and checks understanding with teach-backs
+- **Projects that survive** — builds persist across days; Teachy remembers where you left off and offers to pick it up
+- **A learner model with memory** — skills, streaks, spaced-repetition reviews, and personal facts that make coaching feel like the same tutor every day
 - **Teacher clips** — optional videos beside the cursor, then hands-on coaching
-- **Live coaching** — `[POINT:…]` on your real screen, hints, “do it for me,” teach-backs
 - **Open curriculum** — course JSON + Mux/HLS videos via `courses/` and Teachy Academy
 
 MIT licensed. Hack on it, ship courses, build companies — go wild.
@@ -50,9 +52,11 @@ MIT licensed. Hack on it, ship courses, build companies — go wild.
 | Node.js | 18+ | For the local API proxy |
 | OpenRouter key | — | Free at [openrouter.ai](https://openrouter.ai) |
 
-### Step 1 — Start the proxy
+### Step 1 — Pick your AI backend
 
-The app routes all AI traffic through a local proxy. It supports OpenRouter (recommended), Anthropic, and OpenAI keys.
+**Simplest (recommended):** skip this step. Paste your free [OpenRouter](https://openrouter.ai) key into the app when it asks (or later in Home → AI Brain) — Teachy talks to OpenRouter directly, no server needed.
+
+**Developer alternative — local proxy** (enables keyless app mode and AssemblyAI streaming transcription):
 
 ```bash
 cd worker
@@ -121,7 +125,7 @@ That ships a free GitHub Release DMG and updates `appcast.xml` so existing insta
 
 ## Architecture (short)
 
-Menu-bar Teachy → notch panel → LessonPlayer / companion voice → Teachy proxy (`worker/`) → OpenRouter + optional AssemblyAI. Mac tools run locally. Full map: **AGENTS.md**.
+Menu-bar Teachy → notch panel → LessonPlayer / companion voice → OpenRouter (directly with your key, or via the optional `worker/` proxy) + optional AssemblyAI. Mac tools run locally; learner memory lives in `~/.teachy/`. Full map: **AGENTS.md**.
 
 ## Contributing
 
