@@ -17,6 +17,10 @@ Push-to-talk (ctrl+option) captures voice, transcribed via AssemblyAI (or Apple 
 
 All API keys live on the Teachy proxy (local dev server or Cloudflare Worker) — nothing sensitive ships in the app.
 
+## Windows port (`windows/`)
+
+Native Windows companion app (C# / .NET 8 / WPF) sharing the worker proxy, course JSON format, `~/.teachy` layout, and the `[POINT:...]` 24×16 grid-pointing contract. Three projects: `Teachy.Engine` (platform-free logic), `Teachy.Platform` (keyboard hook PTT, GDI capture + grid burn, NAudio mic, System.Speech STT, SAPI TTS, DPAPI key storage), `Teachy.App` (WPF tray shell, panel, click-through cursor overlay). Push-to-talk is **Ctrl+Alt**. Build: `cd windows && dotnet build Teachy.sln`. Phase roadmap in `windows/README.md`. Changes to the grid contract, course JSON, or worker routes must stay compatible with both apps.
+
 ## Architecture
 
 - **App Type**: Menu bar-only (`LSUIElement=true`), no dock icon or main window

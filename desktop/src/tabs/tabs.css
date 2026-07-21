@@ -1,0 +1,367 @@
+/*
+  Card + row styling. The glass-card treatment mirrors GlassCardModifier:
+  regularMaterial fill, a 3% tint wash, a 0.75px hairline stroke at 8% tint.
+*/
+
+/*
+  GlassCardModifier, standard (non-prominent) tier:
+    fill   = .regularMaterial
+    tint   = textPrimary @ 3%
+    stroke = textPrimary @ 8%, 0.75px
+  These cards sit on the notch's solid black body, so there is nothing behind
+  them to blur — backdrop-filter would cost GPU for no visual gain. The flat
+  value below is what regularMaterial resolves to over black in dark mode.
+*/
+.glass-card {
+  background: #1b1e25;
+  border: 0.75px solid rgba(245, 245, 247, 0.08);
+  border-radius: var(--radius-large);
+}
+
+/* ── Course list ────────────────────────────────────────────── */
+
+.course-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.course-row {
+  padding: 12px;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
+}
+
+.course-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(245, 245, 247, 0.14);
+}
+
+.course-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.course-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-large);
+  background: var(--learn-accent-soft);
+  color: var(--learn-accent);
+  font-size: 14px;
+}
+
+.course-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 2px;
+}
+
+.course-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.course-subtitle {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+/* Saved progress, shown on catalog rows like the Mac's progress bars. */
+.course-progress-track {
+  height: 4px;
+  margin-top: 7px;
+  border-radius: 2px;
+  background: var(--surface3);
+  overflow: hidden;
+}
+
+.course-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--learn-accent);
+  transition: width 260ms ease;
+}
+
+.course-progress-label {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.course-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.course-duration {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.start-button {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--learn-accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    filter 140ms ease,
+    transform 140ms ease;
+}
+
+.start-button:hover {
+  filter: brightness(1.1);
+}
+
+.start-button:active {
+  transform: scale(0.97);
+}
+
+.course-description {
+  margin: 10px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* ── Empty states ───────────────────────────────────────────── */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  text-align: center;
+  padding: 0 40px;
+}
+
+.empty-state-glyph {
+  font-size: 24px;
+  margin-bottom: 4px;
+}
+
+.empty-state-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.empty-state-body {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* ── Settings ───────────────────────────────────────────────── */
+
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 4px;
+}
+
+.section-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 7px;
+}
+
+.settings-card {
+  padding: 12px;
+}
+
+.hotkey-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.keycap {
+  padding: 3px 9px;
+  border-radius: var(--radius-small);
+  background: var(--surface3);
+  border: 1px solid rgba(245, 245, 247, 0.12);
+  border-bottom-width: 2px;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.text-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 11px;
+  border-radius: var(--radius-medium);
+  border: 1px solid rgba(245, 245, 247, 0.1);
+  background: var(--surface2);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 140ms ease;
+}
+
+.text-field:focus {
+  border-color: var(--accent);
+}
+
+.primary-button {
+  padding: 8px 15px;
+  border: 0;
+  border-radius: var(--radius-medium);
+  background: var(--accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.primary-button:hover {
+  background: var(--accent-hover);
+}
+
+.field-hint {
+  margin: 7px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.chip-row {
+  display: flex;
+  gap: 6px;
+}
+
+.chip {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: var(--radius-medium);
+  background: var(--surface2);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.chip:hover {
+  background: var(--surface3);
+}
+
+.chip.is-selected {
+  background: var(--accent);
+  color: #fff;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.toggle-copy-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.toggle-copy-body {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* macOS-style switch */
+.switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 22px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--surface4);
+  cursor: pointer;
+  transition: background-color 180ms ease;
+}
+
+.switch.is-on {
+  background: var(--success);
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 180ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.switch.is-on .switch-thumb {
+  transform: translateX(16px);
+}
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.quiet-button {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.quiet-button:hover {
+  color: var(--text-primary);
+}

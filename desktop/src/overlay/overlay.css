@@ -1,0 +1,78 @@
+/*
+  Cursor overlay chrome. Everything here is decoration on a click-through
+  window — nothing may ever capture the pointer.
+*/
+
+.overlay-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.companion-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 30px;
+  height: 30px;
+  /* Positioned every frame via transform; only opacity is transitioned. */
+  will-change: transform;
+  transition: opacity 180ms ease;
+  filter: none;
+}
+
+/* Pulsing ring at a pointing target, matching the Mac's 3-pulse cadence. */
+.pointing-ring {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 46px;
+  height: 46px;
+  border: 3px solid var(--overlay-cursor-blue);
+  border-radius: 50%;
+  will-change: transform, opacity;
+  animation: ring-pulse 520ms ease-in-out 3;
+}
+
+@keyframes ring-pulse {
+  0%,
+  100% {
+    opacity: 0;
+    scale: 0.82;
+  }
+  50% {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+/* Response bubble — matches the notch's card material and type scale. */
+.response-bubble {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: 380px;
+  padding: 11px 15px;
+  border-radius: 14px;
+  background: rgba(20, 22, 28, 0.94);
+  border: 0.75px solid rgba(245, 245, 247, 0.1);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(20px) saturate(1.5);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  will-change: transform;
+  transition: opacity 180ms ease;
+}
+
+.response-status {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-text);
+  margin-bottom: 4px;
+}
+
+.response-body {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}

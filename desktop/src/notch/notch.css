@@ -1,0 +1,165 @@
+/*
+  Notch chrome. Geometry and motion come from ClickyNotchSizing / ClickyNotchShape;
+  the glass treatment reproduces SwiftUI's .regularMaterial via backdrop-filter,
+  which is the whole reason this shell moved off WPF.
+*/
+
+.notch-root {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.notch {
+  position: relative;
+  overflow: hidden;
+  /* Width/height/clip-path all animate together on the Mac's spring curves. */
+  transition:
+    width var(--duration-open) var(--ease-open),
+    height var(--duration-open) var(--ease-open),
+    clip-path var(--duration-open) var(--ease-open);
+}
+
+.notch.is-collapsed {
+  transition:
+    width var(--duration-close) var(--ease-close),
+    height var(--duration-close) var(--ease-close),
+    clip-path var(--duration-close) var(--ease-close);
+}
+
+/*
+  The notch body is SOLID BLACK, matching ClickyNotchRootView:
+      .background(Color.black).clipShape(currentNotchShape)
+  Only the cards inside use SwiftUI material. Making the body translucent was
+  wrong — on the Mac this silhouette reads as physical hardware, not glass.
+*/
+.notch-surface {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.notch-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 4px 19px 12px;
+  /* Content fades in slightly after the shape starts opening, as on the Mac. */
+  animation: notch-content-in 220ms 110ms both ease-out;
+}
+
+@keyframes notch-content-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+
+.notch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  flex: 0 0 auto;
+}
+
+.tab-strip {
+  display: flex;
+  gap: 4px;
+}
+
+.tab-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 24px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.tab-button:hover {
+  color: var(--text-secondary);
+}
+
+.tab-button.is-selected {
+  color: var(--tab-accent);
+  background: color-mix(in srgb, var(--tab-accent) 16%, transparent);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.collapse-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.collapse-button:hover {
+  background: var(--surface3);
+  color: var(--text-primary);
+}
+
+/* ── Tab body ───────────────────────────────────────────────── */
+
+.tab-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 6px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.tab-body::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Teachy mark ────────────────────────────────────────────── */
+
+.teachy-mark.is-glowing {
+  filter: drop-shadow(0 0 6px rgba(51, 128, 255, 0.75));
+  animation: mark-pulse 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes mark-pulse {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.12);
+  }
+}
+
+.idle-wing {
+  position: absolute;
+  top: 0;
+  display: grid;
+  place-items: center;
+  height: var(--notch-closed-height);
+  width: 40px;
+  transform: translateX(-50%);
+}

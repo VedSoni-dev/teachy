@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Teachy.Sidecar</RootNamespace>
+    <AssemblyName>Teachy.Sidecar</AssemblyName>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
+    <!-- Per-Monitor-V2. Without it Windows virtualizes every coordinate API
+         (capture, cursor, UI Automation bounds) to a compatibility resolution
+         that disagrees with reality — the bug that broke pointing before. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Teachy.Engine\Teachy.Engine.csproj" />
+    <ProjectReference Include="..\Teachy.Platform\Teachy.Platform.csproj" />
+  </ItemGroup>
+
+</Project>

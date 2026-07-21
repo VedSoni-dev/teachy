@@ -1,0 +1,103 @@
+/*
+  Design tokens transcribed EXACTLY from the macOS app's DesignSystem.swift.
+  Every value here has a direct counterpart in the Swift source — nothing is
+  invented. If a value looks off, fix it in Swift first, then mirror it here.
+*/
+
+:root {
+  /* ── Backgrounds (DS.Colors) ───────────────────────────────── */
+  --background: #12151a;
+  --surface1: #1a1d24;
+  --surface2: #22262f;
+  --surface3: #2a2f3a;
+  --surface4: #323845;
+
+  /* ── Borders ───────────────────────────────────────────────── */
+  --border-subtle: #3a404c;
+  --border-strong: #4a5160;
+
+  /* ── Text ──────────────────────────────────────────────────── */
+  --text-primary: #f5f5f7;
+  --text-secondary: #a1a1a6;
+  --text-tertiary: #6e6e73;
+
+  /* ── Accent scale ──────────────────────────────────────────── */
+  --blue400: #5ac8fa;
+  --blue500: #0a84ff;
+  --blue600: #0071e3;
+  --blue700: #0077ed;
+  --blue800: #0060bf;
+
+  --accent: var(--blue600);
+  --accent-hover: var(--blue700);
+  --accent-text: var(--blue400);
+  --accent-subtle: rgba(10, 132, 255, 0.12);
+
+  /* ── Tab accents ───────────────────────────────────────────── */
+  --learn-accent: #0f8a6a;
+  --learn-accent-soft: rgba(15, 138, 106, 0.14);
+  --portfolio-accent: #ff9f0a;
+  --portfolio-accent-soft: rgba(255, 159, 10, 0.14);
+  --skills-accent: #bf5af2;
+  --skills-accent-soft: rgba(191, 90, 242, 0.14);
+
+  /* ── Semantic ──────────────────────────────────────────────── */
+  --destructive: #e5484d;
+  --success: #34d399;
+  --warning: #ffb224;
+  --info: #70b8ff;
+
+  /* ── Overlay cursor (distinct from in-app accent, per Swift) ─ */
+  --overlay-cursor-blue: #3380ff;
+
+  /* ── Corner radii (DS.CornerRadius) ────────────────────────── */
+  --radius-small: 6px;
+  --radius-medium: 8px;
+  --radius-large: 10px;
+  --radius-xl: 12px;
+
+  /* ── Spacing (DS.Spacing) ──────────────────────────────────── */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 20px;
+  --space-xxl: 24px;
+  --space-xxxl: 32px;
+
+  /* ── Notch geometry (ClickyNotchSizing) ────────────────────── */
+  --notch-open-width: 640px;
+  --notch-open-height: 320px;
+  --notch-closed-width: 185px;
+  --notch-closed-height: 36px;
+
+  /*
+    Springs from ClickyNotchSizing:
+      openSpring  = spring(response: 0.42, dampingFraction: 0.80)
+      closeSpring = spring(response: 0.45, dampingFraction: 1.00)
+    Damping 0.80 is underdamped, so the open curve overshoots slightly;
+    damping 1.00 is critically damped, so the close curve must not.
+  */
+  --ease-open: linear(
+    0, 0.0088, 0.0345, 0.0751, 0.1276, 0.1891, 0.2569, 0.3286, 0.4021,
+    0.4756, 0.5474, 0.6162, 0.6809, 0.7407, 0.7949, 0.8433, 0.8856,
+    0.9219, 0.9524, 0.9773, 0.9971, 1.0122, 1.0231, 1.0304, 1.0346,
+    1.0362, 1.0357, 1.0337, 1.0305, 1.0266, 1.0223, 1.0179, 1.0137,
+    1.0098, 1.0064, 1.0035, 1.0011, 0.9993, 0.9979, 0.9969, 1
+  );
+  --ease-close: linear(
+    0, 0.0047, 0.0184, 0.0403, 0.0697, 0.1056, 0.1473, 0.1939, 0.2447,
+    0.2988, 0.3556, 0.4143, 0.4743, 0.5349, 0.5956, 0.6559, 0.7152,
+    0.7731, 0.8293, 0.8834, 0.9351, 0.9843, 1.0000, 1
+  );
+  --duration-open: 420ms;
+  --duration-close: 450ms;
+
+  /*
+    Typography. macOS uses SF Pro (the system face). Inter is the closest
+    metric-compatible face that can actually ship on Windows — the goal here
+    is matching the Mac, so a "distinctive" alternative would be wrong.
+  */
+  --font-ui: "Inter", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", "Cascadia Code", Consolas, monospace;
+}

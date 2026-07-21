@@ -13,3 +13,9 @@ reference/
 # Sparkle private keys must never be committed
 *.sparkle-private.key
 teachy-sparkle-private.key
+
+# Windows / Electron build artifacts
+node_modules/
+dist/
+**/bin/
+**/obj/

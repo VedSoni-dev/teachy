@@ -1,0 +1,98 @@
+/* Teaching HUD, styled to the same system as the notch cards. */
+
+.lesson-hud {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 12px;
+  border-radius: var(--radius-xl);
+  background: rgba(20, 22, 28, 0.96);
+  border: 0.75px solid rgba(245, 245, 247, 0.1);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+.lesson-hud-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.lesson-hud-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.lesson-hud-progress {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+}
+
+.lesson-hud-goal {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--learn-accent);
+  margin-bottom: 5px;
+}
+
+.lesson-hud-coach {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  min-height: 34px;
+}
+
+.lesson-hud-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-button {
+  padding: 7px 13px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface2);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    filter 140ms ease,
+    opacity 140ms ease;
+}
+
+.hud-button:hover:not(:disabled) {
+  filter: brightness(1.18);
+}
+
+.hud-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.hud-button.is-accent {
+  background: var(--accent);
+  color: #fff;
+}
+
+.hud-button.is-primary {
+  background: var(--learn-accent);
+  color: #fff;
+}
+
+.hud-button.is-quiet {
+  margin-left: auto;
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.hud-button.is-quiet:hover:not(:disabled) {
+  color: var(--text-primary);
+}

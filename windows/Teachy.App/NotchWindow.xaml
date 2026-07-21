@@ -1,0 +1,292 @@
+<Window x:Class="Teachy.App.NotchWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Teachy.App"
+        Title="TeachyNotch"
+        Width="640" Height="360"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        ResizeMode="NoResize"
+        MouseLeave="HandleWindowMouseLeave">
+
+    <!-- Everything anchors to the top edge; transparent pixels are click-through.
+         The hover target spans the bar AND its wings so the notch opens the same
+         way it does on the Mac. -->
+    <Grid VerticalAlignment="Top" Background="Transparent">
+
+        <!-- Hover catcher: wider than the closed bar, invisible, includes the
+             boring.notch "chin" below it. -->
+        <Rectangle x:Name="NotchHoverCatcher" Width="320" Height="48"
+                   HorizontalAlignment="Center" VerticalAlignment="Top"
+                   Fill="#01000000" MouseEnter="HandleNotchMouseEnter" />
+
+        <Grid x:Name="NotchArea" Width="185" Height="36" HorizontalAlignment="Center" VerticalAlignment="Top"
+              MouseEnter="HandleNotchMouseEnter" Background="Transparent"
+              RenderOptions.EdgeMode="Unspecified" TextOptions.TextRenderingMode="ClearType">
+
+            <!-- The notch silhouette — a warm ink gradient (lit surface), not flat black. -->
+            <local:TeachyNotchShape x:Name="NotchBackground"
+                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                    Fill="{StaticResource NotchInkGradient}"
+                                    TopCornerRadius="6" BottomCornerRadius="14" />
+
+            <!-- Fine grain, masked to the exact animated notch silhouette above —
+                 gives the surface texture instead of reading as flat vector color. -->
+            <Rectangle x:Name="NotchGrainOverlay" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Opacity="0.55" IsHitTestVisible="False">
+                <Rectangle.OpacityMask>
+                    <VisualBrush Visual="{Binding ElementName=NotchBackground}" />
+                </Rectangle.OpacityMask>
+            </Rectangle>
+
+            <!-- Beveled top hairline — a soft warm highlight along the top edge,
+                 like light catching the edge of a physical lacquered object. -->
+            <Rectangle Height="1" VerticalAlignment="Top" Margin="8,0,8,0" IsHitTestVisible="False">
+                <Rectangle.Fill>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                        <GradientStop Color="#00D9A455" Offset="0" />
+                        <GradientStop Color="#40D9A455" Offset="0.5" />
+                        <GradientStop Color="#00D9A455" Offset="1" />
+                    </LinearGradientBrush>
+                </Rectangle.Fill>
+            </Rectangle>
+        </Grid>
+
+        <!-- Closed idle: glowing Teachy triangle floating on the transparent right
+             wing, past the bar — matching the Mac's idle wing layout. -->
+        <Grid x:Name="IdleTriangleHost" Width="40" Height="36"
+              HorizontalAlignment="Center" VerticalAlignment="Top" Margin="249,0,0,0">
+                <!-- Teachy cursor mark: the Mac's equilateral Triangle() with its -35°
+                     rotation baked into the vertices, so it always reads as an
+                     up-left pointer instead of depending on a render transform.
+                     Kept Teachy-blue — the one cool "spark" against the warm palette. -->
+                <Polygon x:Name="IdleTriangleGlow" Points="2.71,0.43 4.09,16.37 17.20,7.20"
+                         Fill="{StaticResource TeachySpark}" Width="18" Height="17"
+                         HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.55"
+                         RenderTransformOrigin="0.5,0.5">
+                    <Polygon.RenderTransform>
+                        <ScaleTransform x:Name="IdleGlowPulseScale" ScaleX="1.35" ScaleY="1.35" />
+                    </Polygon.RenderTransform>
+                    <Polygon.Effect>
+                        <BlurEffect Radius="7" />
+                    </Polygon.Effect>
+                </Polygon>
+                <Polygon x:Name="IdleTriangleCore" Points="2.03,0.32 3.07,12.28 12.90,5.40"
+                         Fill="{StaticResource TeachySpark}" Width="13" Height="13"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                         RenderTransformOrigin="0.5,0.5">
+                    <Polygon.RenderTransform>
+                        <ScaleTransform x:Name="IdleCorePulseScale" ScaleX="1" ScaleY="1" />
+                    </Polygon.RenderTransform>
+                    <Polygon.Effect>
+                        <DropShadowEffect Color="#0A84FF" BlurRadius="8" ShadowDepth="0" Opacity="0.7" />
+                    </Polygon.Effect>
+                </Polygon>
+            </Grid>
+
+            <!-- Closed live activity: triangle badge left wing + audio spectrum right
+                 wing, straddling the closed bar exactly like the Mac's liveActivityRow. -->
+            <Grid x:Name="LiveActivityHost" Visibility="Collapsed"
+                  Width="285" Height="36" HorizontalAlignment="Center" VerticalAlignment="Top">
+                <Polygon Points="2.71,0.43 4.09,16.37 17.20,7.20" Fill="{StaticResource TeachySpark}" Width="18" Height="17"
+                         HorizontalAlignment="Left" VerticalAlignment="Center" Margin="14,0,0,0">
+                    <Polygon.Effect>
+                        <DropShadowEffect Color="#0A84FF" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
+                    </Polygon.Effect>
+                </Polygon>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center"
+                            Margin="0,0,14,0">
+                    <Rectangle x:Name="SpectrumBar1" Width="3" Height="6" Fill="{StaticResource BrassAccent}" RadiusX="1.5" RadiusY="1.5" Margin="0,0,2,0" VerticalAlignment="Center" />
+                    <Rectangle x:Name="SpectrumBar2" Width="3" Height="11" Fill="{StaticResource BrassAccent}" RadiusX="1.5" RadiusY="1.5" Margin="0,0,2,0" VerticalAlignment="Center" />
+                    <Rectangle x:Name="SpectrumBar3" Width="3" Height="8" Fill="{StaticResource BrassAccent}" RadiusX="1.5" RadiusY="1.5" Margin="0,0,2,0" VerticalAlignment="Center" />
+                    <Rectangle x:Name="SpectrumBar4" Width="3" Height="12" Fill="{StaticResource BrassAccent}" RadiusX="1.5" RadiusY="1.5" VerticalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+
+            <!-- Open layout: header row + tab content, fades in during the spring -->
+            <!-- Fixed size so the panel's internal layout is measured once, not on every
+                 animation frame — re-laying this out per frame is what made the open
+                 spring stutter. -->
+            <Grid x:Name="OpenContentHost" Opacity="0" Visibility="Collapsed" Margin="19,4,19,12"
+                  Width="602" Height="304"
+                  HorizontalAlignment="Center" VerticalAlignment="Top">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="40" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- Header: wordmark left · animated tab pill indicator · camera bay ·
+                     spark + collapse right -->
+                <DockPanel Grid.Row="0" LastChildFill="False">
+                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                        <TextBlock Text="Teachy" FontFamily="{StaticResource DisplayFont}" FontSize="15" FontStyle="Italic"
+                                   Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" Margin="0,0,16,0" />
+
+                        <!-- Tab strip with a single sliding brass indicator behind the active icon -->
+                        <Grid VerticalAlignment="Center">
+                            <Border x:Name="TabSelectionIndicator" Width="30" Height="24" CornerRadius="12"
+                                    Background="{StaticResource BrassAccentSoft}" HorizontalAlignment="Left">
+                                <Border.RenderTransform>
+                                    <TranslateTransform x:Name="TabIndicatorTranslate" X="0" />
+                                </Border.RenderTransform>
+                            </Border>
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="LearnTabButton" Style="{StaticResource TabButtonStyle}" Click="HandleLearnTabClicked" ToolTip="Learn">
+                                    <TextBlock Text="&#xE736;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{StaticResource BrassAccent}" x:Name="LearnTabGlyph" />
+                                </Button>
+                                <Button x:Name="PortfolioTabButton" Style="{StaticResource TabButtonStyle}" Click="HandlePortfolioTabClicked" ToolTip="Portfolio">
+                                    <TextBlock Text="&#xE8B7;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="Gray" x:Name="PortfolioTabGlyph" />
+                                </Button>
+                                <Button x:Name="SkillsTabButton" Style="{StaticResource TabButtonStyle}" Click="HandleSkillsTabClicked" ToolTip="Skills">
+                                    <TextBlock Text="&#xE9D2;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="Gray" x:Name="SkillsTabGlyph" />
+                                </Button>
+                                <Button x:Name="SettingsTabButton" Style="{StaticResource TabButtonStyle}" Click="HandleSettingsTabClicked" ToolTip="Settings">
+                                    <TextBlock Text="&#xE713;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="Gray" x:Name="SettingsTabGlyph" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                        <Polygon Points="3.05,0.48 4.61,18.42 19.35,8.10" Fill="{StaticResource TeachySpark}" Width="20" Height="19"
+                                 Margin="0,0,10,0" VerticalAlignment="Center">
+                            <Polygon.Effect>
+                                <DropShadowEffect Color="#0A84FF" BlurRadius="6" ShadowDepth="0" Opacity="0.7" />
+                            </Polygon.Effect>
+                        </Polygon>
+                        <Button Style="{StaticResource HoverIconButtonStyle}" Click="HandleCollapseClicked" ToolTip="Collapse">
+                            <TextBlock Text="&#xE70E;" FontFamily="{StaticResource IconFont}" FontSize="11" Foreground="{StaticResource TextPrimary}" />
+                        </Button>
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- Tab content -->
+                <Grid Grid.Row="1" Margin="1,10,1,0">
+
+                    <!-- LEARN (default): course catalog -->
+                    <ScrollViewer x:Name="LearnTabPanel" VerticalScrollBarVisibility="Auto" Visibility="Visible">
+                        <StackPanel x:Name="CourseListHost" />
+                    </ScrollViewer>
+
+                    <!-- PORTFOLIO -->
+                    <Grid x:Name="PortfolioTabPanel" Visibility="Collapsed">
+                        <StackPanel x:Name="PortfolioEmptyState" VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <TextBlock Text="&#xE8B7;" FontFamily="{StaticResource IconFont}" FontSize="26" Foreground="{StaticResource PortfolioAccent}" HorizontalAlignment="Center" Margin="0,0,0,12" />
+                            <TextBlock Text="Your portfolio is empty" Style="{StaticResource CardTitleStyle}" HorizontalAlignment="Center" />
+                            <TextBlock Text="Finish course goals and Teachy captures the real things you build." Style="{StaticResource BodyTextStyle}" HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="280" Margin="0,6,0,0" />
+                        </StackPanel>
+                        <ScrollViewer x:Name="PortfolioListScroller" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="PortfolioListHost" />
+                        </ScrollViewer>
+                    </Grid>
+
+                    <!-- SKILLS -->
+                    <Grid x:Name="SkillsTabPanel" Visibility="Collapsed">
+                        <StackPanel x:Name="SkillsEmptyState" VerticalAlignment="Center" HorizontalAlignment="Center">
+                            <TextBlock Text="&#xE9D2;" FontFamily="{StaticResource IconFont}" FontSize="26" Foreground="{StaticResource SkillsAccent}" HorizontalAlignment="Center" Margin="0,0,0,12" />
+                            <TextBlock Text="No skills tracked yet" Style="{StaticResource CardTitleStyle}" HorizontalAlignment="Center" />
+                            <TextBlock Text="Your learner model grows as you complete courses and teach-backs." Style="{StaticResource BodyTextStyle}" HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="280" Margin="0,6,0,0" />
+                        </StackPanel>
+                        <ScrollViewer x:Name="SkillsListScroller" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="SkillsListHost" />
+                        </ScrollViewer>
+                    </Grid>
+
+                    <!-- SETTINGS (Home) -->
+                    <ScrollViewer x:Name="SettingsTabPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <Border Background="{StaticResource Surface1}" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="12" Padding="14,11" Margin="0,0,0,14">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <TextBlock Text="Hold" Style="{StaticResource BodyTextStyle}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <Border Style="{StaticResource KeycapStyle}">
+                                        <TextBlock Text="Ctrl" Foreground="{StaticResource TextPrimary}" FontFamily="{StaticResource BodyFont}" FontSize="11.5" FontWeight="Bold" />
+                                    </Border>
+                                    <TextBlock Text="+" Foreground="{StaticResource TextTertiary}" FontFamily="{StaticResource BodyFont}" FontSize="12.5" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <Border Style="{StaticResource KeycapStyle}">
+                                        <TextBlock Text="Alt" Foreground="{StaticResource TextPrimary}" FontFamily="{StaticResource BodyFont}" FontSize="11.5" FontWeight="Bold" />
+                                    </Border>
+                                    <TextBlock Text="and talk about your screen" Style="{StaticResource BodyTextStyle}" VerticalAlignment="Center" Margin="4,0,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="AI BRAIN" Style="{StaticResource SectionLabelStyle}" />
+                            <Grid Margin="0,0,0,7">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Background="{StaticResource Surface2}" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="9" Padding="12,8" Margin="0,0,8,0">
+                                    <DockPanel>
+                                        <TextBlock Text="&#xE72E;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{StaticResource TextTertiary}" DockPanel.Dock="Left" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                        <PasswordBox x:Name="OpenRouterApiKeyInput" Background="Transparent" Foreground="{StaticResource TextPrimary}"
+                                                     BorderThickness="0" FontFamily="Consolas" FontSize="12" CaretBrush="{StaticResource TextPrimary}" />
+                                    </DockPanel>
+                                </Border>
+                                <Button Grid.Column="1" Content="Save key" Click="HandleSaveApiKeyClicked" Style="{StaticResource PrimaryPillButtonStyle}" />
+                            </Grid>
+                            <TextBlock x:Name="ApiKeyStatusText" Text="" Style="{StaticResource BodyTextStyle}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+                            <TextBlock Text="POSITION" Style="{StaticResource SectionLabelStyle}" />
+                            <Border Background="{StaticResource Surface1}" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="10" Padding="12,11" Margin="0,0,0,14">
+                                <StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button x:Name="PlacementTopLeftButton" Content="Top left" Click="HandlePlacementTopLeftClicked" Style="{StaticResource ChipButtonStyle}" Margin="0,0,6,0" />
+                                        <Button x:Name="PlacementTopCenterButton" Content="Top center" Click="HandlePlacementTopCenterClicked" Style="{StaticResource ChipButtonStyle}" Margin="0,0,6,0" />
+                                        <Button x:Name="PlacementTopRightButton" Content="Top right" Click="HandlePlacementTopRightClicked" Style="{StaticResource ChipButtonStyle}" />
+                                    </StackPanel>
+                                    <TextBlock Text="Or just drag the notch anywhere on screen — Teachy remembers where you put it." Style="{StaticResource BodyTextStyle}" FontSize="11" TextWrapping="Wrap" Margin="0,9,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="COMPANION" Style="{StaticResource SectionLabelStyle}" />
+                            <Border Background="{StaticResource Surface1}" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="10" Padding="14,10" Margin="0,0,0,14">
+                                <DockPanel LastChildFill="False">
+                                    <StackPanel DockPanel.Dock="Left">
+                                        <TextBlock Text="Show Teachy" Style="{StaticResource CardTitleStyle}" FontSize="12.5" />
+                                        <TextBlock Text="Keep the cursor companion on screen, trailing your pointer." Style="{StaticResource BodyTextStyle}" FontSize="11" Margin="0,3,0,0" />
+                                    </StackPanel>
+                                    <CheckBox x:Name="ShowTeachyCursorToggle" Style="{StaticResource ToggleSwitchStyle}" DockPanel.Dock="Right" VerticalAlignment="Center"
+                                              Checked="HandleShowTeachyCursorChanged" Unchecked="HandleShowTeachyCursorChanged" />
+                                </DockPanel>
+                            </Border>
+
+                            <TextBlock Text="MODEL" Style="{StaticResource SectionLabelStyle}" />
+                            <ComboBox x:Name="ModelPickerComboBox" Margin="0,0,0,14" Style="{StaticResource TeachyComboBoxStyle}"
+                                      SelectionChanged="HandleModelSelectionChanged">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding DisplayName}" FontFamily="{StaticResource BodyFont}" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" />
+                                            <TextBlock Text="{Binding Subtitle}" FontFamily="{StaticResource BodyFont}" Foreground="{StaticResource TextTertiary}" Margin="8,0,0,0" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+
+                            <TextBlock Text="ASK ABOUT YOUR SCREEN" Style="{StaticResource SectionLabelStyle}" />
+                            <Grid Margin="0,0,0,14">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Border Grid.Column="0" Background="{StaticResource Surface2}" BorderBrush="{StaticResource HairlineBrush}" BorderThickness="1" CornerRadius="9" Padding="12,8" Margin="0,0,8,0">
+                                    <TextBox x:Name="TypedQuestionInput" Background="Transparent" Foreground="{StaticResource TextPrimary}"
+                                             BorderThickness="0" FontFamily="{StaticResource BodyFont}" FontSize="12.5" CaretBrush="{StaticResource TextPrimary}"
+                                             KeyDown="HandleTypedQuestionKeyDown" />
+                                </Border>
+                                <Button Grid.Column="1" Content="Ask" Click="HandleAskButtonClicked" Style="{StaticResource GhostPillButtonStyle}" />
+                            </Grid>
+
+                            <DockPanel>
+                                <TextBlock x:Name="StatusBadgeText" Text="" Foreground="{StaticResource TextTertiary}" FontFamily="{StaticResource BodyFont}" FontSize="10.5" VerticalAlignment="Center" />
+                                <Button Content="Quit Teachy" Click="HandleQuitClicked" Style="{StaticResource QuietTextButtonStyle}" HorizontalAlignment="Right" Padding="8,4" />
+                            </DockPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Grid>
+        </Grid>
+</Window>

@@ -1,0 +1,52 @@
+<Window x:Class="Teachy.App.CourseLessonHUDWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TeachyCourseHUD"
+        Width="480" SizeToContent="Height"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        ResizeMode="NoResize">
+    <!-- Glass teaching HUD, matching the notch's Chalkboard & Brass system -->
+    <Border Background="#F2181410" CornerRadius="18" Padding="19,15" BorderBrush="#22D9A455" BorderThickness="1">
+        <Border.Effect>
+            <DropShadowEffect Color="Black" BlurRadius="28" ShadowDepth="5" Opacity="0.55" />
+        </Border.Effect>
+        <StackPanel>
+
+            <DockPanel Margin="0,0,0,10">
+                <Polygon Points="2.71,0.43 4.09,16.37 17.20,7.20" Fill="#FF0A84FF" Width="18" Height="17"
+                         DockPanel.Dock="Left" VerticalAlignment="Center">
+                    <Polygon.Effect>
+                        <DropShadowEffect Color="#0A84FF" BlurRadius="6" ShadowDepth="0" Opacity="0.7" />
+                    </Polygon.Effect>
+                </Polygon>
+                <TextBlock x:Name="CourseTitleText" Text="" Foreground="#F3EDE4" FontFamily="Cambria" FontStyle="Italic"
+                           FontSize="13.5" FontWeight="SemiBold" Margin="9,0,0,0" VerticalAlignment="Center" />
+                <TextBlock x:Name="GoalProgressText" Text="" Foreground="#847A6C" FontFamily="Corbel"
+                           FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" />
+            </DockPanel>
+
+            <TextBlock x:Name="GoalTitleText" Text="" Foreground="#D9A455" FontFamily="Bahnschrift SemiBold"
+                       FontSize="10.5" Margin="0,0,0,5" />
+
+            <TextBlock x:Name="CoachLineText" Text="" Foreground="#E8E1D6" FontFamily="Corbel"
+                       FontSize="13.5" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+            <DockPanel LastChildFill="False">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                    <Button Content="Hint" Click="HandleHintClicked" Style="{StaticResource GhostPillButtonStyle}" Margin="0,0,8,0" />
+                    <Button Content="Do it for me" Click="HandleDoItForMeClicked" Style="{StaticResource GhostPillButtonStyle}"
+                            Background="#2A3F52" Foreground="#8FC2FF" BorderBrush="#3A5A78" Margin="0,0,8,0" />
+                    <Button Content="I did it" Click="HandleIDidItClicked" Style="{StaticResource PrimaryPillButtonStyle}" />
+                </StackPanel>
+                <Button Content="Exit course" Click="HandleExitClicked" Style="{StaticResource QuietTextButtonStyle}"
+                        DockPanel.Dock="Right" Padding="10,7" />
+            </DockPanel>
+
+        </StackPanel>
+    </Border>
+</Window>
