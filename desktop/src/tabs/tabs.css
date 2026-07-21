@@ -77,7 +77,7 @@
 }
 
 .course-subtitle {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-secondary);
 }
 
@@ -345,6 +345,41 @@
   transform: translateX(16px);
 }
 
+/* Model picker — styled <select> matching the dark notch surface */
+.model-picker-wrapper {
+  position: relative;
+}
+
+.model-picker {
+  width: 100%;
+  padding: 8px 11px;
+  border-radius: var(--radius-medium);
+  border: 1px solid rgba(245, 245, 247, 0.1);
+  background: var(--surface2);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+  transition: border-color 140ms ease;
+}
+
+.model-picker:focus {
+  border-color: var(--accent);
+}
+
+.model-picker option {
+  background: #1b1e25;
+  color: var(--text-primary);
+  padding: 6px;
+}
+
 .settings-footer {
   display: flex;
   align-items: center;
@@ -364,4 +399,106 @@
 
 .quiet-button:hover {
   color: var(--text-primary);
+}
+
+/* ── Portfolio tab ─────────────────────────────────────────── */
+
+.portfolio-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.portfolio-card {
+  padding: 12px 14px;
+}
+
+.portfolio-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.portfolio-card-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.portfolio-shipped-badge {
+  padding: 2px 8px;
+  border-radius: 7px;
+  background: rgba(224, 149, 77, 0.14);
+  color: var(--portfolio-accent);
+  font-size: 10px;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.portfolio-card-subtitle {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.portfolio-card-date {
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+/* ── Skills tab ────────────────────────────────────────────── */
+
+.skills-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.skill-card {
+  padding: 10px 14px;
+}
+
+.skill-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.skill-card-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.skill-proficiency-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--skills-accent);
+  flex: 0 0 auto;
+}
+
+.skill-progress-track {
+  height: 4px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: var(--surface2);
+  overflow: hidden;
+}
+
+.skill-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--skills-accent);
+  transition: width 260ms ease;
+}
+
+.skill-card-meta {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-tertiary);
 }

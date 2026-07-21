@@ -8,9 +8,23 @@ const PLACEMENT_OPTIONS = [
   { id: 'TopRight', label: 'Top right' },
 ] as const;
 
-export function SettingsTab() {
+const MODEL_OPTIONS = [
+  { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', subtitle: 'Vision + tools · free default' },
+  { id: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6', subtitle: 'Smartest tutor · needs your own key' },
+  { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5', subtitle: 'Fast + sharp · needs your own key' },
+  { id: 'google/gemma-4-26b-a4b-it', label: 'Gemma 4 26B', subtitle: 'Vision + tools · cheaper' },
+  { id: 'google/gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', subtitle: 'Vision + tools · fast' },
+  { id: 'qwen/qwen3-vl-30b-a3b-instruct', label: 'Qwen3 VL 30B', subtitle: 'Vision + tools' },
+] as const;
+
+interface SettingsTabProps {
+  onAskQuestion?: (question: string) => void;
+}
+
+export function SettingsTab({ onAskQuestion }: SettingsTabProps) {
   const { config, isSaving, saveApiKey, updateConfig } = useTeachyConfig();
   const [apiKeyDraft, setApiKeyDraft] = useState('');
+  const [questionDraft, setQuestionDraft] = useState('');
 
   async function handleSaveApiKey() {
     const trimmedKey = apiKeyDraft.trim();
@@ -20,6 +34,19 @@ export function SettingsTab() {
     await saveApiKey(trimmedKey);
     setApiKeyDraft('');
   }
+
+  function handleAskQuestion() {
+    const trimmedQuestion = questionDraft.trim();
+    if (trimmedQuestion.length === 0 || !onAskQuestion) {
+      return;
+    }
+    setQuestionDraft('');
+    onAskQuestion(trimmedQuestion);
+  }
+
+  const currentModelLabel = MODEL_OPTIONS.find(
+    (modelOption) => modelOption.id === config?.chatModel,
+  )?.label ?? MODEL_OPTIONS[0].label;
 
   return (
     <div className="settings-stack">
@@ -32,6 +59,32 @@ export function SettingsTab() {
           <span>and talk about your screen</span>
         </div>
       </div>
+
+      <section>
+        <div className="section-label">Ask Teachy</div>
+        <div className="field-row">
+          <input
+            className="text-field"
+            type="text"
+            placeholder="Type a question about your screen…"
+            value={questionDraft}
+            onChange={(changeEvent) => setQuestionDraft(changeEvent.target.value)}
+            onKeyDown={(keyEvent) => {
+              if (keyEvent.key === 'Enter') {
+                handleAskQuestion();
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="primary-button"
+            onClick={handleAskQuestion}
+            disabled={questionDraft.trim().length === 0}
+          >
+            Ask
+          </button>
+        </div>
+      </section>
 
       <section>
         <div className="section-label">AI Brain</div>
@@ -62,6 +115,21 @@ export function SettingsTab() {
             ? 'Key saved (encrypted with Windows DPAPI). Paste a new one to rotate it.'
             : 'Paste your free OpenRouter API key (openrouter.ai) — stored encrypted on this machine.'}
         </p>
+
+        <div className="section-label" style={{ marginTop: 12 }}>Model</div>
+        <div className="model-picker-wrapper">
+          <select
+            className="model-picker"
+            value={config?.chatModel ?? MODEL_OPTIONS[0].id}
+            onChange={(changeEvent) => void updateConfig({ chatModel: changeEvent.target.value })}
+          >
+            {MODEL_OPTIONS.map((modelOption) => (
+              <option key={modelOption.id} value={modelOption.id}>
+                {modelOption.label} — {modelOption.subtitle}
+              </option>
+            ))}
+          </select>
+        </div>
       </section>
 
       <section>
@@ -74,7 +142,6 @@ export function SettingsTab() {
                 type="button"
                 className={`chip ${config?.notchPlacement === option.id ? 'is-selected' : ''}`}
                 onClick={() => {
-                  // Move the window now, and remember the choice.
                   window.teachy?.notch.applyPlacement(option.id);
                   void updateConfig({ notchPlacement: option.id });
                 }}
@@ -113,7 +180,7 @@ export function SettingsTab() {
       </section>
 
       <div className="settings-footer">
-        <span>{config?.hasApiKey ? '● ready' : '● needs API key'}</span>
+        <span>{config?.hasApiKey ? `● ready · ${currentModelLabel}` : '● needs API key'}</span>
         <button
           type="button"
           className="quiet-button"

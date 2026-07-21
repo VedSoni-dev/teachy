@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { GOALS_BY_COURSE_ID, type CourseLearningGoal } from '../data/courseGoals';
 import type { CourseCatalogEntry } from '../data/courseCatalog';
 import { verifyCourseGoal } from './courseVerifier';
@@ -12,13 +12,13 @@ import {
 import type { CapturedScreen, TeachyConfigSnapshot } from '../types/global';
 
 const BRING_YOUR_OWN_KEY_MODEL = 'anthropic/claude-sonnet-4.6';
+const AUTO_HINT_TIMEOUT_MS = 22_000;
 
 export interface CourseSessionState {
   course: CourseCatalogEntry;
   goals: CourseLearningGoal[];
   currentGoalIndex: number;
   coachLine: string;
-  /** Set after a goal passes when it has a teach-back question pending. */
   isAwaitingTeachBack: boolean;
   isBusy: boolean;
 }
@@ -30,14 +30,11 @@ export interface CourseProgressEntry {
   lastActivityUtc: string;
 }
 
-/**
- * The LessonPlayer loop: coach the current goal against the live screen, gate
- * advancement on the goal's natural-language doneWhen, run soft teach-backs,
- * and persist progress so a course survives across days.
- */
 export function useCourseSession() {
   const [session, setSession] = useState<CourseSessionState | null>(null);
   const sessionRef = useRef<CourseSessionState | null>(null);
+  const goalFailureCountRef = useRef(0);
+  const autoHintTimerRef = useRef<number | null>(null);
 
   function updateSession(updater: (current: CourseSessionState) => CourseSessionState) {
     setSession((current) => {
@@ -48,7 +45,27 @@ export function useCourseSession() {
     });
   }
 
-  /** Runs one coaching turn grounded in what is on screen right now. */
+  function clearAutoHintTimer() {
+    if (autoHintTimerRef.current !== null) {
+      window.clearTimeout(autoHintTimerRef.current);
+      autoHintTimerRef.current = null;
+    }
+  }
+
+  function startAutoHintTimer(hintCallback: () => void) {
+    clearAutoHintTimer();
+    autoHintTimerRef.current = window.setTimeout(() => {
+      const activeSession = sessionRef.current;
+      if (activeSession && !activeSession.isBusy && !activeSession.isAwaitingTeachBack) {
+        hintCallback();
+      }
+    }, AUTO_HINT_TIMEOUT_MS);
+  }
+
+  useEffect(() => {
+    return () => clearAutoHintTimer();
+  }, []);
+
   const runCoachTurn = useCallback(async (coachAsk: string) => {
     const teachy = window.teachy;
     const activeSession = sessionRef.current;
@@ -56,6 +73,7 @@ export function useCourseSession() {
       return;
     }
 
+    clearAutoHintTimer();
     updateSession((current) => ({ ...current, isBusy: true }));
 
     try {
@@ -83,14 +101,16 @@ export function useCourseSession() {
         capturedScreen.circledGridCells,
       );
 
-      // Course context keeps every turn pointed at the current goal rather than
-      // answering generically — the macOS LessonPlayer behavior.
       systemPrompt += `
 
 ACTIVE COURSE CONTEXT — you are running the course "${activeSession.course.title}".
 Current goal (${activeSession.currentGoalIndex + 1} of ${activeSession.goals.length}): ${currentGoal.title}.
 The learner is trying to: ${currentGoal.goal}
 The goal is done when: ${currentGoal.doneWhen ?? 'the learner says they understand it'}
+
+Be Teachy — warm, playful, teachy-energy. One clear next move only — point at
+the real control. Urge them to do it now. If the wrong app or page is open,
+tell them to open the right one, then point.
 Coach them toward this goal from what you SEE on their screen right now —
 one small concrete next step at a time, pointing at the real UI. Never dump
 the whole plan. Celebrate real progress briefly, then move.`;
@@ -120,13 +140,26 @@ the whole plan. Celebrate real progress briefly, then move.`;
           teachy.overlay.send({ type: 'point-at', point: targetPoint, label: parsedReply.pointTag.label });
         }
       }
+
+      // Start auto-hint timer after each coaching turn completes.
+      startAutoHintTimer(() => {
+        const currentSession = sessionRef.current;
+        if (currentSession) {
+          const goal = currentSession.goals[currentSession.currentGoalIndex];
+          const autoHintLine = `Still working on this? Here's a nudge — ${goal.title}.`;
+          updateSession((s) => ({ ...s, coachLine: autoHintLine }));
+          void teachy.invoke('speak', { text: autoHintLine });
+          void runCoachTurn(
+            `The learner has been quiet for a while on: ${goal.goal}. Give them one concrete hint for their exact screen right now.`,
+          );
+        }
+      });
     } catch (coachError) {
       const message = coachError instanceof Error ? coachError.message : String(coachError);
       updateSession((current) => ({ ...current, isBusy: false, coachLine: `Something went wrong: ${message}` }));
     }
   }, []);
 
-  /** Starts (or resumes) a course, opening its soft-start URL if it has one. */
   const startCourse = useCallback(
     async (course: CourseCatalogEntry) => {
       const teachy = window.teachy;
@@ -135,7 +168,6 @@ the whole plan. Celebrate real progress briefly, then move.`;
         return;
       }
 
-      // Resume where the learner left off — projects survive across days.
       let resumeGoalIndex = 0;
       try {
         const allProgress = await teachy.invoke<Record<string, CourseProgressEntry>>('get-progress');
@@ -144,14 +176,14 @@ the whole plan. Celebrate real progress briefly, then move.`;
           resumeGoalIndex = Math.min(Math.max(courseProgress.completedGoals, 0), goals.length - 1);
         }
       } catch {
-        // No saved progress is fine — start from the beginning.
+        // No saved progress — start from the beginning.
       }
 
       if (course.startUrl) {
-        void teachy.invoke('open-url', { url: course.startUrl }).catch(() => {
-          // A failed browser launch must not block the coaching hand-off.
-        });
+        void teachy.invoke('open-url', { url: course.startUrl }).catch(() => {});
       }
+
+      goalFailureCountRef.current = 0;
 
       const newSession: CourseSessionState = {
         course,
@@ -170,6 +202,8 @@ the whole plan. Celebrate real progress briefly, then move.`;
   );
 
   const exitCourse = useCallback(() => {
+    clearAutoHintTimer();
+    goalFailureCountRef.current = 0;
     sessionRef.current = null;
     setSession(null);
     void window.teachy?.invoke('stop-speaking');
@@ -188,10 +222,6 @@ the whole plan. Celebrate real progress briefly, then move.`;
     );
   }, [runCoachTurn]);
 
-  /**
-   * "Do it for me" — hands the current goal to the agent loop, which acts on
-   * the real UI while narrating each step aloud before it happens.
-   */
   const requestDoItForMe = useCallback(async () => {
     const teachy = window.teachy;
     const activeSession = sessionRef.current;
@@ -199,6 +229,7 @@ the whole plan. Celebrate real progress briefly, then move.`;
       return;
     }
 
+    clearAutoHintTimer();
     const currentGoal = activeSession.goals[activeSession.currentGoalIndex];
     const openingLine = "Okay — I'll do this part. Watch what I click.";
     updateSession((current) => ({ ...current, isBusy: true, coachLine: openingLine }));
@@ -226,7 +257,6 @@ the whole plan. Celebrate real progress briefly, then move.`;
         userGoal: `Do this step for the learner in the course "${activeSession.course.title}": ${currentGoal.goal} It is complete when: ${currentGoal.doneWhen ?? 'the learner can see it is done'}.`,
         initialScreen,
         onNarration: (narration) => {
-          // Announce before the action lands, like the Mac agent.
           updateSession((current) => ({ ...current, coachLine: narration }));
           void teachy.invoke('speak', { text: narration });
         },
@@ -243,12 +273,14 @@ the whole plan. Celebrate real progress briefly, then move.`;
     }
   }, []);
 
-  /** Advances past the current goal, persisting progress. */
   const advanceToNextGoal = useCallback(
     async (whatWentWell: string) => {
       const teachy = window.teachy;
       const activeSession = sessionRef.current;
       if (!teachy || !activeSession) return;
+
+      clearAutoHintTimer();
+      goalFailureCountRef.current = 0;
 
       void teachy.invoke('record-goal-completed', {
         courseId: activeSession.course.id,
@@ -284,7 +316,6 @@ the whole plan. Celebrate real progress briefly, then move.`;
     [runCoachTurn],
   );
 
-  /** "I did it" — verifies against the goal's doneWhen, or advances a concept goal. */
   const requestVerification = useCallback(async () => {
     const teachy = window.teachy;
     const activeSession = sessionRef.current;
@@ -292,18 +323,17 @@ the whole plan. Celebrate real progress briefly, then move.`;
 
     const currentGoal = activeSession.goals[activeSession.currentGoalIndex];
 
-    // While a teach-back is pending, "I did it" acts as skip — teach-backs are soft.
     if (activeSession.isAwaitingTeachBack) {
       await advanceToNextGoal("teach-back skipped, that's okay");
       return;
     }
 
-    // Concept goals with no doneWhen advance on confirmation (requireUserAdvance).
     if (!currentGoal.doneWhen) {
       beginTeachBackOrAdvance(currentGoal, 'you confirmed it');
       return;
     }
 
+    clearAutoHintTimer();
     updateSession((current) => ({ ...current, isBusy: true, coachLine: 'Checking your screen…' }));
 
     try {
@@ -324,16 +354,35 @@ the whole plan. Celebrate real progress briefly, then move.`;
 
       updateSession((current) => ({ ...current, isBusy: false }));
 
-      // Mac parity: pass AND partial both advance; offTrack coaches the gap.
-      if (verification.status === 'pass' || verification.status === 'partial') {
+      if (verification.status === 'pass') {
+        goalFailureCountRef.current = 0;
         beginTeachBackOrAdvance(currentGoal, verification.whatsGood);
+      } else if (verification.status === 'partial') {
+        // Partial does NOT advance — coach the gap, matching Mac behavior.
+        const partialCoach = verification.whatsMissing
+          ? `You're close — ${verification.whatsGood}. Still needed: ${verification.whatsMissing}`
+          : `Almost there — ${verification.suggestedNextAction ?? "keep going and press I did it when it's fully done."}`;
+        updateSession((current) => ({ ...current, coachLine: partialCoach }));
+        void teachy.invoke('speak', { text: partialCoach });
       } else {
-        const coachback =
-          verification.suggestedNextAction ??
-          verification.whatsMissing ??
-          "Not quite there yet — keep going and press I did it when it's on screen.";
-        updateSession((current) => ({ ...current, coachLine: coachback }));
-        void teachy.invoke('speak', { text: coachback });
+        // offTrack — increment failure count.
+        goalFailureCountRef.current += 1;
+
+        if (goalFailureCountRef.current >= 2) {
+          // After 2+ failures, offer to do it for them.
+          const offerLine = verification.suggestedNextAction
+            ? `${verification.suggestedNextAction} — or if you're stuck, press "Do it for me" and I'll handle this step.`
+            : "Not quite there yet — want me to do this one for you? Press \"Do it for me\" and I'll take over.";
+          updateSession((current) => ({ ...current, coachLine: offerLine }));
+          void teachy.invoke('speak', { text: offerLine });
+        } else {
+          const coachback =
+            verification.suggestedNextAction ??
+            verification.whatsMissing ??
+            "Not quite there yet — keep going and press I did it when it's on screen.";
+          updateSession((current) => ({ ...current, coachLine: coachback }));
+          void teachy.invoke('speak', { text: coachback });
+        }
       }
     } catch (verifyError) {
       const message = verifyError instanceof Error ? verifyError.message : String(verifyError);
@@ -351,5 +400,12 @@ the whole plan. Celebrate real progress briefly, then move.`;
     }
   }, [advanceToNextGoal]);
 
-  return { session, startCourse, exitCourse, requestHint, requestVerification, requestDoItForMe };
+  const handleVoiceTeachBackAnswer = useCallback(() => {
+    const activeSession = sessionRef.current;
+    if (activeSession?.isAwaitingTeachBack) {
+      void advanceToNextGoal('teach-back done');
+    }
+  }, [advanceToNextGoal]);
+
+  return { session, startCourse, exitCourse, requestHint, requestVerification, requestDoItForMe, handleVoiceTeachBackAnswer };
 }

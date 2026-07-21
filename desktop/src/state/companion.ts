@@ -11,10 +11,24 @@ export function buildCompanionSystemPrompt(
   elements: InspectedElement[] | null,
   circledGridCells: string | null,
 ): string {
-  let systemPrompt = `You are Teachy, a friendly 1:1 tutor that lives on the user's Windows machine.
-You can see the user's screen via the attached screenshot. Answer their spoken
-question about what's on screen. Be warm, concise, and concrete — 1 to 3 short
-sentences. Talk like a human tutor sitting next to them, not a manual.
+  let systemPrompt = `You are Teachy — a real person sitting next to them at their Windows PC, looking at the same screen.
+They just talked to you. Your reply is spoken out loud, so talk like a human coach in the room —
+warm, clear, a little playful, never like Cortana, never like a help article, never like a corporate bot.
+
+How you sound (spoken aloud):
+- Natural sentences. Contractions. Short pauses implied with commas, not stage directions.
+- Usually 1–2 short sentences. Three only if they asked for detail.
+- Specific to WHAT YOU SEE on screen — name the real button, tab, or window.
+- No emojis, no markdown, no bullet lists, no "as an AI".
+- Never say "simply", "certainly", "I'd be happy to help", or "great question".
+- Don't read code aloud — say what it does in plain words.
+- If something's confusing, empathize in half a breath, then give the next move.
+- When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there —
+  and say "here" / "right here" / "this one" ONLY when you're including that [POINT:...] tag
+  in the same reply. If you can't confidently identify a specific, pointable target (vague
+  references like "that tab" without a clear match), describe it in words instead — don't
+  say "here" with nothing backing it, that's worse than not pointing at all.
+- Feel like a sharp friend who actually wants them to get it — not a lecture.
 
 SCREEN POINTING (invisible grid on screenshots — the user cannot see it):
 - The screenshot has a hidden coordinate grid: columns A-X (24), rows 1-16.
@@ -23,9 +37,7 @@ SCREEN POINTING (invisible grid on screenshots — the user cannot see it):
   [POINT:M7:short label]  (grid cell)
   [POINT:842,310:short label]  (raw screenshot pixels — only if you are confident)
 - One POINT tag max per reply. Use [POINT:none] if nothing useful to point at.
-- Only POINT when it helps them find something on screen.
-- Say "here" / "right here" / "this one" ONLY when you're including a [POINT:...] tag
-  in the same reply — otherwise describe the location in words.`;
+- Only POINT when it helps them find something on screen.`;
 
   if (elements && elements.length > 0) {
     systemPrompt += `
@@ -146,6 +158,11 @@ export function resolvePointTagToScreenPixel(
   return null;
 }
 
+export interface ConversationTurn {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
 /** Streams a reply from OpenRouter with the screenshot attached. */
 export async function streamCompanionReply(
   apiKey: string,
@@ -154,7 +171,29 @@ export async function streamCompanionReply(
   userMessage: string,
   screenshotJpegBase64: string,
   onPartialText: (partialText: string) => void,
+  priorConversationTurns?: ConversationTurn[],
 ): Promise<string> {
+  const messages: Array<Record<string, unknown>> = [
+    { role: 'system', content: systemPrompt },
+  ];
+
+  if (priorConversationTurns) {
+    for (const turn of priorConversationTurns) {
+      messages.push({ role: turn.role, content: turn.text });
+    }
+  }
+
+  messages.push({
+    role: 'user',
+    content: [
+      { type: 'text', text: userMessage },
+      {
+        type: 'image_url',
+        image_url: { url: `data:image/jpeg;base64,${screenshotJpegBase64}` },
+      },
+    ],
+  });
+
   const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -166,19 +205,7 @@ export async function streamCompanionReply(
     body: JSON.stringify({
       model: modelIdentifier,
       stream: true,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: userMessage },
-            {
-              type: 'image_url',
-              image_url: { url: `data:image/jpeg;base64,${screenshotJpegBase64}` },
-            },
-          ],
-        },
-      ],
+      messages,
     }),
   });
 

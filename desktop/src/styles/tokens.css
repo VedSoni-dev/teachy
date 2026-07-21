@@ -50,11 +50,27 @@
   /* ── Overlay cursor (distinct from in-app accent, per Swift) ─ */
   --overlay-cursor-blue: #3380ff;
 
+  /* ── Disabled states (DS.Colors) ────────────────────────────── */
+  --disabled-background: rgba(245, 245, 247, 0.12);
+  --disabled-foreground: rgba(245, 245, 247, 0.38);
+
+  /* ── State layer opacities (DS.StateLayer) ─────────────────── */
+  --state-hover: 0.08;
+  --state-focus: 0.12;
+  --state-pressed: 0.12;
+  --state-dragged: 0.16;
+
   /* ── Corner radii (DS.CornerRadius) ────────────────────────── */
   --radius-small: 6px;
   --radius-medium: 8px;
   --radius-large: 10px;
   --radius-xl: 12px;
+  --radius-pill: 9999px;
+
+  /* ── Animation durations (DS.Animation) ────────────────────── */
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
 
   /* ── Spacing (DS.Spacing) ──────────────────────────────────── */
   --space-xs: 4px;

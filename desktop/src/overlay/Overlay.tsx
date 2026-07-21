@@ -16,15 +16,12 @@ interface OverlayState {
   bodyText?: string;
 }
 
-/** How far below-right of the real pointer the companion trails, in DIP. */
-const CURSOR_TRAIL_OFFSET_X = 26;
-const CURSOR_TRAIL_OFFSET_Y = 26;
+/** How far below-right of the real pointer the companion trails, in DIP. Mac: 35x25. */
+const CURSOR_TRAIL_OFFSET_X = 35;
+const CURSOR_TRAIL_OFFSET_Y = 25;
 
 /** Per-frame easing toward the pointer. Lower drags further behind. */
 const CURSOR_FOLLOW_EASING = 0.18;
-
-/** Resting opacity while idly trailing — present, not shouting. */
-const IDLE_FOLLOW_OPACITY = 0.82;
 
 export function Overlay() {
   const [mode, setMode] = useState<OverlayMode>('hidden');
@@ -104,33 +101,51 @@ export function Overlay() {
     return () => unsubscribeState?.();
   }, []);
 
-  // Pointing: glide the companion to the target, pulse a ring, then resume follow.
+  // Pointing: bezier-arc glide to the target with scale pulse, then resume follow.
+  // Mac uses distance-based duration (0.6–1.4s) and a 1.3x scale at midpoint.
   useEffect(() => {
     const unsubscribePointAt = window.teachy?.overlay.onPointAt((target) => {
       isPointingRef.current = true;
       setPointingTarget({ x: target.x, y: target.y });
 
       const startPosition = { ...companionPositionRef.current };
-      const glideDurationMs = 550;
+      const distancePx = Math.hypot(target.x - startPosition.x, target.y - startPosition.y);
+      const glideDurationMs = Math.min(1400, Math.max(600, distancePx * 0.8));
       const glideStartTime = performance.now();
+
+      // Bezier arc control point — perpendicular offset for a curved flight path.
+      const midX = (startPosition.x + target.x) / 2;
+      const midY = (startPosition.y + target.y) / 2;
+      const perpOffset = Math.min(80, distancePx * 0.25);
+      const anglePerpendicular = Math.atan2(target.y - startPosition.y, target.x - startPosition.x) + Math.PI / 2;
+      const controlPointX = midX + Math.cos(anglePerpendicular) * perpOffset;
+      const controlPointY = midY + Math.sin(anglePerpendicular) * perpOffset;
 
       function glideStep(now: number) {
         const progress = Math.min(1, (now - glideStartTime) / glideDurationMs);
-        // easeInOutCubic, matching the Mac's pointing glide feel.
         const eased =
           progress < 0.5
             ? 4 * progress * progress * progress
             : 1 - Math.pow(-2 * progress + 2, 3) / 2;
 
+        // Quadratic bezier arc through control point.
+        const oneMinusEased = 1 - eased;
         companionPositionRef.current = {
-          x: startPosition.x + (target.x - startPosition.x) * eased,
-          y: startPosition.y + (target.y - startPosition.y) * eased,
+          x: oneMinusEased * oneMinusEased * startPosition.x + 2 * oneMinusEased * eased * controlPointX + eased * eased * target.x,
+          y: oneMinusEased * oneMinusEased * startPosition.y + 2 * oneMinusEased * eased * controlPointY + eased * eased * target.y,
         };
+
+        // Scale pulse: 1.0 → 1.3 at midpoint → 1.0, matching Mac's pointing emphasis.
+        const scalePulse = 1.0 + 0.3 * Math.sin(eased * Math.PI);
+        const companionElement = companionElementRef.current;
+        if (companionElement) {
+          const { x, y } = companionPositionRef.current;
+          companionElement.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scalePulse.toFixed(3)})`;
+        }
 
         if (progress < 1) {
           requestAnimationFrame(glideStep);
         } else {
-          // Hold on target through the ring pulse, then hand back to the follower.
           window.setTimeout(() => {
             isPointingRef.current = false;
             setPointingTarget(null);
@@ -158,7 +173,7 @@ export function Overlay() {
       <div
         ref={companionElementRef}
         className="companion-cursor"
-        style={{ opacity: isCompanionVisible ? (mode === 'listening' ? 1 : IDLE_FOLLOW_OPACITY) : 0 }}
+        style={{ opacity: isCompanionVisible ? 1 : 0 }}
       >
         <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
           <polygon

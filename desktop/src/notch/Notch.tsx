@@ -24,10 +24,13 @@ export function Notch() {
   const [selectedTab, setSelectedTab] = useState<NotchTab>('learn');
   const collapseTimerRef = useRef<number | null>(null);
 
+  const { session, startCourse, exitCourse, requestHint, requestVerification, requestDoItForMe,
+    handleVoiceTeachBackAnswer } = useCourseSession();
+
   // The always-on voice loop lives here, in the single long-lived window.
-  useCompanionLoop();
-  const { session, startCourse, exitCourse, requestHint, requestVerification, requestDoItForMe } =
-    useCourseSession();
+  // When a course teach-back is pending, voice answers flow through the callback.
+  const teachBackCallback = session?.isAwaitingTeachBack ? handleVoiceTeachBackAnswer : undefined;
+  const { handleTypedQuestion } = useCompanionLoop(teachBackCallback);
 
   // A running course keeps the notch open — it is the teaching surface.
   const isCourseActive = session !== null;
@@ -193,7 +196,7 @@ export function Notch() {
                   {selectedTab === 'learn' && <LearnTab onStartCourse={startCourse} />}
                   {selectedTab === 'portfolio' && <PortfolioTab />}
                   {selectedTab === 'skills' && <SkillsTab />}
-                  {selectedTab === 'settings' && <SettingsTab />}
+                  {selectedTab === 'settings' && <SettingsTab onAskQuestion={handleTypedQuestion} />}
                 </>
               )}
             </div>

@@ -107,8 +107,9 @@ function parseVerificationResult(rawText: string): CourseVerificationResult {
         typeof parsed.visibleErrorSummary === 'string' ? parsed.visibleErrorSummary : null,
     };
   } catch {
-    // Fallback: a YES-ish plain-text reply still counts as a pass, as on macOS.
-    if (trimmed.toLowerCase().startsWith('yes')) {
+    // Fallback heuristics matching Mac's CourseVerifier:
+    const lowerTrimmed = trimmed.toLowerCase();
+    if (lowerTrimmed.startsWith('yes') || lowerTrimmed.includes('"status":"pass"') || lowerTrimmed.includes('"status": "pass"')) {
       return {
         status: 'pass',
         whatsGood: 'vision confirmed completion',
@@ -121,7 +122,7 @@ function parseVerificationResult(rawText: string): CourseVerificationResult {
       status: 'offTrack',
       whatsGood: '',
       whatsMissing: 'could not parse verification response',
-      suggestedNextAction: 'try the step and press I did it again',
+      suggestedNextAction: 'keep going and try the next step',
       visibleErrorSummary: null,
     };
   }

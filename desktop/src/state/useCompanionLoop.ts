@@ -1,14 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
   buildCompanionSystemPrompt,
   parseModelReply,
   resolvePointTagToScreenPixel,
   streamCompanionReply,
+  type ConversationTurn,
 } from './companion';
 import type { CapturedScreen, TeachyConfigSnapshot } from '../types/global';
 
-/** Key-aware default, mirroring OpenRouterModelOptions.defaultModelID on macOS. */
 const BRING_YOUR_OWN_KEY_MODEL = 'anthropic/claude-sonnet-4.6';
+const MAX_REMEMBERED_TURNS = 20;
 
 /**
  * The always-on voice loop. Push-to-talk and transcription happen in the C#
@@ -17,9 +18,11 @@ const BRING_YOUR_OWN_KEY_MODEL = 'anthropic/claude-sonnet-4.6';
  *
  * Lives in the notch window (one instance) and drives the overlay over IPC.
  */
-export function useCompanionLoop() {
-  // Guards against a second turn starting while one is still in flight.
+export function useCompanionLoop(courseTeachBackCallback?: (userAnswer: string) => void) {
   const isHandlingTurnRef = useRef(false);
+  const conversationHistoryRef = useRef<ConversationTurn[]>([]);
+
+  const runCompanionTurnRef = useRef<(userQuestion: string, isUserInitiated: boolean) => Promise<void>>();
 
   useEffect(() => {
     const teachy = window.teachy;
@@ -27,20 +30,16 @@ export function useCompanionLoop() {
       return;
     }
 
-    /** Where the overlay rests between turns — trailing, unless the user turned it off. */
     let restingOverlayMode: 'idle' | 'hidden' = 'idle';
 
     function setOverlay(mode: string, statusText?: string, bodyText?: string) {
       teachy?.overlay.send({ type: 'set-mode', mode, statusText, bodyText });
     }
 
-    /** Returns the companion to its resting state after a turn finishes. */
     function restOverlay() {
       setOverlay(restingOverlayMode);
     }
 
-    // "Show Teachy" defaults on, matching the Mac — the companion trails the
-    // pointer from launch rather than only appearing mid-interaction.
     void (async () => {
       try {
         const config = await teachy.invoke<TeachyConfigSnapshot>('get-config');
@@ -51,29 +50,14 @@ export function useCompanionLoop() {
       }
     })();
 
-    const unsubscribePressed = teachy.on('ptt-pressed', () => {
-      setOverlay('listening', 'listening…');
-    });
-
-    const unsubscribeError = teachy.on('ptt-error', (payload) => {
-      const message = (payload as { message?: string })?.message ?? 'Microphone unavailable.';
-      setOverlay('responding', undefined, message);
-      window.setTimeout(restOverlay, 6000);
-    });
-
-    const unsubscribeTranscript = teachy.on('transcript', (payload) => {
-      const transcript = payload as { ok: boolean; text?: string; message?: string };
-
-      if (!transcript.ok || !transcript.text) {
-        setOverlay('responding', undefined, transcript.message ?? "I couldn't catch that.");
-        window.setTimeout(restOverlay, 6000);
-        return;
+    function rememberTurn(role: 'user' | 'assistant', text: string) {
+      conversationHistoryRef.current.push({ role, text });
+      while (conversationHistoryRef.current.length > MAX_REMEMBERED_TURNS) {
+        conversationHistoryRef.current.shift();
       }
+    }
 
-      void runCompanionTurn(transcript.text);
-    });
-
-    async function runCompanionTurn(userQuestion: string) {
+    async function runCompanionTurn(userQuestion: string, isUserInitiated: boolean) {
       if (isHandlingTurnRef.current) {
         return;
       }
@@ -112,13 +96,16 @@ export function useCompanionLoop() {
           userQuestion,
           capturedScreen.jpegBase64,
           (partialText) => {
-            // Strip tags as they stream so a half-written [POINT: is never shown.
             setOverlay('responding', undefined, parseModelReply(partialText).spokenText);
           },
+          conversationHistoryRef.current,
         );
 
         const parsedReply = parseModelReply(fullReplyText);
         setOverlay('responding', undefined, parsedReply.spokenText);
+
+        rememberTurn('user', userQuestion);
+        rememberTurn('assistant', parsedReply.spokenText);
 
         void teachy!.invoke('speak', { text: parsedReply.spokenText });
 
@@ -133,7 +120,12 @@ export function useCompanionLoop() {
           }
         }
 
-        // Rough read-aloud time before fading, like the Mac's transient cursor mode.
+        // If a course teach-back is pending and this was user-initiated (voice/typed),
+        // the user just answered — notify the course session to advance.
+        if (isUserInitiated && courseTeachBackCallback) {
+          courseTeachBackCallback(userQuestion);
+        }
+
         const wordCount = parsedReply.spokenText.split(/\s+/).filter(Boolean).length;
         const estimatedSpeechSeconds = Math.min(30, Math.max(3, 1.5 + wordCount * 0.38));
         window.setTimeout(restOverlay, estimatedSpeechSeconds * 1000);
@@ -146,10 +138,42 @@ export function useCompanionLoop() {
       }
     }
 
+    runCompanionTurnRef.current = runCompanionTurn;
+
+    const unsubscribePressed = teachy.on('ptt-pressed', () => {
+      setOverlay('listening', 'listening…');
+    });
+
+    const unsubscribeError = teachy.on('ptt-error', (payload) => {
+      const message = (payload as { message?: string })?.message ?? 'Microphone unavailable.';
+      setOverlay('responding', undefined, message);
+      window.setTimeout(restOverlay, 6000);
+    });
+
+    const unsubscribeTranscript = teachy.on('transcript', (payload) => {
+      const transcript = payload as { ok: boolean; text?: string; message?: string };
+
+      if (!transcript.ok || !transcript.text) {
+        setOverlay('responding', undefined, transcript.message ?? "I couldn't catch that.");
+        window.setTimeout(restOverlay, 6000);
+        return;
+      }
+
+      void runCompanionTurn(transcript.text, true);
+    });
+
     return () => {
       unsubscribePressed?.();
       unsubscribeError?.();
       unsubscribeTranscript?.();
     };
+  }, [courseTeachBackCallback]);
+
+  const handleTypedQuestion = useCallback((typedQuestion: string) => {
+    if (runCompanionTurnRef.current) {
+      void runCompanionTurnRef.current(typedQuestion, true);
+    }
   }, []);
+
+  return { handleTypedQuestion };
 }
