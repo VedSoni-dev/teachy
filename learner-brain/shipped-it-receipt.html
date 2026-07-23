@@ -1,0 +1,365 @@
+<title>I shipped it &mdash; a Teachy receipt</title>
+<meta name="description" content="Proof of work: a website shipped and deployed, taught by Teachy &mdash; the AI nephew who teaches you, never does it for you." />
+
+<style>
+  :root {
+    /* --- desk (the page ground the receipt sits on) --- */
+    --desk:        #15171E;
+    --desk-glow:   #1E2230;
+    --desk-edge:   #0E0F14;
+    /* --- paper (the receipt itself &mdash; constant across themes; it is paper) --- */
+    --paper:       #F4F0E6;
+    --paper-deep:  #ECE6D7;
+    --ink:         #22201A;
+    --ink-soft:    #6E6656;
+    --ink-faint:   #A79E88;
+    --rule:        #D9D2C4;
+    --rule-ink:    #C4BBA6;
+    /* --- one bold accent + one semantic signal --- */
+    --stamp:       #2743D6;   /* cobalt ink: stamp, signature, CTA */
+    --stamp-deep:  #1B2FA6;
+    --live:        #1E9E57;   /* semantic only: the deployed-site dot */
+    --paper-shadow: rgba(10, 8, 4, 0.45);
+
+    --maxw: 460px;
+    --step-0: 0.72rem;
+    --step-1: 0.82rem;
+    --step-2: 1rem;
+    --step-3: 1.35rem;
+    --step-hero: clamp(2.9rem, 12vw, 4rem);
+
+    --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+    --font-disp: "Helvetica Neue", "Arial Nova", Helvetica, Arial, system-ui, sans-serif;
+    --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root {
+      --desk:      #C9C0AC;   /* a warm taupe desk in a bright room */
+      --desk-glow: #D6CDB9;
+      --desk-edge: #B3A98F;
+      --paper-shadow: rgba(60, 48, 26, 0.28);
+    }
+  }
+  /* explicit toggle overrides win in both directions */
+  :root[data-theme="dark"] {
+    --desk: #15171E; --desk-glow: #1E2230; --desk-edge: #0E0F14;
+    --paper-shadow: rgba(10, 8, 4, 0.45);
+  }
+  :root[data-theme="light"] {
+    --desk: #C9C0AC; --desk-glow: #D6CDB9; --desk-edge: #B3A98F;
+    --paper-shadow: rgba(60, 48, 26, 0.28);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--font-body);
+    color: var(--ink);
+    background:
+      radial-gradient(120% 80% at 50% -10%, var(--desk-glow), transparent 60%),
+      radial-gradient(140% 100% at 50% 120%, var(--desk-edge), transparent 55%),
+      var(--desk);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: clamp(1.25rem, 5vw, 3.5rem) 1rem;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------------------------------------------------------------- receipt */
+  .receipt {
+    width: 100%;
+    max-width: var(--maxw);
+    background: var(--paper);
+    color: var(--ink);
+    position: relative;
+    padding: 2rem 1.9rem 1.6rem;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,0.4) inset,
+      0 24px 50px -18px var(--paper-shadow),
+      0 8px 18px -12px var(--paper-shadow);
+    /* faint paper tooth */
+    background-image:
+      repeating-linear-gradient(0deg, transparent 0 3px, rgba(120,108,84,0.018) 3px 4px);
+  }
+  /* perforation strips top & bottom */
+  .receipt::before,
+  .receipt::after {
+    content: "";
+    position: absolute; left: 0; right: 0; height: 12px;
+    background:
+      radial-gradient(circle at 8px 50%, transparent 0 4px, var(--paper) 4px) 0 0 / 16px 100% repeat-x;
+    -webkit-mask: radial-gradient(circle at 8px 50%, transparent 0 4px, #000 4.5px) 0 0 / 16px 100% repeat-x;
+              mask: radial-gradient(circle at 8px 50%, transparent 0 4px, #000 4.5px) 0 0 / 16px 100% repeat-x;
+    pointer-events: none;
+  }
+  .receipt::before { top: -6px; }
+  .receipt::after  { bottom: -6px; transform: scaleY(-1); }
+
+  /* ---- header ---- */
+  .rc-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 1rem;
+    font-family: var(--font-mono);
+    font-size: var(--step-0);
+    letter-spacing: 0.06em;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+  }
+  .brand { display: flex; align-items: center; gap: 0.5ch; font-weight: 700; color: var(--ink); letter-spacing: 0.02em; }
+  .brand .spark { color: var(--stamp); font-size: 1.05em; transform: translateY(1px); }
+  .rc-no { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .rule {
+    border: 0; height: 0;
+    border-top: 1.5px solid var(--rule-ink);
+    margin: 0.9rem 0;
+  }
+  .rule.dashed { border-top: 1.5px dashed var(--rule-ink); }
+
+  /* ---- hero ---- */
+  .hero { text-align: center; margin: 0.4rem 0 0.2rem; }
+  .hero h1 {
+    font-family: var(--font-disp);
+    font-weight: 800;
+    font-size: var(--step-hero);
+    line-height: 0.9;
+    letter-spacing: -0.035em;
+    margin: 0.2rem 0 0.5rem;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+  .hero .who {
+    font-family: var(--font-mono);
+    font-size: var(--step-1);
+    letter-spacing: 0.02em;
+    color: var(--ink-soft);
+  }
+  .hero .who b { color: var(--ink); font-weight: 700; }
+
+  /* ---- deployed artifact preview ---- */
+  .ship {
+    margin: 1.1rem 0 0.4rem;
+    border: 1.5px solid var(--rule-ink);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: 0 6px 16px -12px var(--paper-shadow);
+  }
+  .ship-bar {
+    display: flex; align-items: center; gap: 0.6ch;
+    padding: 0.5rem 0.7rem;
+    background: var(--paper-deep);
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--ink-soft);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.live { background: var(--live); box-shadow: 0 0 0 0 rgba(30,158,87,0.5); }
+  .ship-url { margin-left: 0.3ch; color: var(--ink); }
+  .ship-live { margin-left: auto; color: var(--live); font-weight: 600; letter-spacing: 0.08em; }
+  .ship-canvas {
+    height: 132px; position: relative;
+    background:
+      radial-gradient(90% 120% at 20% 0%, #F7E4EC, transparent 60%),
+      radial-gradient(80% 120% at 100% 100%, #E8ECFB, transparent 55%),
+      #fff;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center; color: #3A3140; font-family: var(--font-disp);
+  }
+  .ship-canvas .site-name { font-weight: 800; font-size: 1.25rem; letter-spacing: -0.02em; }
+  .ship-canvas .site-tag { font-family: var(--font-body); font-size: 0.72rem; color: #857A8C; margin-top: 0.15rem; }
+  .ship-canvas .site-cta { margin-top: 0.6rem; font-family: var(--font-mono); font-size: 0.62rem; letter-spacing: 0.05em; color:#fff; background:#B0416B; padding: 0.3rem 0.7rem; border-radius: 999px; }
+
+  /* ---- itemized skills earned ---- */
+  .items-label {
+    font-family: var(--font-mono);
+    font-size: var(--step-0);
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--ink-soft);
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin: 0.2rem 0 0.55rem;
+  }
+  .items-label .col { color: var(--ink-faint); }
+
+  ul.items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.55rem; }
+  ul.items li { display: grid; grid-template-columns: 1.6ch 1fr auto; align-items: baseline; column-gap: 0.7ch; }
+  .chk { color: var(--stamp); font-family: var(--font-mono); font-weight: 700; line-height: 1; }
+  .skill { font-family: var(--font-body); font-size: var(--step-2); color: var(--ink); position: relative; }
+  .skill .earned {
+    display: block; font-family: var(--font-mono); font-size: 0.66rem;
+    color: var(--ink-soft); letter-spacing: 0.02em; margin-top: 1px;
+  }
+  .proof {
+    font-family: var(--font-mono); font-size: 0.7rem; color: var(--ink-soft);
+    text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums;
+    align-self: center;
+  }
+  .proof b { color: var(--live); font-weight: 600; }
+
+  /* ---- totals ---- */
+  .totals { position: relative; }
+  .trow {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-family: var(--font-mono); font-size: var(--step-1);
+    color: var(--ink); padding: 0.12rem 0;
+    letter-spacing: 0.01em;
+  }
+  .trow .k { color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.07em; font-size: var(--step-0); }
+  .trow .v { font-variant-numeric: tabular-nums; }
+  .trow.grand { font-size: var(--step-3); font-weight: 700; font-family: var(--font-disp); letter-spacing: -0.01em; margin-top: 0.2rem; }
+  .trow.grand .k { font-family: var(--font-mono); font-weight: 400; }
+
+  .verdict {
+    margin-top: 0.7rem;
+    font-family: var(--font-body);
+    font-size: 0.9rem; line-height: 1.4; color: var(--ink);
+    text-align: center; text-wrap: balance;
+  }
+  .verdict b { color: var(--stamp); }
+
+  /* ---- the stamp ---- */
+  .stamp {
+    position: absolute; right: -1.5rem; top: -2.35rem;
+    transform: rotate(-9deg);
+    border: 2.5px solid var(--stamp);
+    color: var(--stamp);
+    border-radius: 7px;
+    padding: 0.28rem 0.7rem;
+    font-family: var(--font-disp); font-weight: 800;
+    font-size: 1.15rem; letter-spacing: 0.02em; line-height: 1;
+    text-transform: uppercase;
+    opacity: 0.9;
+    box-shadow: 0 0 0 2px var(--paper) inset;
+    mix-blend-mode: multiply;
+  }
+  .stamp small { display:block; font-family: var(--font-mono); font-weight: 400; font-size: 0.5rem; letter-spacing: 0.22em; text-align:center; margin-top: 2px; }
+
+  /* ---- footer ---- */
+  .foot { text-align: center; margin-top: 1.2rem; }
+  .foot .nephew {
+    font-family: var(--font-body); font-size: 0.82rem; line-height: 1.45;
+    color: var(--ink-soft); text-wrap: balance;
+  }
+  .foot .nephew b { color: var(--ink); font-weight: 600; }
+  .cta {
+    display: inline-flex; align-items: center; gap: 0.6ch;
+    margin-top: 0.9rem;
+    font-family: var(--font-mono); font-size: 0.82rem; letter-spacing: 0.02em;
+    text-decoration: none; color: #fff; background: var(--stamp);
+    padding: 0.6rem 1.05rem; border-radius: 999px; font-weight: 600;
+    box-shadow: 0 8px 18px -10px var(--stamp);
+    transition: transform 120ms ease, background 120ms ease;
+  }
+  .cta:hover { background: var(--stamp-deep); transform: translateY(-1px); }
+  .cta:focus-visible { outline: 3px solid var(--stamp); outline-offset: 3px; }
+  .cta .arrow { transition: transform 140ms ease; }
+  .cta:hover .arrow { transform: translateX(3px); }
+  .signed {
+    margin-top: 0.8rem; font-family: var(--font-mono); font-size: 0.62rem;
+    letter-spacing: 0.06em; color: var(--ink-faint); text-transform: uppercase;
+  }
+
+  /* ---------------------------------------------------- entrance motion */
+  @media (prefers-reduced-motion: no-preference) {
+    .receipt { animation: rise 620ms cubic-bezier(.2,.8,.2,1) both; }
+    .reveal { opacity: 0; animation: reveal 460ms ease both; animation-delay: var(--d, 0ms); }
+    .stamp { animation: thunk 380ms cubic-bezier(.3,1.4,.5,1) both; animation-delay: 720ms; }
+    .dot.live { animation: pulse 2.4s ease-out infinite; }
+    @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+    @keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    @keyframes thunk { 0% { opacity: 0; transform: rotate(-9deg) scale(1.6); } 60% { opacity: 0.9; } 100% { opacity: 0.9; transform: rotate(-9deg) scale(1); } }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(30,158,87,0.45); } 70%,100% { box-shadow: 0 0 0 7px rgba(30,158,87,0); } }
+  }
+</style>
+
+<main class="receipt" aria-label="Shipped-it receipt">
+  <header class="rc-head">
+    <span class="brand"><span class="spark">&#10022;</span> TEACHY</span>
+    <span class="rc-no">PROOF OF WORK<br />&#8470; 0007 &middot; 19 JUL 2026</span>
+  </header>
+
+  <hr class="rule" />
+
+  <section class="hero reveal" style="--d:80ms">
+    <div class="who">This is to certify that <b>Rosa M.</b></div>
+    <h1>I shipped it.</h1>
+    <div class="who">built &amp; deployed <b>rosanails.com</b> &mdash; herself</div>
+  </section>
+
+  <section class="ship reveal" style="--d:180ms" aria-label="The deployed website">
+    <div class="ship-bar">
+      <span class="dot live" aria-hidden="true"></span>
+      <span class="ship-url">rosanails.com</span>
+      <span class="ship-live">&#9679; LIVE</span>
+    </div>
+    <div class="ship-canvas" role="img" aria-label="Preview of Rosa's live nail-salon website">
+      <div class="site-name">Rosa&rsquo;s Nails</div>
+      <div class="site-tag">Grand Rapids &middot; walk-ins welcome</div>
+      <div class="site-cta">BOOK AN APPOINTMENT</div>
+    </div>
+  </section>
+
+  <div class="items-label reveal" style="--d:260ms">
+    <span>What Rosa learned &mdash; each line earned, not given</span>
+  </div>
+
+  <ul class="items">
+    <li class="reveal" style="--d:300ms">
+      <span class="chk" aria-hidden="true">&#10003;</span>
+      <span class="skill">Planning a project with AI<span class="earned">taught it back in her own words</span></span>
+      <span class="proof">12 JUL</span>
+    </li>
+    <li class="reveal" style="--d:340ms">
+      <span class="chk" aria-hidden="true">&#10003;</span>
+      <span class="skill">Prompting ChatGPT to get what she meant<span class="earned">did it unaided</span></span>
+      <span class="proof"><b>&#10003;</b> 14 JUL</span>
+    </li>
+    <li class="reveal" style="--d:380ms">
+      <span class="chk" aria-hidden="true">&#10003;</span>
+      <span class="skill">Generating her own images<span class="earned">shipped 6 into the site</span></span>
+      <span class="proof">15 JUL</span>
+    </li>
+    <li class="reveal" style="--d:420ms">
+      <span class="chk" aria-hidden="true">&#10003;</span>
+      <span class="skill">Bringing code into Cursor<span class="earned">recalled the steps a week later</span></span>
+      <span class="proof"><b>&#10003;</b> 19 JUL</span>
+    </li>
+    <li class="reveal" style="--d:460ms">
+      <span class="chk" aria-hidden="true">&#10003;</span>
+      <span class="skill">Reading an error &amp; fixing it<span class="earned">unstuck herself, no help</span></span>
+      <span class="proof"><b>&#10003;</b> 19 JUL</span>
+    </li>
+    <li class="reveal" style="--d:500ms">
+      <span class="chk" aria-hidden="true">&#10003;</span>
+      <span class="skill">Deploying on Vercel<span class="earned">site went live</span></span>
+      <span class="proof">19 JUL</span>
+    </li>
+  </ul>
+
+  <hr class="rule dashed" />
+
+  <section class="totals reveal" style="--d:560ms">
+    <div class="stamp">Shipped it<small>TEACHY &middot; VERIFIED</small></div>
+    <div class="trow"><span class="k">Websites shipped</span><span class="v">1 &middot; live</span></div>
+    <div class="trow"><span class="k">Skills earned</span><span class="v">6</span></div>
+    <div class="trow"><span class="k">Built for her by AI</span><span class="v">0</span></div>
+    <div class="trow grand"><span class="k">Total</span><span class="v">She can do it again.</span></div>
+    <p class="verdict">Every line above is backed by a moment she can point to. <b>Taught, not built-for-her.</b></p>
+  </section>
+
+  <hr class="rule" />
+
+  <footer class="foot reveal" style="--d:620ms">
+    <p class="nephew">Made with <b>Teachy</b> &mdash; the AI nephew who teaches you how, and never does it for you.</p>
+    <a class="cta" href="https://teachy.app/?ref=shipped-it-0007" target="_blank" rel="noopener">
+      You can learn this too <span class="arrow" aria-hidden="true">&rarr;</span>
+    </a>
+    <div class="signed">Signed by the nephew &middot; teachy.app</div>
+  </footer>
+</main>

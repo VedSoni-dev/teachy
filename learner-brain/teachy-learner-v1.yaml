@@ -1,0 +1,265 @@
+# teachy-learner-v1 — the "MyChart for education" schema-pack
+#
+# This is the learner-record data model. It reshapes gbrain (a knowledge-worker
+# second brain) into a longitudinal, evidence-cited record of one human learner:
+# every skill, the exact moment that proved it, every misconception, every review.
+#
+# The discipline that makes this a *chart* and not a *scratchpad*:
+#   Every claim about the learner traces to a captured moment (a teachback, a
+#   review, a verified goal). A `skill` page never just says "knows recursion" —
+#   it is backed by `demonstrated_by` edges pointing at the teachback/session
+#   pages that earned that claim. That is what makes gap analysis possible and
+#   what makes the record auditable by the learner (MyChart's core promise).
+#
+# STANDALONE pack: extends null. We deliberately do NOT inherit gbrain-base's
+# knowledge-worker types (deal, email, slack, tweet). A learner record is a
+# small, sharp taxonomy — not a CRM.
+
+api_version: gbrain-schema-pack-v1
+name: teachy-learner-v1
+version: 1.0.0
+description: "Longitudinal, evidence-cited record of a single human learner. Skills backed by the moments that proved them, misconceptions tracked as durable contradictions, sessions/teachbacks/reviews on a timeline. MyChart, for learning."
+author: Teachy
+gbrain_min_version: 0.42.0
+extends: null
+borrow_from: []
+takes_kinds:
+  - fact      # something verified true about the learner ("recalled `git rebase` unaided")
+  - hunch     # a soft inference the coach is tracking but has not verified
+
+# ---------------------------------------------------------------------------
+# Page types — the record's nouns.
+#
+# primitive drives inheritance defaults (link verbs, frontmatter fields,
+# extraction eligibility). We lean on:
+#   entity     → the learner, courses (durable actors)
+#   concept    → skills, concepts, goals (units of knowledge/capability)
+#   temporal   → sessions, teachbacks, reviews (dated events on the timeline)
+#   annotation → misconceptions (dated, evidence-backed claims with validity)
+#   media      → artifacts (things the learner built)
+#
+# extractable: false everywhere — Teachy writes these pages deliberately from
+# real signals (VerificationEngine, TeachBackEngine, SpacedRepetitionEngine).
+# We do NOT want the LLM auto-inventing learner facts from prose.
+# ---------------------------------------------------------------------------
+page_types:
+  - name: learner
+    primitive: entity
+    path_prefixes:
+      - learner/
+    aliases:
+      - student
+      - user
+    extractable: false
+    expert_routing: false   # there is exactly one learner per brain
+
+  - name: skill
+    primitive: concept
+    path_prefixes:
+      - skills/
+    aliases:
+      - competency
+      - ability
+    extractable: false
+    expert_routing: false
+    # A capability the learner can perform. Frontmatter carries the current
+    # proficiency and the last time it was exercised; the *justification* for
+    # that proficiency lives in the demonstrated_by / checked_by backlinks,
+    # never in the number alone.
+
+  - name: concept
+    primitive: concept
+    path_prefixes:
+      - concepts/
+    aliases:
+      - idea
+      - topic
+    extractable: false
+    expert_routing: false
+    # A unit of knowledge that was taught (distinct from `skill`: a concept is
+    # something understood; a skill is something done).
+
+  - name: goal
+    primitive: concept
+    path_prefixes:
+      - goals/
+    aliases:
+      - outcome
+      - done-when
+    extractable: false
+    expert_routing: false
+    # A course goal / natural-language doneWhen outcome. Mirrors the goal
+    # identity already in Teachy course JSON.
+
+  - name: course
+    primitive: entity
+    path_prefixes:
+      - courses/
+    aliases:
+      - track
+      - lesson
+    extractable: false
+    expert_routing: false
+    # Mirrors a Teachy course/track by its stable course id.
+
+  - name: session
+    primitive: temporal
+    path_prefixes:
+      - sessions/
+    aliases:
+      - lesson-session
+      - sitting
+    extractable: false
+    expert_routing: false
+    # One learning sitting. The unit of the timeline — the "visit" in MyChart.
+
+  - name: teachback
+    primitive: temporal
+    path_prefixes:
+      - teachbacks/
+    aliases:
+      - explanation
+      - teach-back
+    extractable: false
+    expert_routing: false
+    # A teach-back attempt: the learner's actual explanation, a quality score,
+    # and how it was verified. The strongest evidence a skill page can cite.
+
+  - name: review
+    primitive: temporal
+    path_prefixes:
+      - reviews/
+    aliases:
+      - retention-check
+      - recall
+    extractable: false
+    expert_routing: false
+    # A spaced-repetition review outcome (recalled | struggled | forgot) with
+    # the SM-2 interval state at the time.
+
+  - name: misconception
+    primitive: annotation
+    path_prefixes:
+      - misconceptions/
+    aliases:
+      - error-model
+      - contradiction
+    extractable: false
+    expert_routing: false
+    # A durable wrong mental model the learner holds or held. Status open |
+    # resolved. This is the record's most valuable signal: "claimed mastery,
+    # then failed near-transfer" is exactly what a great tutor lives for, and
+    # gbrain's contradiction machinery surfaces it instead of discarding it.
+
+  - name: artifact
+    primitive: media
+    path_prefixes:
+      - artifacts/
+    aliases:
+      - portfolio-item
+      - build
+    extractable: false
+    expert_routing: false
+    # Something the learner actually built. Enriched with the verification /
+    # teach-back data that proves the learner (not the AI) produced the skill.
+
+  - name: note
+    primitive: concept
+    path_prefixes:
+      - notes/
+    aliases: []
+    extractable: false
+    expert_routing: false
+    # Catch-all so nothing is unfiled.
+
+# ---------------------------------------------------------------------------
+# Link types — the learning graph's verbs.
+#
+# Each edge has an inverse so traversal works both directions:
+#   "what proves this skill?"  (skill ← demonstrated_by ← teachback)
+#   "what did this session teach?" (session → covers → skill)
+# ---------------------------------------------------------------------------
+link_types:
+  - name: demonstrates          # teachback  -> skill
+    inverse: demonstrated_by
+  - name: checks                # review     -> skill
+    inverse: checked_by
+  - name: covers                # session    -> skill | concept
+    inverse: covered_by
+  - name: targets               # session    -> goal
+    inverse: targeted_by
+  - name: requires              # skill      -> prerequisite skill (must know it first)
+    inverse: prerequisite_of
+  - name: transfers_to          # skill      -> skill (cross-domain transfer)
+    inverse: transfers_from
+  - name: contradicts           # misconception -> skill | concept
+    inverse: contradicted_by
+  - name: evidences             # artifact   -> skill | goal
+    inverse: evidenced_by
+  - name: part_of               # goal -> course, session -> course
+    inverse: has_part
+  - name: about                 # teachback/review/misconception -> concept
+    inverse: discussed_in
+
+# ---------------------------------------------------------------------------
+# Frontmatter links — auto-materialize graph edges from page frontmatter, so
+# Teachy can write a single put_page and the edges fall out (zero extra calls,
+# matching gbrain's "put_page extracts edges" property).
+# ---------------------------------------------------------------------------
+frontmatter_links:
+  - page_type: teachback
+    fields: [skill]
+    link_type: demonstrates
+  - page_type: teachback
+    fields: [concept]
+    link_type: about
+  - page_type: review
+    fields: [skill]
+    link_type: checks
+  - page_type: session
+    fields: [covers]
+    link_type: covers
+  - page_type: session
+    fields: [goal]
+    link_type: targets
+  - page_type: session
+    fields: [course]
+    link_type: part_of
+  - page_type: skill
+    fields: [prerequisites]
+    link_type: requires
+  - page_type: skill
+    fields: [transfers_to]
+    link_type: transfers_to
+  - page_type: misconception
+    fields: [skill, concept]
+    link_type: contradicts
+  - page_type: artifact
+    fields: [evidences]
+    link_type: evidences
+  - page_type: goal
+    fields: [course]
+    link_type: part_of
+
+# ---------------------------------------------------------------------------
+# Filing rules — where a new page of each kind lands in the brain repo.
+# ---------------------------------------------------------------------------
+filing_rules:
+  - kind: skill
+    directory: skills/
+    description: One page per capability the learner is building.
+  - kind: session
+    directory: sessions/
+    description: One page per learning sitting; the timeline's unit.
+  - kind: teachback
+    directory: teachbacks/
+    description: One page per teach-back attempt, with the explanation verbatim.
+  - kind: review
+    directory: reviews/
+    description: One page per spaced-repetition review outcome.
+  - kind: misconception
+    directory: misconceptions/
+    description: One page per durable wrong model; status open|resolved.
+  - kind: artifact
+    directory: artifacts/
+    description: One page per built thing; the portfolio.

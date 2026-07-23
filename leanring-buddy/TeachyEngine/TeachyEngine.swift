@@ -91,6 +91,13 @@ final class TeachyEngine: ObservableObject {
     @Published private(set) var isProcessing: Bool = false
 
     let portfolioManager: PortfolioManager
+
+    /// Optional durable learner-record writer (the gbrain "MyChart" backend —
+    /// see learner-brain/README.md). Nil until P1 provisioning wires up a
+    /// `GBrainClient`; when nil, Teachy behaves exactly as before and the
+    /// record is simply not built yet.
+    var learnerBrainWriter: LearnerBrainWriter?
+
     private let dataDirectoryURL: URL
 
     /// Number of calendar days between the previous session's date and today.
@@ -274,6 +281,13 @@ final class TeachyEngine: ObservableObject {
 
         case .screenCaptured, .actionPerformed, .questionAsked, .sessionResumed, .sessionPaused:
             break
+        }
+
+        // Mirror this signal into the durable, evidence-cited learner record.
+        // Best-effort and off the coaching path; nil-safe until provisioning.
+        if let learnerBrainWriter {
+            let brainContext = makeLearnerBrainContext()
+            Task { await learnerBrainWriter.mirror(event, context: brainContext) }
         }
 
         saveState()
@@ -571,6 +585,22 @@ final class TeachyEngine: ObservableObject {
             }
         }
 
+        // Record the shipped artifact into the learner record — the data source
+        // behind the shareable "I shipped it" receipt (Approach A).
+        if let learnerBrainWriter {
+            let shipContext = makeLearnerBrainContext()
+            let shippedProject = state.projects[index]
+            Task {
+                await learnerBrainWriter.recordShippedArtifact(
+                    projectID: shippedProject.id,
+                    title: shippedProject.title,
+                    deployedURL: shippedProject.deployedURL,
+                    skillIDs: shipContext.currentGoalSkillIDs,
+                    context: shipContext
+                )
+            }
+        }
+
         saveState()
         return state.projects[index]
     }
@@ -604,6 +634,28 @@ final class TeachyEngine: ObservableObject {
     }
 
     // MARK: - Private helpers
+
+    /// Snapshot just enough state for a learner-record write. Built on the main
+    /// actor before the async write so the writer never touches live state.
+    private func makeLearnerBrainContext() -> LearnerBrainContext {
+        let session = state.activeSession
+        var skillNames: [String: String] = [:]
+        var skillProficiencies: [String: String] = [:]
+        for node in state.learnerModel.skillNodes {
+            skillNames[node.id] = node.skillName
+            skillProficiencies[node.id] = node.proficiencyLevel.displayName
+        }
+        let currentGoalSkillIDs = session?.currentGoalID.map { inferSkillIDsForGoal($0) } ?? []
+        return LearnerBrainContext(
+            occurredAt: Date(),
+            sessionID: session?.id,
+            courseID: session?.courseID,
+            currentGoalID: session?.currentGoalID,
+            currentGoalSkillIDs: currentGoalSkillIDs,
+            skillNames: skillNames,
+            skillProficiencies: skillProficiencies
+        )
+    }
 
     private func findTransfersForGoal(_ goalID: String) -> [SkillTransfer] {
         let skills = inferSkillIDsForGoal(goalID)

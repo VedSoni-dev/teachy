@@ -11,6 +11,10 @@ import SwiftUI
 struct NotchPortfolioTabView: View {
     @ObservedObject var companionManager: CompanionManager
 
+    /// Artifacts whose verification-provenance strip is expanded. Local UI state
+    /// only — the "how do I know the human made this" proof, revealed on tap.
+    @State private var expandedProvenanceIDs: Set<String> = []
+
     @ViewBuilder
     var body: some View {
         let portfolio = companionManager.teachyEngine.portfolioManager
@@ -198,6 +202,8 @@ struct NotchPortfolioTabView: View {
                 }
             }
 
+            provenanceBlock(item: item)
+
             HStack {
                 Text(item.createdAt, style: .relative)
                     .font(.system(size: 9))
@@ -306,6 +312,137 @@ struct NotchPortfolioTabView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(DS.Colors.portfolioAccent.opacity(0.06))
         )
+    }
+
+    // MARK: - Verification provenance (proof the human, not the AI, made this)
+
+    /// The proof strip under each artifact: a "Verified" chip carrying the depth
+    /// of the check, expandable to how Teachy verified it and what the learner
+    /// explained in their own words. Renders nothing when an artifact carries no
+    /// provenance (e.g. a manually added item) — never fabricates proof.
+    @ViewBuilder
+    private func provenanceBlock(item: PortfolioItem) -> some View {
+        let hasExpandableProof = (item.verificationSummary?.isEmpty == false)
+            || (item.teachBackSummary?.isEmpty == false)
+        let hasChip = hasExpandableProof || (item.verificationDepth?.isEmpty == false)
+
+        if hasChip {
+            let isExpanded = expandedProvenanceIDs.contains(item.id)
+
+            VStack(alignment: .leading, spacing: 6) {
+                verifiedChip(item: item, isExpanded: isExpanded, isExpandable: hasExpandableProof)
+
+                if isExpanded {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let verificationSummary = item.verificationSummary, !verificationSummary.isEmpty {
+                            provenanceLine(
+                                iconName: "checkmark.seal.fill",
+                                tint: DS.Colors.success,
+                                label: "How Teachy checked it",
+                                detail: verificationSummary
+                            )
+                        }
+                        if let teachBackSummary = item.teachBackSummary, !teachBackSummary.isEmpty {
+                            provenanceLine(
+                                iconName: "quote.bubble",
+                                tint: DS.Colors.portfolioAccent,
+                                label: "You explained it",
+                                detail: teachBackSummary
+                            )
+                        }
+                    }
+                    .padding(.leading, 2)
+                }
+            }
+        }
+    }
+
+    private func verifiedChip(item: PortfolioItem, isExpanded: Bool, isExpandable: Bool) -> some View {
+        let depthLabel = item.verificationDepth.flatMap { prettyVerificationDepth($0) }
+        let chipText = depthLabel.map { "Verified · \($0)" } ?? "Verified"
+
+        let chipContent = HStack(spacing: 4) {
+            Image(systemName: "checkmark.shield.fill")
+                .font(.system(size: 9))
+                .foregroundColor(DS.Colors.success)
+            Text(chipText)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(DS.Colors.success)
+            if isExpandable {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+                    .foregroundColor(DS.Colors.success.opacity(0.7))
+                    .rotationEffect(.degrees(isExpanded ? 0 : -90))
+            }
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(
+            Capsule().fill(DS.Colors.success.opacity(0.12))
+        )
+
+        return Group {
+            if isExpandable {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        if isExpanded {
+                            expandedProvenanceIDs.remove(item.id)
+                        } else {
+                            expandedProvenanceIDs.insert(item.id)
+                        }
+                    }
+                } label: {
+                    chipContent.contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            } else {
+                // Depth-only provenance: informative, not interactive.
+                chipContent
+            }
+        }
+    }
+
+    private func provenanceLine(iconName: String, tint: Color, label: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: iconName)
+                .font(.system(size: 9))
+                .foregroundColor(tint)
+                .frame(width: 12)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+                Text(detail)
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Turn a raw verification-depth token (`vision`, `vision_explain`,
+    /// `near_transfer`, `code_analysis`, …) into a learner-facing phrase. Unknown
+    /// tokens fall back to a prettified version of the raw value.
+    private func prettyVerificationDepth(_ raw: String) -> String? {
+        let normalized = raw.lowercased().replacingOccurrences(of: "-", with: "_")
+        switch normalized {
+        case "vision", "vision_only":
+            return "saw it on your screen"
+        case "vision_explain", "vision_plus_explain":
+            return "saw it & heard you explain"
+        case "near_transfer", "transfer":
+            return "you applied it somewhere new"
+        case "code_analysis", "code":
+            return "checked your actual code"
+        default:
+            let spaced = normalized.replacingOccurrences(of: "_", with: " ")
+            return spaced.isEmpty ? nil : spaced
+        }
     }
 
     /// Puts a ready-to-send brag on the clipboard. The live artifact URL is the

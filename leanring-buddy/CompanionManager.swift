@@ -339,6 +339,18 @@ final class CompanionManager: ObservableObject {
         bindAudioPowerLevel()
         bindShortcutTransitions()
         coursesManager.syncToEngineLearnerModel(teachyEngine)
+
+        // Provision the durable learner-record backend (the gbrain "MyChart"
+        // sidecar — learner-brain/README.md) off the main actor. If no gbrain
+        // binary is present this leaves learnerBrainWriter nil and Teachy runs
+        // exactly as before; when a binary is bundled/installed it flips the
+        // already-wired write path live. Best-effort — never blocks launch.
+        Task { [weak self] in
+            guard let resolvedGBrainClient = await LearnerBrainProvisioner.provisionClient() else { return }
+            guard let self else { return }
+            self.teachyEngine.learnerBrainWriter = LearnerBrainWriter(client: resolvedGBrainClient)
+        }
+
         // Eagerly touch the Claude API so its TLS warmup handshake completes
         // well before the onboarding demo fires at ~40s into the video.
         _ = claudeAPI

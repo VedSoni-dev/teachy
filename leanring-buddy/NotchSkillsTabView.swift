@@ -11,6 +11,10 @@ import SwiftUI
 struct NotchSkillsTabView: View {
     @ObservedObject var companionManager: CompanionManager
 
+    /// Skills whose evidence trail is currently expanded in the "proof behind
+    /// your skills" section. Local UI state only — nothing persisted.
+    @State private var expandedSkillIDs: Set<String> = []
+
     @ViewBuilder
     var body: some View {
         let learnerModel = companionManager.teachyEngine.getLearnerModel()
@@ -25,6 +29,8 @@ struct NotchSkillsTabView: View {
                 emptySkillsCard
             } else {
                 skillsSummaryCard(learnerModel: learnerModel)
+
+                evidenceBehindSkillsSection(learnerModel: learnerModel)
 
                 if !dueReviews.isEmpty {
                     retentionReviewCard(reviews: dueReviews)
@@ -408,5 +414,237 @@ struct NotchSkillsTabView: View {
         }
         .padding(14)
         .glassCard(tint: DS.Colors.skillsAccent, prominent: true)
+    }
+
+    // MARK: - Proof behind your skills (the "show it to a person" surface)
+
+    /// The core MyChart surface: each skill the learner has actually learned,
+    /// expandable to the captured moments that earned its level — teach-backs,
+    /// verifications, spaced-review recalls, real-world contexts. Reads only
+    /// existing `LearnerModel` state, so it works today; when the gbrain record
+    /// lands (learner-brain/README.md) these moments become tap-through links to
+    /// the actual teachback/review pages.
+    @ViewBuilder
+    private func evidenceBehindSkillsSection(learnerModel: LearnerModel) -> some View {
+        let learnedSkills = learnerModel.skillNodes
+            .filter { $0.proficiencyLevel > .novice }
+            .sorted { lhs, rhs in
+                if lhs.proficiencyLevel != rhs.proficiencyLevel {
+                    return lhs.proficiencyLevel > rhs.proficiencyLevel
+                }
+                return (lhs.lastVerifiedAt ?? lhs.firstLearnedAt) > (rhs.lastVerifiedAt ?? rhs.firstLearnedAt)
+            }
+
+        if !learnedSkills.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.seal")
+                        .font(.system(size: 12))
+                        .foregroundColor(DS.Colors.skillsAccent)
+                    Text("Proof Behind Your Skills")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                }
+
+                Text("Every level here is backed by a moment you can point to — not a number we assigned you.")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                ForEach(learnedSkills) { skill in
+                    evidenceSkillRow(skill: skill, moments: evidenceMoments(for: skill, in: learnerModel))
+                }
+            }
+            .padding(14)
+            .glassCard(tint: DS.Colors.skillsAccent)
+        }
+    }
+
+    private func evidenceSkillRow(skill: LearnerSkillNode, moments: [SkillEvidenceMoment]) -> some View {
+        let isExpanded = expandedSkillIDs.contains(skill.id)
+
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    if isExpanded {
+                        expandedSkillIDs.remove(skill.id)
+                    } else {
+                        expandedSkillIDs.insert(skill.id)
+                    }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(skill.skillName)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+
+                    Spacer(minLength: 6)
+
+                    Text(skill.proficiencyLevel.displayName)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(DS.Colors.skillsAccent)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(DS.Colors.skillsAccent.opacity(0.14))
+                        )
+
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .rotationEffect(.degrees(isExpanded ? 0 : -90))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(moments) { moment in
+                        evidenceMomentRow(moment: moment)
+                    }
+                }
+                .padding(.top, 8)
+                .padding(.leading, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DS.Colors.skillsAccent.opacity(0.06))
+        )
+    }
+
+    private func evidenceMomentRow(moment: SkillEvidenceMoment) -> some View {
+        HStack(alignment: .top, spacing: 7) {
+            Image(systemName: moment.iconName)
+                .font(.system(size: 9))
+                .foregroundColor(moment.tint)
+                .frame(width: 12)
+                .padding(.top, 1)
+
+            Text(moment.text)
+                .font(.system(size: 10))
+                .foregroundColor(DS.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
+
+            Spacer(minLength: 4)
+
+            if let dateLabel = moment.dateLabel {
+                Text(dateLabel)
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: Evidence extraction
+
+    /// A single captured moment behind a skill — the atomic unit of "proof."
+    private struct SkillEvidenceMoment: Identifiable {
+        let id = UUID()
+        let iconName: String
+        let text: String
+        let date: Date?
+        let tint: Color
+
+        var dateLabel: String? {
+            guard let date else { return nil }
+            return NotchSkillsTabView.evidenceDateFormatter.string(from: date)
+        }
+    }
+
+    private static let evidenceDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
+
+    /// Gather every real moment behind a skill from existing learner state,
+    /// dated moments in chronological order and undated evidence (contexts,
+    /// level-up reasons) after them. Falls back to an honest "no captured
+    /// moment yet" line for skills leveled up without a recorded artifact.
+    private func evidenceMoments(for skill: LearnerSkillNode, in learnerModel: LearnerModel) -> [SkillEvidenceMoment] {
+        var moments: [SkillEvidenceMoment] = []
+
+        // Teach-backs — the strongest evidence: the learner explaining it.
+        let teachBacks = learnerModel.teachingDemos
+            .filter { $0.skillID == skill.id }
+            .sorted { $0.recordedAt < $1.recordedAt }
+        for teachBack in teachBacks {
+            let qualitySuffix = teachBack.qualityScore > 0
+                ? " · \(Int((teachBack.qualityScore * 100).rounded()))% clear"
+                : ""
+            moments.append(SkillEvidenceMoment(
+                iconName: "bubble.left.and.bubble.right",
+                text: "Taught it back in your own words\(qualitySuffix)",
+                date: teachBack.recordedAt,
+                tint: DS.Colors.skillsAccent
+            ))
+        }
+
+        // Vision / verifier confirmation of a done-when.
+        if let lastVerifiedAt = skill.lastVerifiedAt {
+            moments.append(SkillEvidenceMoment(
+                iconName: "checkmark.seal.fill",
+                text: "Verified by Teachy",
+                date: lastVerifiedAt,
+                tint: DS.Colors.success
+            ))
+        }
+
+        // Spaced-repetition recall — remembered it unaided, later.
+        if skill.reviewCount > 0 {
+            moments.append(SkillEvidenceMoment(
+                iconName: "arrow.clockwise",
+                text: "Recalled in \(skill.reviewCount) spaced review\(skill.reviewCount == 1 ? "" : "s")",
+                date: skill.lastPracticedAt,
+                tint: DS.Colors.skillsAccent
+            ))
+        }
+
+        // Dated moments chronological; undated evidence appended after.
+        moments.sort { ($0.date ?? .distantFuture) < ($1.date ?? .distantFuture) }
+
+        // Where the skill was actually applied.
+        let recentContexts = skill.contextsUsed.suffix(3)
+        if !recentContexts.isEmpty {
+            moments.append(SkillEvidenceMoment(
+                iconName: "hammer",
+                text: "Applied while building: \(recentContexts.joined(separator: ", "))",
+                date: nil,
+                tint: DS.Colors.textTertiary
+            ))
+        }
+
+        // Why it leveled up (verified reasons only ever level a skill up).
+        for reason in skill.successNotes.suffix(2).reversed() {
+            moments.append(SkillEvidenceMoment(
+                iconName: "arrow.up.forward",
+                text: reason,
+                date: nil,
+                tint: DS.Colors.textTertiary
+            ))
+        }
+
+        // Honest fallback: a learned skill with no captured artifact yet
+        // (e.g. imported/seeded). Never fabricate a moment.
+        if moments.isEmpty {
+            moments.append(SkillEvidenceMoment(
+                iconName: "sparkles",
+                text: "Proven while building — no single captured moment recorded yet.",
+                date: nil,
+                tint: DS.Colors.textTertiary
+            ))
+        }
+
+        return moments
     }
 }
