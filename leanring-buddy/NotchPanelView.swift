@@ -12,6 +12,7 @@ import SwiftUI
 enum NotchPanelTab: String, CaseIterable {
     case home
     case courses
+    case progress
     case portfolio
     case skills
     case agents
@@ -66,6 +67,8 @@ struct NotchPanelView: View {
                 NotchHomeTabView(companionManager: companionManager, notchManager: notchManager)
             case .courses:
                 NotchCoursesTabView(companionManager: companionManager, notchManager: notchManager)
+            case .progress:
+                NotchProgressTabView(companionManager: companionManager)
             case .portfolio:
                 NotchPortfolioTabView(companionManager: companionManager)
             case .skills:

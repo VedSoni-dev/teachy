@@ -351,6 +351,7 @@ struct ClickyNotchRootView: View {
             HStack(spacing: 4) {
                 if companionManager.allPermissionsGranted && companionManager.hasCompletedOnboarding {
                     headerTab(.courses, title: "Learn", systemImage: "book.fill")
+                    headerTab(.progress, title: "Progress", systemImage: "chart.line.uptrend.xyaxis")
                     headerTab(.portfolio, title: "Portfolio", systemImage: "folder.fill")
                     headerTab(.skills, title: "Skills", systemImage: "chart.bar.xaxis")
                     headerTab(.home, title: "Settings", systemImage: "slider.horizontal.3")
@@ -408,6 +409,7 @@ struct ClickyNotchRootView: View {
     private func tabAccent(_ tab: NotchPanelTab) -> Color {
         switch tab {
         case .courses: return DS.Colors.learnAccent       // teal
+        case .progress: return DS.Colors.success          // green
         case .portfolio: return DS.Colors.portfolioAccent // orange
         case .skills: return DS.Colors.skillsAccent       // purple
         default: return .white                             // Settings/home stays neutral

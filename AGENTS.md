@@ -151,7 +151,7 @@ npm run harness                      # validate all routes
 | `ClickyAudioSpectrumView.swift` | ~180 | Closed-notch spectrum bars + idle blinking face. |
 | `ClickyNotchRootView.swift` | ~400 | Root notch UI — black shape, live activity, header, spring open height. |
 | `NotchWindowManager.swift` | ~220 | Fixed-size floating `NSPanel`, hover-to-open, click-outside collapse. |
-| `NotchPanelView.swift` | ~70 | Thin notch panel shell — tab enum + router delegating to the per-tab `Notch*TabView` structs below. |
+| `NotchPanelView.swift` | ~80 | Thin notch panel shell — `NotchPanelTab` enum (home/courses/progress/portfolio/skills/agents) + router delegating to the per-tab `Notch*TabView` structs below. |
 | `NotchPanelColors.swift` | ~20 | Shared color tokens (`NotchPanelColors`) for the notch panel UI; also referenced directly by `CourseLessonHUDWindow.swift`. |
 | `NotchPanelSharedComponents.swift` | ~135 | Dependency-free shared views/helpers: `KeyboardKeyLabel`, `FlowLayout`, and the free-function `openRouterModelPickerRow`. |
 | `NotchHomeTabView.swift` | ~760 | Home tab — push-to-talk instructions, trust copy, check-in card, AI Brain (OpenRouter key add/rotate/remove), Voice (ElevenLabs key), software updates, cursor color, model picker, feedback link. |
@@ -159,6 +159,7 @@ npm run harness                      # validate all routes
 | `PermissionChoreographyView.swift` | ~430 | One-permission-at-a-time setup wizard: auto-fires system prompts, animated System Settings toggle mock, 1s poll auto-advances on grant. |
 | `NotchCoursesTabView.swift` | ~1230 | Courses tab — catalog with expandable course previews + progress bars, active course session, Teachy Academy install/featured sections, custom course builder entry point. |
 | `NotchPortfolioTabView.swift` | ~450 | Portfolio tab — shareable artifacts captured from completed course goals. Each artifact carries an expandable **verification-provenance** strip (P4): how Teachy checked it (`verificationSummary`), the learner's own words (`teachBackSummary`), and a prettified `verificationDepth` chip — proof the human, not the AI, made it. |
+| `NotchProgressTabView.swift` | ~340 | Progress tab — dead-simple per-learner tracker: streak, things built, skills learned, current-course progress bar, recent moments (shipped artifacts + teach-backs), and one "next up" nudge. All derived from existing engine state (no gbrain). Green (`DS.Colors.success`) accent; placed after Learn in the header. |
 | `NotchSkillsTabView.swift` | ~650 | Skills tab — learner model proficiency, retention review, at-risk skills, domain breakdown, streaks. **"Proof Behind Your Skills"** (P4): each learned skill expands to the captured moments that earned its level (teach-backs w/ quality, verifications, spaced-review recalls, contexts, level-up reasons), read from existing `LearnerModel` — the "show it to a person" MyChart surface. |
 | `NotchCustomCourseBuilderSheet.swift` | ~115 | Sheet for describing a custom course and generating a plan via the Teachy proxy. |
 | `MenuBarPanelManager.swift` | ~103 | NSStatusItem lifecycle. Menu bar icon toggles the notch panel. |
