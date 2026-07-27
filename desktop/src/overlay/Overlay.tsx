@@ -178,11 +178,11 @@ export function Overlay() {
         <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
           <polygon
             points={buildTriangleMarkPoints(26)}
-            fill="var(--overlay-cursor-blue)"
+            fill="var(--overlay-cursor)"
             opacity="0.5"
             filter="url(#companion-glow)"
           />
-          <polygon points={buildTriangleMarkPoints(20)} fill="var(--overlay-cursor-blue)" />
+          <polygon points={buildTriangleMarkPoints(20)} fill="var(--overlay-cursor)" />
           <defs>
             <filter id="companion-glow" x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur stdDeviation="3" />

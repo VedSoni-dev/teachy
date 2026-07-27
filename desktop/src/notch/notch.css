@@ -141,7 +141,7 @@
 /* ── Teachy mark ────────────────────────────────────────────── */
 
 .teachy-mark.is-glowing {
-  filter: drop-shadow(0 0 6px rgba(51, 128, 255, 0.75));
+  filter: drop-shadow(0 0 6px rgba(22, 185, 129, 0.75));
   animation: mark-pulse 1.4s ease-in-out infinite alternate;
 }
 

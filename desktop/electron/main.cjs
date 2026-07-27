@@ -64,9 +64,9 @@ function buildTeachyTrayImage() {
 
       if (isInsideTriangle) {
         const offset = (pixelY * iconSize + pixelX) * 4;
-        pixelBuffer[offset + 0] = 0xff; // B — Teachy blue #3380FF
-        pixelBuffer[offset + 1] = 0x80; // G
-        pixelBuffer[offset + 2] = 0x33; // R
+        pixelBuffer[offset + 0] = 0x81; // B — Teachy green #16B981
+        pixelBuffer[offset + 1] = 0xb9; // G
+        pixelBuffer[offset + 2] = 0x16; // R
         pixelBuffer[offset + 3] = 0xff; // A
       }
     }

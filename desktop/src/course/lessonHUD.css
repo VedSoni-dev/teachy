@@ -5,7 +5,7 @@
   flex-direction: column;
   padding: 14px 16px 12px;
   border-radius: var(--radius-xl);
-  background: rgba(20, 22, 28, 0.96);
+  background: rgba(17, 22, 19, 0.96);
   border: 0.75px solid rgba(245, 245, 247, 0.1);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }

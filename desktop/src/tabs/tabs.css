@@ -13,8 +13,8 @@
   value below is what regularMaterial resolves to over black in dark mode.
 */
 .glass-card {
-  background: #1b1e25;
-  border: 0.75px solid rgba(245, 245, 247, 0.08);
+  background: #1b2320;
+  border: 0.75px solid rgba(240, 247, 243, 0.08);
   border-radius: var(--radius-large);
 }
 

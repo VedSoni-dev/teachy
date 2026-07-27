@@ -1,20 +1,26 @@
 /*
-  Design tokens transcribed EXACTLY from the macOS app's DesignSystem.swift.
-  Every value here has a direct counterpart in the Swift source — nothing is
-  invented. If a value looks off, fix it in Swift first, then mirror it here.
+  Teachy identity — "Teachy Green" (identity direction B).
+
+  NOTE: this DELIBERATELY DIVERGES from the macOS DesignSystem.swift. Teachy for
+  the A&M / B2C launch has its own brand: a warm green-charcoal ground, a
+  confident Teachy-green accent + mascot (replacing the generic Apple-system
+  blue that made it look like Clicky), and warm-gold for "success/done" so brand
+  green reads as identity, not status. Do NOT "resync to Swift" — the Mac app is
+  the legacy flagship; this is the new brand it will eventually adopt too.
+  Structure (radii, spacing, notch geometry, spring curves) still mirrors Swift.
 */
 
 :root {
-  /* ── Backgrounds (DS.Colors) ───────────────────────────────── */
-  --background: #12151a;
-  --surface1: #1a1d24;
-  --surface2: #22262f;
-  --surface3: #2a2f3a;
-  --surface4: #323845;
+  /* ── Backgrounds — warm green-charcoal (was cool blue-gray) ─── */
+  --background: #0f1411;
+  --surface1: #171d18;
+  --surface2: #1e2620;
+  --surface3: #26302a;
+  --surface4: #2f3a33;
 
   /* ── Borders ───────────────────────────────────────────────── */
-  --border-subtle: #3a404c;
-  --border-strong: #4a5160;
+  --border-subtle: #333d36;
+  --border-strong: #454f47;
 
   /* ── Text ──────────────────────────────────────────────────── */
   --text-primary: #f5f5f7;
@@ -28,10 +34,11 @@
   --blue700: #0077ed;
   --blue800: #0060bf;
 
-  --accent: var(--blue600);
-  --accent-hover: var(--blue700);
-  --accent-text: var(--blue400);
-  --accent-subtle: rgba(10, 132, 255, 0.12);
+  /* Teachy-green brand accent — the identity, replacing Apple-system blue. */
+  --accent: #16b981;
+  --accent-hover: #12a374;
+  --accent-text: #4ade9f;
+  --accent-subtle: rgba(22, 185, 129, 0.14);
 
   /* ── Tab accents ───────────────────────────────────────────── */
   --learn-accent: #0f8a6a;
@@ -40,18 +47,20 @@
   --portfolio-accent-soft: rgba(255, 159, 10, 0.14);
   --skills-accent: #bf5af2;
   --skills-accent-soft: rgba(191, 90, 242, 0.14);
-  /* Progress tab — green, matching the Mac Progress tab's success accent. */
-  --progress-accent: #34d399;
-  --progress-accent-soft: rgba(52, 211, 153, 0.14);
+  /* Progress tab — the Teachy-green brand (your growth). */
+  --progress-accent: #16b981;
+  --progress-accent-soft: rgba(22, 185, 129, 0.14);
 
   /* ── Semantic ──────────────────────────────────────────────── */
   --destructive: #e5484d;
-  --success: #34d399;
+  /* "Done/verified" is warm gold in this identity, so brand-green stays the
+     identity rather than reading as a status color. */
+  --success: #f5b13a;
   --warning: #ffb224;
   --info: #70b8ff;
 
-  /* ── Overlay cursor (distinct from in-app accent, per Swift) ─ */
-  --overlay-cursor-blue: #3380ff;
+  /* ── Teachy mascot cursor — the brand-green triangle ────────── */
+  --overlay-cursor: #16b981;
 
   /* ── Disabled states (DS.Colors) ────────────────────────────── */
   --disabled-background: rgba(245, 245, 247, 0.12);

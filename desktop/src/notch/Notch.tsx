@@ -233,7 +233,7 @@ function TeachyMark({ size, glowing = false }: { size: number; glowing?: boolean
       viewBox={`0 0 ${size} ${size}`}
       aria-hidden="true"
     >
-      <polygon points={buildTriangleMarkPoints(size)} fill="var(--overlay-cursor-blue)" />
+      <polygon points={buildTriangleMarkPoints(size)} fill="var(--overlay-cursor)" />
     </svg>
   );
 }
