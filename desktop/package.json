@@ -2,19 +2,22 @@
   "name": "teachy-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Teachy for Windows — Electron + React shell, matching the macOS app exactly.",
+  "description": "Teachy for Windows — Electron + React shell (Teachy Green identity).",
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "start": "electron .",
-    "dev:electron": "vite build && electron ."
+    "dev:electron": "vite build && electron .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dist:win": "vite build && electron-builder --win"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
     "typescript": "^5.7.2",
     "vite": "^6.0.3"
   },
@@ -22,5 +25,27 @@
     "@fontsource/inter": "^5.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
+  },
+  "build": {
+    "appId": "ai.teachy.desktop",
+    "productName": "Teachy",
+    "directories": { "output": "dist-installers" },
+    "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "extraResources": [
+      {
+        "from": "../windows/Teachy.Sidecar/bin/Release/net8.0-windows",
+        "to": "sidecar",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "artifactName": "Teachy-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

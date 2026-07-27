@@ -1,6 +1,8 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+const fs = require('node:fs');
 const readline = require('node:readline');
+const { app } = require('electron');
 
 /**
  * Owns the Teachy.Sidecar child process — the C# layer that does everything
@@ -19,22 +21,36 @@ class SidecarBridge {
     this.eventListeners = new Map();
   }
 
-  /** Resolves the sidecar executable for both dev (bin/Debug) and packaged builds. */
+  /**
+   * Resolve the sidecar executable across every context it actually runs in:
+   * an explicit override, a packaged install, and dev builds (Release preferred
+   * over Debug). The previous version hardcoded only the dev Debug path, so any
+   * packaged or Release build could not find the sidecar at all.
+   */
   resolveExecutablePath() {
+    // 1. Explicit override — CI, custom installs, or a manually-built sidecar.
     if (process.env.TEACHY_SIDECAR_PATH) {
       return process.env.TEACHY_SIDECAR_PATH;
     }
-    return path.join(
-      __dirname,
-      '..',
-      '..',
-      'windows',
-      'Teachy.Sidecar',
-      'bin',
-      'Debug',
-      'net8.0-windows',
-      'Teachy.Sidecar.exe',
-    );
+
+    const executableName = 'Teachy.Sidecar.exe';
+    const candidatePaths = [];
+
+    // 2. Packaged app — the sidecar ships as an extraResource under
+    //    resources/sidecar (see the electron-builder `extraResources` config).
+    if (app.isPackaged) {
+      candidatePaths.push(path.join(process.resourcesPath, 'sidecar', executableName));
+    }
+
+    // 3. Dev builds — prefer a Release build, fall back to Debug.
+    const sidecarBinDir = path.join(__dirname, '..', '..', 'windows', 'Teachy.Sidecar', 'bin');
+    candidatePaths.push(path.join(sidecarBinDir, 'Release', 'net8.0-windows', executableName));
+    candidatePaths.push(path.join(sidecarBinDir, 'Debug', 'net8.0-windows', executableName));
+
+    // Use the first path that exists; otherwise return the last candidate so a
+    // failure surfaces a concrete missing path rather than an empty string.
+    return candidatePaths.find((candidate) => fs.existsSync(candidate))
+      ?? candidatePaths[candidatePaths.length - 1];
   }
 
   start() {
