@@ -58,6 +58,15 @@ export function useCompanionLoop(courseTeachBackCallback?: (userAnswer: string) 
     }
 
     async function runCompanionTurn(userQuestion: string, isUserInitiated: boolean) {
+      // A pending course teach-back means THIS user answer is the teach-back —
+      // hand it straight to the course to advance, instead of also running a
+      // generic screen-grounded Q&A turn about their screen (which produced a
+      // confusing double response: an unrelated screen answer, then "next up").
+      if (isUserInitiated && courseTeachBackCallback) {
+        courseTeachBackCallback(userQuestion);
+        return;
+      }
+
       if (isHandlingTurnRef.current) {
         return;
       }
@@ -118,12 +127,6 @@ export function useCompanionLoop(courseTeachBackCallback?: (userAnswer: string) 
               label: parsedReply.pointTag.label,
             });
           }
-        }
-
-        // If a course teach-back is pending and this was user-initiated (voice/typed),
-        // the user just answered — notify the course session to advance.
-        if (isUserInitiated && courseTeachBackCallback) {
-          courseTeachBackCallback(userQuestion);
         }
 
         const wordCount = parsedReply.spokenText.split(/\s+/).filter(Boolean).length;
