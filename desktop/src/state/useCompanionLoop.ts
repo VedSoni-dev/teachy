@@ -7,8 +7,8 @@ import {
   type ConversationTurn,
 } from './companion';
 import type { CapturedScreen, TeachyConfigSnapshot } from '../types/global';
+import { DEFAULT_CHAT_MODEL } from './models';
 
-const BRING_YOUR_OWN_KEY_MODEL = 'anthropic/claude-sonnet-4.6';
 const MAX_REMEMBERED_TURNS = 20;
 
 /**
@@ -80,7 +80,7 @@ export function useCompanionLoop(courseTeachBackCallback?: (userAnswer: string) 
         setOverlay('thinking', 'thinking…');
 
         const config = await teachy!.invoke<TeachyConfigSnapshot>('get-config');
-        const modelIdentifier = config.chatModel ?? BRING_YOUR_OWN_KEY_MODEL;
+        const modelIdentifier = config.chatModel ?? DEFAULT_CHAT_MODEL;
 
         const systemPrompt = buildCompanionSystemPrompt(
           capturedScreen.width,

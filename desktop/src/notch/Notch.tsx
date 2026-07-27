@@ -4,16 +4,18 @@ import { useCourseSession } from '../state/useCourseSession';
 import { LessonHUD } from '../course/LessonHUD';
 import { buildNotchPath, buildTriangleMarkPoints, NOTCH_RADII, NOTCH_SIZE } from './notchShape';
 import { LearnTab } from '../tabs/LearnTab';
+import { ProgressTab } from '../tabs/ProgressTab';
 import { PortfolioTab } from '../tabs/PortfolioTab';
 import { SkillsTab } from '../tabs/SkillsTab';
 import { SettingsTab } from '../tabs/SettingsTab';
 import './notch.css';
 
-export type NotchTab = 'learn' | 'portfolio' | 'skills' | 'settings';
+export type NotchTab = 'learn' | 'progress' | 'portfolio' | 'skills' | 'settings';
 
 /** Header tabs, in the same order and with the same accents as the Mac header. */
 const TAB_DEFINITIONS: { id: NotchTab; label: string; accentVariable: string }[] = [
   { id: 'learn', label: 'Learn', accentVariable: '--learn-accent' },
+  { id: 'progress', label: 'Progress', accentVariable: '--progress-accent' },
   { id: 'portfolio', label: 'Portfolio', accentVariable: '--portfolio-accent' },
   { id: 'skills', label: 'Skills', accentVariable: '--skills-accent' },
   { id: 'settings', label: 'Settings', accentVariable: '--text-primary' },
@@ -194,6 +196,7 @@ export function Notch() {
               ) : (
                 <>
                   {selectedTab === 'learn' && <LearnTab onStartCourse={startCourse} />}
+                  {selectedTab === 'progress' && <ProgressTab />}
                   {selectedTab === 'portfolio' && <PortfolioTab />}
                   {selectedTab === 'skills' && <SkillsTab />}
                   {selectedTab === 'settings' && <SettingsTab onAskQuestion={handleTypedQuestion} />}
@@ -253,6 +256,13 @@ function TabGlyph({ tab }: { tab: NotchTab }) {
         <svg {...commonProps} aria-hidden="true">
           <path d="M2.5 3.2v9.6c1.8-.9 3.7-.9 5.5 0 1.8-.9 3.7-.9 5.5 0V3.2c-1.8-.9-3.7-.9-5.5 0-1.8-.9-3.7-.9-5.5 0Z" />
           <path d="M8 3.2v9.6" />
+        </svg>
+      );
+    case 'progress': // upward trend
+      return (
+        <svg {...commonProps} aria-hidden="true">
+          <path d="M2 11 L6 7 L9 10 L14 4" />
+          <path d="M11 4h3v3" />
         </svg>
       );
     case 'portfolio': // folder

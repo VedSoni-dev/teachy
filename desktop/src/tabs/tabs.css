@@ -502,3 +502,117 @@
   font-size: 10px;
   color: var(--text-tertiary);
 }
+
+/* ── Progress tab ──────────────────────────────────────────── */
+
+.progress-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 4px;
+}
+
+.progress-hero {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 16px;
+}
+
+.progress-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.progress-stat-num {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.progress-stat-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.progress-course-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 0;
+}
+
+.progress-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.progress-course-title {
+  margin-top: 3px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.progress-percent {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--progress-accent);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+.progress-track {
+  height: 7px;
+  margin: 10px 14px 14px;
+  border-radius: 999px;
+  background: var(--surface2);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--progress-accent);
+  transition: width 500ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.progress-nudge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.progress-nudge-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--progress-accent);
+  box-shadow: 0 0 0 4px var(--progress-accent-soft);
+}
+
+.progress-nudge-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.progress-nudge-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.progress-nudge-arrow {
+  flex: 0 0 auto;
+  font-size: 15px;
+  color: var(--progress-accent);
+}

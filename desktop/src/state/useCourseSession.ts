@@ -10,8 +10,8 @@ import {
   streamCompanionReply,
 } from './companion';
 import type { CapturedScreen, TeachyConfigSnapshot } from '../types/global';
+import { DEFAULT_CHAT_MODEL } from './models';
 
-const BRING_YOUR_OWN_KEY_MODEL = 'anthropic/claude-sonnet-4.6';
 const AUTO_HINT_TIMEOUT_MS = 22_000;
 
 export interface CourseSessionState {
@@ -91,7 +91,7 @@ export function useCourseSession() {
         includeElements: true,
       });
       const config = await teachy.invoke<TeachyConfigSnapshot>('get-config');
-      const modelIdentifier = config.chatModel ?? BRING_YOUR_OWN_KEY_MODEL;
+      const modelIdentifier = config.chatModel ?? DEFAULT_CHAT_MODEL;
 
       const currentGoal = activeSession.goals[activeSession.currentGoalIndex];
       let systemPrompt = buildCompanionSystemPrompt(
@@ -253,7 +253,7 @@ the whole plan. Celebrate real progress briefly, then move.`;
 
       const finalSummary = await runAgentLoop({
         apiKey,
-        modelIdentifier: config.chatModel ?? BRING_YOUR_OWN_KEY_MODEL,
+        modelIdentifier: config.chatModel ?? DEFAULT_CHAT_MODEL,
         userGoal: `Do this step for the learner in the course "${activeSession.course.title}": ${currentGoal.goal} It is complete when: ${currentGoal.doneWhen ?? 'the learner can see it is done'}.`,
         initialScreen,
         onNarration: (narration) => {
@@ -347,7 +347,7 @@ the whole plan. Celebrate real progress briefly, then move.`;
 
       const verification = await verifyCourseGoal(
         apiKey,
-        config.chatModel ?? BRING_YOUR_OWN_KEY_MODEL,
+        config.chatModel ?? DEFAULT_CHAT_MODEL,
         currentGoal.doneWhen,
         capturedScreen.jpegBase64,
       );

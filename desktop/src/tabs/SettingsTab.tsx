@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTeachyConfig } from '../state/useTeachyConfig';
+import { DEFAULT_CHAT_MODEL } from '../state/models';
 import './tabs.css';
 
 const PLACEMENT_OPTIONS = [
@@ -120,7 +121,7 @@ export function SettingsTab({ onAskQuestion }: SettingsTabProps) {
         <div className="model-picker-wrapper">
           <select
             className="model-picker"
-            value={config?.chatModel ?? MODEL_OPTIONS[0].id}
+            value={config?.chatModel ?? DEFAULT_CHAT_MODEL}
             onChange={(changeEvent) => void updateConfig({ chatModel: changeEvent.target.value })}
           >
             {MODEL_OPTIONS.map((modelOption) => (
