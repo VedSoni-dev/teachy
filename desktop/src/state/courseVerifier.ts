@@ -4,6 +4,8 @@
  * doneWhen, get back pass / partial / offTrack with specific feedback.
  */
 
+import { postOpenRouterChat } from './openRouterClient';
+
 export type CourseVerificationStatus = 'pass' | 'partial' | 'offTrack';
 
 export interface CourseVerificationResult {
@@ -40,30 +42,21 @@ export async function verifyCourseGoal(
 What is the current state on screen? Is this goal complete, partially complete, or off track?`;
 
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://vedsoni-dev.github.io/teachy/',
-        'X-Title': 'Teachy',
-      },
-      body: JSON.stringify({
-        model: modelIdentifier,
-        messages: [
-          { role: 'system', content: VERIFIER_SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: userPrompt },
-              {
-                type: 'image_url',
-                image_url: { url: `data:image/jpeg;base64,${screenshotJpegBase64}` },
-              },
-            ],
-          },
-        ],
-      }),
+    const response = await postOpenRouterChat(apiKey, {
+      model: modelIdentifier,
+      messages: [
+        { role: 'system', content: VERIFIER_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: userPrompt },
+            {
+              type: 'image_url',
+              image_url: { url: `data:image/jpeg;base64,${screenshotJpegBase64}` },
+            },
+          ],
+        },
+      ],
     });
 
     if (!response.ok) {

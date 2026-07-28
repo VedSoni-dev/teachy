@@ -1,4 +1,5 @@
 import type { CapturedScreen, InspectedElement } from '../types/global';
+import { postOpenRouterChat } from './openRouterClient';
 
 /**
  * The "Do it for me" agent loop — port of the macOS BackgroundAgentManager
@@ -196,20 +197,11 @@ async function requestNextAssistantMessage(
   modelIdentifier: string,
   conversation: AgentMessage[],
 ): Promise<AgentMessage> {
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://vedsoni-dev.github.io/teachy/',
-      'X-Title': 'Teachy',
-    },
-    body: JSON.stringify({
-      model: modelIdentifier,
-      messages: conversation,
-      tools: AGENT_TOOL_SCHEMAS,
-      tool_choice: 'auto',
-    }),
+  const response = await postOpenRouterChat(apiKey, {
+    model: modelIdentifier,
+    messages: conversation,
+    tools: AGENT_TOOL_SCHEMAS,
+    tool_choice: 'auto',
   });
 
   if (!response.ok) {

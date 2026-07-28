@@ -1,4 +1,5 @@
 import type { CapturedScreen, InspectedElement } from '../types/global';
+import { postOpenRouterChat } from './openRouterClient';
 
 /**
  * Builds the companion system prompt. Transcribed from CompanionPromptBuilder
@@ -194,19 +195,10 @@ export async function streamCompanionReply(
     ],
   });
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://vedsoni-dev.github.io/teachy/',
-      'X-Title': 'Teachy',
-    },
-    body: JSON.stringify({
-      model: modelIdentifier,
-      stream: true,
-      messages,
-    }),
+  const response = await postOpenRouterChat(apiKey, {
+    model: modelIdentifier,
+    stream: true,
+    messages,
   });
 
   if (!response.ok || !response.body) {
