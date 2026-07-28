@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "app:stop": "node scripts/stopRunningApp.mjs",
     "sidecar:build": "npm run app:stop && dotnet build ../windows/Teachy.Sidecar/Teachy.Sidecar.csproj -c Release --nologo",
-    "verify": "npm run sidecar:build && npm run typecheck && npm run test && npm run build",
+    "sidecar:test": "dotnet test ../windows/Teachy.Platform.Tests/Teachy.Platform.Tests.csproj --nologo",
+    "verify": "npm run sidecar:build && npm run sidecar:test && npm run typecheck && npm run test && npm run build",
     "dist:win": "vite build && electron-builder --win"
   },
   "devDependencies": {

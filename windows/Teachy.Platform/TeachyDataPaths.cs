@@ -7,8 +7,24 @@ namespace Teachy.Platform;
 /// </summary>
 public static class TeachyDataPaths
 {
-    public static string TeachyHomeDirectory =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".teachy");
+    /// <summary>
+    /// Overrides the Teachy home directory. Set TEACHY_HOME to keep progress,
+    /// config and courses somewhere other than the user profile — a portable
+    /// install, a second profile, or a test run that must not touch real learner
+    /// data.
+    /// </summary>
+    public const string HomeDirectoryEnvironmentVariable = "TEACHY_HOME";
+
+    public static string TeachyHomeDirectory
+    {
+        get
+        {
+            string? overrideDirectory = Environment.GetEnvironmentVariable(HomeDirectoryEnvironmentVariable);
+            return string.IsNullOrWhiteSpace(overrideDirectory)
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".teachy")
+                : overrideDirectory;
+        }
+    }
 
     public static string CoursesDirectory => Path.Combine(TeachyHomeDirectory, "courses");
 
