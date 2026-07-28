@@ -1,0 +1,294 @@
+/*
+ * theme.css
+ * Web port of the macOS SwiftUI design system (DesignSystem.swift → `DS`).
+ *
+ * The Swift app is DARK-FIRST. The default `:root` below holds the exact dark
+ * hex values ported 1:1 from `DS.Colors`. Light values are derived (Swift only
+ * ships dark) and applied under `@media (prefers-color-scheme: light)` and
+ * `:root[data-theme="light"]`; dark is re-asserted under `:root[data-theme="dark"]`
+ * so an explicit user toggle always wins over the OS preference.
+ *
+ * Token naming: Swift camelCase → CSS kebab-case (e.g. `skillsAccent` →
+ * `--color-skills-accent`). Opacity-derived Swift tokens (e.g. `blue500.opacity(0.12)`)
+ * are expanded to `rgba()` using the base color's channels so the exact result
+ * is preserved.
+ *
+ * NOTE: Swift's glass cards use `NSVisualEffectView` materials
+ * (`.ultraThinMaterial` / `.regularMaterial`) — real OS vibrancy/backdrop blur.
+ * There is no faithful CSS equivalent; `backdrop-filter: blur()` approximates it
+ * but is NOT a 1:1 match. No fake material color is invented here — see the
+ * "Glass / Material" section for the tint/border/shadow tokens that ARE portable.
+ */
+
+:root {
+  /* ============================================================
+   * BACKGROUNDS (dark, default)
+   * Layered surfaces, deepest → most elevated. Higher = lighter.
+   * ============================================================ */
+  --color-background: #12151a; /* deepest — main fills */
+  --color-surface-1: #1a1d24;  /* first elevation — cards, panels */
+  --color-surface-2: #22262f;  /* second elevation — inputs, elevated cards */
+  --color-surface-3: #2a2f3a;  /* third elevation — hover */
+  --color-surface-4: #323845;  /* fourth elevation — pressed */
+
+  /* ============================================================
+   * BORDERS
+   * ============================================================ */
+  --color-border-subtle: #3a404c;
+  --color-border-strong: #4a5160;
+
+  /* ============================================================
+   * TEXT
+   * ============================================================ */
+  --color-text-primary: #f5f5f7;
+  --color-text-secondary: #a1a1a6;
+  --color-text-tertiary: #6e6e73;
+  --color-text-on-accent: #ffffff;
+
+  /* ============================================================
+   * ACCENT SCALE (Teachy blue) — raw palette
+   * ============================================================ */
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-200: #bfdbfe;
+  --color-blue-300: #93c5fd;
+  --color-blue-400: #5ac8fa;
+  --color-blue-500: #0a84ff;
+  --color-blue-600: #0071e3;
+  --color-blue-700: #0077ed;
+  --color-blue-800: #0060bf;
+  --color-blue-900: #004a94;
+  --color-blue-950: #0a2744;
+
+  /* ── Accent (derived from the blue scale) ── */
+  --color-accent: var(--color-blue-600);
+  --color-accent-hover: var(--color-blue-700);
+  --color-accent-text: var(--color-blue-400);
+  --color-accent-subtle: rgba(10, 132, 255, 0.12); /* blue500 @ 12% */
+
+  /* ============================================================
+   * TAB / DOMAIN ACCENTS
+   * ============================================================ */
+  --color-learn-accent: #0f8a6a;                     /* course / learning teal */
+  --color-learn-accent-soft: rgba(15, 138, 106, 0.14);
+  --color-portfolio-accent: #ff9f0a;                 /* Apple dark systemOrange */
+  --color-portfolio-accent-soft: rgba(255, 159, 10, 0.14);
+  --color-skills-accent: #bf5af2;                    /* Apple dark systemPurple */
+  --color-skills-accent-soft: rgba(191, 90, 242, 0.14);
+
+  /* ============================================================
+   * SEMANTIC
+   * ============================================================ */
+  --color-destructive: #e5484d;        /* Radix Red 9 */
+  --color-destructive-hover: #f2555a;  /* Radix Red 10 */
+  --color-destructive-text: #ff6369;   /* Radix Red 11 — brighter for dark bg */
+  --color-success: #34d399;            /* Tailwind Emerald 400 */
+  --color-warning: #ffb224;            /* Radix Amber 9 */
+  --color-warning-text: #f1a10d;       /* Radix Amber 11 */
+  --color-info: #70b8ff;               /* Radix Blue 9 */
+  --color-code-text: #9dc2ff;          /* Radix Blue 11 variant — inline code */
+
+  /* ============================================================
+   * OVERLAY CURSOR (screen overlay, kept distinct from accent)
+   * ============================================================ */
+  --color-overlay-cursor-blue: #3380ff;
+
+  /* ============================================================
+   * FLOATING BUTTON GRADIENT ("jewel" on the desktop)
+   * ============================================================ */
+  --color-floating-gradient-purple: #8f46eb;
+  --color-floating-gradient-pink: #e84d9e;
+  --color-floating-gradient-orange: #ff8c33;
+
+  /* ============================================================
+   * HELP CHAT
+   * ============================================================ */
+  --color-help-chat-user-bubble: var(--color-blue-800);
+  --color-help-chat-user-bubble-hover: var(--color-blue-700);
+  --color-help-chat-backdrop: #212121;
+
+  /* ============================================================
+   * DISABLED STATE (Material 3 pattern — textPrimary at opacity)
+   * ============================================================ */
+  --color-disabled-background: rgba(245, 245, 247, 0.12); /* textPrimary @ 12% */
+  --color-disabled-text: rgba(245, 245, 247, 0.38);       /* textPrimary @ 38% */
+
+  /* ============================================================
+   * BUDDY COMPOSER — voice waveform (overlay, theme-independent)
+   * ============================================================ */
+  --color-waveform-leading: #f3fbff;
+  --color-waveform-trailing: #8fd2ff;
+  --color-waveform-glow: #aee3ff;
+
+  /* ============================================================
+   * CORNER RADII (DS.CornerRadius)
+   * ============================================================ */
+  --radius-small: 6px;        /* tags, badges */
+  --radius-medium: 8px;       /* buttons, inputs, small cards */
+  --radius-large: 10px;       /* cards, dialogs, chat bubbles */
+  --radius-extra-large: 12px; /* large panels, permission cards */
+  --radius-glass-card: 14px;  /* GlassCardModifier default cornerRadius */
+  --radius-pill: 9999px;      /* Swift used .infinity for capsule/pill shapes */
+
+  /* ============================================================
+   * SPACING (DS.Spacing)
+   * ============================================================ */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 20px;
+  --space-xxl: 24px;
+  --space-xxxl: 32px;
+
+  /* ============================================================
+   * FONT SIZES
+   * Swift has no formal type scale — sizes are inline `.font(.system(size:))`.
+   * These mirror the values actually used across the button/tooltip styles.
+   * ============================================================ */
+  --font-size-caption: 11px; /* tooltip / caption text */
+  --font-size-sm: 14px;      /* text button default, small labels */
+  --font-size-base: 16px;    /* primary/secondary/outlined button labels, body */
+
+  /* ============================================================
+   * GLASS / MATERIAL — portable tokens only
+   * The blur itself is an NSVisualEffectView material with no CSS equivalent
+   * (approximate with `backdrop-filter: blur(20px)` if desired — NOT 1:1).
+   * These are the tint/border/shadow opacities from GlassCardModifier.
+   * ============================================================ */
+  --glass-tint-opacity-prominent: 0.10;
+  --glass-tint-opacity-standard: 0.03;
+  --glass-border-opacity-prominent: 0.35;
+  --glass-border-opacity-standard: 0.08;
+  --glass-shadow-opacity-prominent: 0.20;
+
+  /* ============================================================
+   * ANIMATION DURATIONS (DS.Animation)
+   * ============================================================ */
+  --duration-fast: 0.15s;
+  --duration-normal: 0.25s;
+  --duration-slow: 0.4s;
+
+  /* ============================================================
+   * STATE LAYER OPACITIES (DS.StateLayer — Material 3 state layers)
+   * ============================================================ */
+  --state-layer-hover: 0.08;
+  --state-layer-focus: 0.12;
+  --state-layer-pressed: 0.12;
+  --state-layer-dragged: 0.16;
+}
+
+/*
+ * ============================================================
+ * LIGHT THEME (derived — Swift ships dark only)
+ * Only the tokens that meaningfully differ from dark are overridden.
+ * The blue accent scale, overlay cursor, floating gradient, and waveform
+ * colors are intentionally shared across themes.
+ * ============================================================
+ */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    /* Backgrounds — deepest is now lightest */
+    --color-background: #ffffff;
+    --color-surface-1: #f5f5f7;
+    --color-surface-2: #ececef;
+    --color-surface-3: #e3e4e8;
+    --color-surface-4: #d8dae0;
+
+    /* Borders */
+    --color-border-subtle: #d2d5dc;
+    --color-border-strong: #b8bcc6;
+
+    /* Text */
+    --color-text-primary: #1d1d1f;
+    --color-text-secondary: #545456;
+    --color-text-tertiary: #86868b;
+
+    /* Accent — darker accent text for contrast on light surfaces */
+    --color-accent-text: var(--color-blue-700);
+
+    /* Semantic — darker text variants for legibility on white */
+    --color-destructive-text: #cc2e33;
+    --color-success: #059669;
+    --color-warning: #b7791f;
+    --color-warning-text: #b45309;
+    --color-info: #0071e3;
+    --color-code-text: #0060bf;
+
+    /* Help chat */
+    --color-help-chat-backdrop: #f0f0f0;
+
+    /* Disabled — base is now the dark textPrimary */
+    --color-disabled-background: rgba(29, 29, 31, 0.12);
+    --color-disabled-text: rgba(29, 29, 31, 0.38);
+  }
+}
+
+:root[data-theme="light"] {
+  /* Backgrounds */
+  --color-background: #ffffff;
+  --color-surface-1: #f5f5f7;
+  --color-surface-2: #ececef;
+  --color-surface-3: #e3e4e8;
+  --color-surface-4: #d8dae0;
+
+  /* Borders */
+  --color-border-subtle: #d2d5dc;
+  --color-border-strong: #b8bcc6;
+
+  /* Text */
+  --color-text-primary: #1d1d1f;
+  --color-text-secondary: #545456;
+  --color-text-tertiary: #86868b;
+
+  /* Accent */
+  --color-accent-text: var(--color-blue-700);
+
+  /* Semantic */
+  --color-destructive-text: #cc2e33;
+  --color-success: #059669;
+  --color-warning: #b7791f;
+  --color-warning-text: #b45309;
+  --color-info: #0071e3;
+  --color-code-text: #0060bf;
+
+  /* Help chat */
+  --color-help-chat-backdrop: #f0f0f0;
+
+  /* Disabled */
+  --color-disabled-background: rgba(29, 29, 31, 0.12);
+  --color-disabled-text: rgba(29, 29, 31, 0.38);
+}
+
+/*
+ * Re-assert the dark values so an explicit `data-theme="dark"` toggle wins
+ * even when the OS prefers light.
+ */
+:root[data-theme="dark"] {
+  --color-background: #12151a;
+  --color-surface-1: #1a1d24;
+  --color-surface-2: #22262f;
+  --color-surface-3: #2a2f3a;
+  --color-surface-4: #323845;
+
+  --color-border-subtle: #3a404c;
+  --color-border-strong: #4a5160;
+
+  --color-text-primary: #f5f5f7;
+  --color-text-secondary: #a1a1a6;
+  --color-text-tertiary: #6e6e73;
+
+  --color-accent-text: var(--color-blue-400);
+
+  --color-destructive-text: #ff6369;
+  --color-success: #34d399;
+  --color-warning: #ffb224;
+  --color-warning-text: #f1a10d;
+  --color-info: #70b8ff;
+  --color-code-text: #9dc2ff;
+
+  --color-help-chat-backdrop: #212121;
+
+  --color-disabled-background: rgba(245, 245, 247, 0.12);
+  --color-disabled-text: rgba(245, 245, 247, 0.38);
+}

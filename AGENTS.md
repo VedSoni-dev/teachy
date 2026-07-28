@@ -5,7 +5,7 @@
 
 ## Overview
 
-macOS menu bar **teaching companion**. Lives entirely in the macOS status bar (no dock icon, no main window). Clicking the menu bar icon opens a notch-style panel focused on **Teachy Courses** — goal-based learning sessions with durable outcomes only (no hardcoded buttons, grid cells, or layout). Courses can form **learning tracks** (e.g. Git & GitHub Parts 1–4) that build on each other like a Khan Academy unit. A Swift `LessonPlayer` runs a **buddy tutor** loop: session memory + live screen → coach with `[POINT:…]` → optional Mac tools (`ui_action`, browser, Terminal) when stuck or when the user says “do it for me.” `CourseVerifier` gates advance with natural-language `doneWhen`. Live phase + last coach line show in the course lesson HUD (glass hover expand, boring.notch–inspired).
+macOS menu bar **teaching companion**. Lives entirely in the macOS status bar (no dock icon, no main window). Clicking the menu bar icon opens a notch-style panel focused on **Teachy Courses** — goal-based learning sessions with durable outcomes only (no hardcoded buttons, grid cells, or layout). Flagship course: **Make a Website**. A Swift `LessonPlayer` runs a **buddy tutor** loop: session memory + live screen → coach with `[POINT:…]` → optional Mac tools (`ui_action`, browser, Terminal) when stuck or when the user says “do it for me.” `CourseVerifier` gates advance with natural-language `doneWhen`. Live phase + last coach line show in the course lesson HUD (glass hover expand, boring.notch–inspired).
 
 Push-to-talk (ctrl+option) captures voice, transcribed via AssemblyAI (or Apple Speech locally), with screenshots sent through the Teachy proxy. Outside a course, the same PTT path answers quick on-screen questions with spoken replies and cursor pointing. Free-form background automation is demoted from the primary product surface (Agents tab hidden); Mac tools still power in-lesson “Do it for me” exactly as before.
 
@@ -96,10 +96,7 @@ npm run harness                      # validate all routes
 | `TeachySoftwareUpdater.swift` | ~70 | Sparkle auto-update controller — GitHub Releases feed + Check for Updates in Home settings. |
 | `CompanionManager.swift` | ~3020 | Central state machine. Owns dictation, shortcut monitoring, screen capture, companion chat, Teachy Courses sessions, local TTS, and overlay management. Tracks voice state, conversation history, chat/agent model selection, and cursor visibility. Layer 2 `executeActStep` runs `.act` guided-task steps via the agent tool loop with announce-before-act ordering; Layer 3 `reflectAndReplaceRemainingSteps` calls the reasoning model on divergence to revise the living plan. |
 | `CompanionGuidedTask.swift` | ~96 | Ephemeral guided-task model. `GuidedStepExecutionMode` (`.coach`/`.act`), `AgenticStep`, `CompanionGuidedTask` with `reflectionRevisionCount` and `maximumReflectionRevisionsPerTask` cap. |
-| `ClickyCourse.swift` | ~1380 | Goal-based courses; **First Win** + **Use AI to Code** flagship; Teachy catalog + lesson briefs. |
-| `TeachyCourseCodeWithAI.swift` | ~325 | Bundled course "Code with AI" — the instruct → verify → iterate loop for directing coding agents. |
-| `TeachyCoursePhoneAgent.swift` | ~295 | Bundled course "Build a Phone Agent" — Vapi voice assistant from account to tested web call. |
-| `TeachyCourseAIFluency.swift` | ~260 | Bundled course "AI Fluency Essentials" — prompting, tool choice, verification; widget-heavy. |
+| `ClickyCourse.swift` | ~1380 | Goal-based courses; flagship **Make a Website** (ChatGPT plan → mocks → Replit/agent → Vercel); Teachy catalog + lesson briefs. |
 | `CoursesManager.swift` | ~1250 | Catalog, sessions, learner profile memory, tool step log. `generateAgenticPlan` (reasoning-model screen-grounded planner) and `reflectAndRevisePlan` (Layer 3 reflection model call returning revised remaining steps). |
 | `TeachyDataPaths.swift` | ~40 | Resolves `~/.teachy/{courses,connectors}` with legacy `~/.clicky/` fallback. |
 | `LessonPlayer.swift` | ~730 | Goal auto-prompter — video parts → tutor turns → verify → teach-back. |

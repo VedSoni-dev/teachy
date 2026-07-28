@@ -203,10 +203,18 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
     /// Fill-in-the-blank widget — sibling of `interactiveMultipleChoice`.
     /// A goal has at most one interactive type set.
     let interactiveFillInBlank: CourseInteractiveFillInBlank?
+    /// When true, "next step" / I did it advances without requiring the screen to
+    /// match `doneWhen` (conversational / interview goals with nothing to verify).
+    let advanceOnUserConfirm: Bool?
 
     /// Back-compat names used by session/HUD copy.
     var instruction: String { goal }
     var completionCriteria: String { doneWhen ?? goal }
+
+    /// True when this goal advances on confirm without a vision gate.
+    var advancesOnUserConfirmWithoutVision: Bool {
+        advanceOnUserConfirm == true
+    }
 
     /// Part clip URL — `teacherVideoURL` wins, then legacy `introVideoURL`.
     var resolvedTeacherVideoURL: String? {
@@ -276,7 +284,8 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
         outcome: String? = nil,
         interactiveMultipleChoice: CourseInteractiveMultipleChoice? = nil,
         interactiveChecklist: CourseInteractiveChecklist? = nil,
-        interactiveFillInBlank: CourseInteractiveFillInBlank? = nil
+        interactiveFillInBlank: CourseInteractiveFillInBlank? = nil,
+        advanceOnUserConfirm: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -296,6 +305,7 @@ struct CourseLearningGoal: Identifiable, Codable, Equatable {
         self.interactiveMultipleChoice = interactiveMultipleChoice
         self.interactiveChecklist = interactiveChecklist
         self.interactiveFillInBlank = interactiveFillInBlank
+        self.advanceOnUserConfirm = advanceOnUserConfirm
     }
 
     /// Credit line for the beside-cursor player.
@@ -402,6 +412,33 @@ enum TeachyPromptChips {
         switch goalID {
         case "first-win-prompt", "ai-clear-ask":
             return firstWinPromptChips
+        case "intake":
+            return [
+                "Portfolio for job apps",
+                "Page for my hustle / business",
+                "I want Replit, keep it simple",
+            ]
+        case "write-the-prompt":
+            return [
+                "Ask me the planning questions",
+                "Open ChatGPT and paste it",
+                "Plan is good — next",
+            ]
+        case "mock-landing":
+            return [
+                "Generate the landing mock",
+                "I already have a Figma mock",
+            ]
+        case "build-it":
+            return [
+                "Open my build tool",
+                "Paste the build prompt",
+            ]
+        case "ship-on-vercel":
+            return [
+                "Open Vercel and deploy",
+                "Show me my live URL",
+            ]
         default:
             return []
         }
@@ -788,9 +825,6 @@ enum ClickyCourseResponseTags {
 enum ClickyCourseCatalog {
     static let bundledCourses: [ClickyCourse] = [
         buildAWebsiteCourse,
-        TeachyCourseCodeWithAI.course,
-        TeachyCoursePhoneAgent.course,
-        TeachyCourseAIFluency.course,
     ]
 
     static let webFundamentalsTrackID = "web-fundamentals"
@@ -799,369 +833,217 @@ enum ClickyCourseCatalog {
     /// Featured IDs shown first for new learners.
     static let featuredLearnerCourseIDs: [String] = [
         "build-a-website",
-        "code-with-ai",
     ]
 
     static let buildAWebsiteCourse = ClickyCourse(
         id: "build-a-website",
-        title: "Build & Deploy a Website",
-        subtitle: "From zero to a live site the world can visit",
-        description: "Build a real personal website from scratch with HTML & CSS, then deploy it to GitHub Pages so anyone on the internet can see it.",
+        title: "Make a Website",
+        subtitle: "Plan in ChatGPT. Build. Live on Vercel.",
+        description: "Teachy runs the interview you skip, writes a great ChatGPT prompt, helps you mock and build, then ships a live Vercel URL you can text someone.",
         iconSystemName: "display",
         estimatedMinutes: 45,
-        startURL: "https://github.com/new",
+        startURL: nil,
         learningOutcomes: [
-            "Understand how websites work (HTML structure, CSS styling, browser rendering)",
-            "Write real HTML with headings, paragraphs, links, images, and navigation",
-            "Style a site with CSS — colors, fonts, spacing, and responsive layout",
-            "Use Git to track changes and push code to GitHub",
-            "Deploy a live website to GitHub Pages with a public URL",
-            "Share a real link that anyone in the world can open",
+            "Answer sharp intake questions so an AI gets real context — not a vague one-liner",
+            "Use a Teachy-written prompt in ChatGPT to produce a concrete site plan",
+            "Generate a landing mock (and more pages only if image quota allows)",
+            "Build the site in Replit or a coding agent matched to what they already pay for",
+            "Deploy to Vercel and share a live URL",
         ],
         goals: [
             CourseLearningGoal(
-                id: "plan-your-site",
-                title: "Plan your site",
-                goal: "Decide what your website is about and what content goes on it — even a rough sketch is enough.",
-                coachAsk: "Help me plan a personal website. I'm not sure where to start — what should I think about before writing any code?",
-                doneWhen: "The learner can describe in one sentence what their site is about and roughly what will be on it.",
-                artifactDelta: "Site planned",
+                id: "intake",
+                title: "Figure out your path",
+                goal: "Say what the site is for, what you already have, and whether you want Replit (vibe) or a coding agent.",
+                coachAsk: "Help me start Make a Website. Ask me the intake questions one at a time — goal, who gets the link, what I already have, Replit vs coding agent — and if I pick agent, ask whether I pay for ChatGPT, Claude, or Cursor.",
+                doneWhen: "The learner has stated (1) site goal, (2) who they will text the link to, (3) what they already have, and (4) Replit vs coding agent — and if agent, which paid AI they use or that they are unpaid / willing to pay.",
+                artifactDelta: "Path chosen",
                 tips: [
-                    "A personal site only needs one page to start",
-                    "Think: who is this for? what do they need to see?",
-                    "Keep it simple — you can always add more later",
+                    "One question at a time — never dump the whole intake",
+                    "Remember their answers for later goals (build tool + paid AI)",
+                    "If they already have Figma/Canva, note that — we may skip image gens",
+                    "If they only have a domain, still ship *.vercel.app first",
                 ],
                 teachingContext: CourseTeachingContext(
                     concepts: [
-                        "what a website actually is (files a browser reads)",
-                        "the difference between HTML (structure) and CSS (style)",
-                        "pages, navigation, and content hierarchy",
+                        "intake before tools — route the path before opening tabs",
+                        "Replit = vibe build in the browser; agent = Cursor / Claude Code / Codex",
+                        "agent routing: Cursor→Cursor, Claude→Claude Code, ChatGPT→Codex/ChatGPT, unpaid→Codex free, willing to pay→Claude Code",
                     ],
                     commonMistakes: [
-                        "trying to plan every pixel before writing any code",
-                        "making it too complicated — multiple pages, forms, databases",
-                        "not choosing a topic and getting stuck in analysis paralysis",
+                        "opening ChatGPT before knowing the goal",
+                        "pushing a paid tool when they picked Replit",
+                        "asking every question at once",
                     ],
                     successExamples: [
-                        "I want a simple page about my cat with a photo, a bio, and a contact email",
-                        "I want a portfolio with my name, what I do, and three project cards",
+                        "I want a portfolio for job apps, I have nothing, I want Replit",
+                        "Hustle page, I have ChatGPT HTML in Downloads, I pay for Cursor",
                     ],
-                    whyItMatters: "A clear plan means every line of code has a purpose — no wasted effort.",
-                    teachBackPrompt: "what is your site about, and who is it for?",
-                    skipTeachBack: false
-                ),
-                toolPolicy: .pointOnly,
-                outcome: "You know what your site is called, what it's about, and roughly what goes on the page."
-            ),
-            CourseLearningGoal(
-                id: "create-html-file",
-                title: "Create your first HTML file",
-                goal: "Set up a project folder and write a valid HTML file that opens in a browser.",
-                coachAsk: "Help me create my first HTML file. I have a plan for my site — now I need to set up a folder and write the code. Open Terminal or Finder and walk me through it.",
-                doneWhen: "A file named index.html exists in a project folder and opens in a browser showing visible content.",
-                artifactDelta: "HTML file created",
-                remediationGoalID: "plan-your-site",
-                tips: [
-                    "index.html is the standard name for a homepage",
-                    "You can open any .html file by double-clicking it",
-                    "Don't worry about making it pretty yet — just get text on screen",
-                ],
-                teachingContext: CourseTeachingContext(
-                    concepts: [
-                        "HTML document skeleton (doctype, html, head, body)",
-                        "what goes in head (title, charset, viewport) vs body (visible content)",
-                        "opening the file in a browser to preview",
-                    ],
-                    commonMistakes: [
-                        "forgetting the closing body or html tags",
-                        "putting visible content inside head instead of body",
-                        "naming the file something other than index.html and getting confused later",
-                    ],
-                    successExamples: [
-                        "Double-click index.html and you see your text in the browser",
-                        "The browser tab shows your page title",
-                    ],
-                    whyItMatters: "Every website starts with a single HTML file — this is the foundation everything else builds on.",
-                    teachBackPrompt: "what are the main parts of an HTML document and what goes in each?",
-                    skipTeachBack: false
-                ),
-                toolPolicy: .helpWhenStuck,
-                outcome: "A file called index.html that opens in your browser and shows some text."
-            ),
-            CourseLearningGoal(
-                id: "add-content",
-                title: "Add real content",
-                goal: "Fill the page with actual content — a heading, paragraphs, a link, and an image.",
-                coachAsk: "My HTML file exists but it's mostly empty. Help me add real content — a heading, some paragraphs, maybe a link and an image.",
-                doneWhen: "The page has at least a heading, a paragraph, one link, and one image (or clear placeholder).",
-                artifactDelta: "Content added",
-                remediationGoalID: "create-html-file",
-                tips: [
-                    "Use h1 for the main title, h2 for section headings",
-                    "Images need both a file and alt text",
-                    "Links use a tag with href",
-                ],
-                teachingContext: CourseTeachingContext(
-                    concepts: [
-                        "heading hierarchy (h1 through h6 — don't skip levels)",
-                        "paragraphs with p",
-                        "anchor links with a href",
-                        "images with img src and alt text",
-                        "what alt text is for (accessibility plus broken image fallback)",
-                    ],
-                    commonMistakes: [
-                        "using headings just to make text big (use CSS for that)",
-                        "forgetting alt text on images",
-                        "putting block content inside inline elements",
-                        "using absolute URLs for local images that won't work when deployed",
-                    ],
-                    successExamples: [
-                        "The page clearly tells a story: title, intro, details, link",
-                        "Images load and have descriptive alt text",
-                    ],
-                    whyItMatters: "Content is why people visit your site. Without real content, it is just an empty frame.",
-                    teachBackPrompt: "what content does your page have and why did you choose those elements?",
-                    skipTeachBack: false
+                    whyItMatters: "The path only works if we know where they are starting and which tool they will build in.",
+                    teachBackPrompt: nil,
+                    skipTeachBack: true
                 ),
                 toolPolicy: .preferPointing,
-                outcome: "The page has a title, some text about you or your topic, a clickable link, and an image."
+                outcome: "You and Teachy agree on goal, starting point, and build tool.",
+                advanceOnUserConfirm: true
             ),
             CourseLearningGoal(
-                id: "style-with-css",
-                title: "Style with CSS",
-                goal: "Make the page look intentional with colors, fonts, spacing, and layout.",
-                coachAsk: "My page has content but it looks like a plain document. Help me add CSS to make it look like a real website — colors, fonts, and layout.",
-                doneWhen: "The page has custom colors, fonts, spacing, and at least one layout technique (centering, flexbox, or grid).",
-                artifactDelta: "CSS styles applied",
-                remediationGoalID: "add-content",
+                id: "write-the-prompt",
+                title: "Plan in ChatGPT",
+                goal: "Interview for context, write a sharp prompt, open ChatGPT, paste it, and lock a concrete site plan.",
+                coachAsk: """Intake is done. Do this in ONE flow — do not wait for them to say next step between beats:
+1) Ask planning questions ONE at a time (who it's for, 10-second feeling, pages, must-haves, tone) until you have enough context.
+2) Write the perfect first ChatGPT prompt from their answers and briefly say what makes it good.
+3) IMMEDIATELY open https://chatgpt.com (open_browser_tab) and paste the full prompt for them — they must not retype or hunt the link.
+4) Help them refine until the plan is solid (purpose, page list, landing outline). When they say the plan is good, tell them to say next step.""",
+                doneWhen: "ChatGPT shows a concrete site plan (purpose, page list, landing outline) on screen, or the learner confirmed the plan is good.",
+                artifactDelta: "Plan locked",
+                remediationGoalID: "intake",
                 tips: [
-                    "A style tag in head is the fastest way to start",
-                    "body with font-family: system-ui gives you a modern font for free",
-                    "margin: 0 auto centers content; max-width keeps it readable",
+                    "After enough answers, OPEN ChatGPT and paste in the SAME turn — never leave them hanging",
+                    "Normies give broad prompts — YOU ask the context they skip",
+                    "Free image gens come later — this goal is plan text only",
+                    "If they are logged out, help sign in, then paste",
                 ],
                 teachingContext: CourseTeachingContext(
                     concepts: [
-                        "CSS selectors (element, class, id)",
-                        "the box model (margin, border, padding, content)",
-                        "flexbox for layout (display: flex, justify-content, align-items)",
-                        "responsive units (rem, percent, max-width) vs fixed pixels",
-                        "color: hex vs named colors vs rgb",
+                        "good prompts need context — Teachy runs the interview",
+                        "Teachy opens ChatGPT and pastes — learner decides and reacts",
+                        "done means they endorse the plan — then next step",
                     ],
                     commonMistakes: [
-                        "using !important to fix specificity issues instead of learning selectors",
-                        "hardcoding pixel widths that break on different screens",
-                        "putting CSS inline instead of in a stylesheet or style block",
-                        "not testing at different browser widths",
+                        "finishing the interview and waiting instead of opening ChatGPT",
+                        "accepting make me a portfolio with no follow-ups",
+                        "leaving them to find chatgpt.com themselves",
                     ],
                     successExamples: [
-                        "The page looks clean and intentional at desktop width",
-                        "Content is centered and has breathing room",
-                        "Fonts are readable and consistent",
+                        "ChatGPT is open with a pasted prompt and a solid page plan on screen",
                     ],
-                    whyItMatters: "CSS is the difference between a document and a designed experience. It is what makes people stay.",
-                    teachBackPrompt: "what is the box model and how does flexbox help you layout a page?",
-                    skipTeachBack: false
+                    whyItMatters: "Context in → useful plan out. They feel a good prompt work, then see it in ChatGPT.",
+                    teachBackPrompt: "what made your prompt better than just saying make me a website?",
+                    skipTeachBack: true
                 ),
-                toolPolicy: .helpWhenStuck,
-                outcome: "The page has a background color, readable fonts, proper spacing, and looks designed rather than raw."
+                toolPolicy: .canDoForThem,
+                outcome: "A ChatGPT site plan you have approved."
             ),
             CourseLearningGoal(
-                id: "make-it-responsive",
-                title: "Make it responsive",
-                goal: "Ensure the site looks good on phones, tablets, and desktops.",
-                coachAsk: "My site looks good on my laptop but probably breaks on a phone. Help me make it responsive so it works everywhere.",
-                doneWhen: "The site looks usable at 320px width (phone) and 1200px plus (desktop) with no horizontal scrolling.",
-                artifactDelta: "Responsive layout",
-                remediationGoalID: "style-with-css",
+                id: "mock-landing",
+                title: "Mock the landing",
+                goal: "Generate a ChatGPT image of the landing page from the plan (or use an existing Figma/Canva mock).",
+                coachAsk: "Plan is good. Write an image prompt for the LANDING page from our plan, open ChatGPT if needed, generate the mock, and help me save it. If I already have Figma/Canva, use that instead of burning image gens.",
+                doneWhen: "A landing-page visual mock is visible (ChatGPT image or existing design file) that matches the planned landing.",
+                artifactDelta: "Landing mock",
+                remediationGoalID: "write-the-prompt",
                 tips: [
-                    "The viewport meta tag is required",
-                    "max-width: 100% on images prevents overflow",
-                    "Media queries change styles at different breakpoints",
+                    "Free ChatGPT image gens are scarce (~2–3 per rolling 24h) — landing FIRST",
+                    "Only generate 1–2 more page mocks if quota remains; otherwise continue with landing alone",
+                    "If they hit the limit, wait or proceed to build with the plan text + one mock",
+                    "OPEN ChatGPT and paste the image prompt for them",
                 ],
                 teachingContext: CourseTeachingContext(
                     concepts: [
-                        "the viewport meta tag (without it, phones render at 960px)",
-                        "mobile-first design (style for small screens first, add complexity for large)",
-                        "media queries (min-width breakpoints)",
-                        "flexible units (percent, vw, rem) vs fixed pixels",
-                        "flex-wrap for multi-item layouts",
+                        "visual mock reduces build thrash",
+                        "image quota is limited on free ChatGPT — prioritize landing",
+                        "existing design mocks count — do not force gens",
                     ],
                     commonMistakes: [
-                        "forgetting the viewport meta tag entirely",
-                        "using fixed pixel widths on containers",
-                        "designing for desktop first and bolting on mobile later",
-                        "not testing on an actual phone or narrow browser window",
+                        "burning all free gens on random styles before landing",
+                        "skipping save/download so the mock disappears",
+                        "generating ten pages on free tier",
                     ],
                     successExamples: [
-                        "Open the site on your phone and it looks like it was made for it",
-                        "Resize the browser window and content reflows smoothly",
-                        "No horizontal scrollbar at any width",
+                        "Landing mock image saved in Downloads or visible in the ChatGPT thread",
+                        "Figma frame used as the mock — no gen needed",
                     ],
-                    whyItMatters: "Over half of web traffic is mobile. A site that only works on desktop is broken for most people.",
-                    teachBackPrompt: "what is the viewport meta tag and why is it the first thing you need for mobile?",
-                    skipTeachBack: false
+                    whyItMatters: "Build tools need a picture. Landing is the one that matters most.",
+                    teachBackPrompt: nil,
+                    skipTeachBack: true
                 ),
-                toolPolicy: .preferPointing,
-                outcome: "The site adapts to different screen sizes — text is readable, nothing overflows, images scale."
+                toolPolicy: .canDoForThem,
+                outcome: "A landing mock you can show the build tool."
             ),
             CourseLearningGoal(
-                id: "add-more-pages",
-                title: "Add more pages",
-                goal: "Create a second page and link between pages with a consistent navigation menu.",
-                coachAsk: "My one page looks great. Help me add a second page — like an About or Projects page — and link them together so visitors can navigate.",
-                doneWhen: "A second .html file exists with real content, and a nav element on both pages links between them.",
-                artifactDelta: "Multi-page site",
-                remediationGoalID: "make-it-responsive",
+                id: "build-it",
+                title: "Build it",
+                goal: "Open Replit or the recommended coding agent, paste plan + mock context, and get a working preview.",
+                coachAsk: "Open my build tool based on intake (Replit, or Cursor / Claude Code / Codex from what I pay for), paste a build prompt with the plan and mock, and help me iterate until the preview looks right.",
+                doneWhen: "A working preview of the site is visible in Replit or the agent environment and roughly matches the plan and landing mock.",
+                artifactDelta: "Site preview",
+                remediationGoalID: "mock-landing",
                 tips: [
-                    "Copy index.html as a starting point for the new page",
-                    "Keep the nav identical on both pages (same links, same order)",
-                    "Use relative links — not absolute paths",
+                    "Replit: open https://replit.com — paste plan + mock refs",
+                    "Paying Cursor → Cursor; Claude → Claude Code; ChatGPT → Codex/ChatGPT; unpaid → Codex free; willing to pay → Claude Code",
+                    "OPEN the tool URL for them — do not send them googling",
+                    "If they already have AI HTML or a repo, adapt — do not rebuild from zero unless broken",
                 ],
                 teachingContext: CourseTeachingContext(
                     concepts: [
-                        "relative vs absolute paths",
-                        "consistent navigation across pages",
-                        "the nav semantic element",
-                        "copy-paste as a starting point (DRY comes later)",
+                        "build tool follows intake routing — do not switch stacks mid-course without reason",
+                        "prompt the builder with plan + mock, not make a website",
+                        "preview before deploy",
                     ],
                     commonMistakes: [
-                        "using different nav structures on different pages",
-                        "broken links because of wrong file paths",
-                        "putting the nav inside the wrong element",
-                        "copying the page but forgetting to update the title",
+                        "opening the wrong tool vs intake",
+                        "building without referencing the mock",
+                        "deploying before preview looks intentional",
                     ],
                     successExamples: [
-                        "Clicking About in the nav takes you to about.html and back",
-                        "Both pages share the same visual style and nav layout",
-                        "The browser tab title is different on each page",
+                        "Replit preview shows landing matching the mock",
+                        "Cursor/Codex/Claude Code preview of the site running locally or in preview pane",
                     ],
-                    whyItMatters: "A website with one page is a flyer. Multiple pages with navigation is a site.",
-                    teachBackPrompt: "what is the difference between relative and absolute paths in links?",
-                    skipTeachBack: false
+                    whyItMatters: "This is where the plan becomes a real site — still before hosting.",
+                    teachBackPrompt: "which build tool did you use and why?",
+                    skipTeachBack: true
                 ),
-                toolPolicy: .preferPointing,
-                outcome: "At least two pages exist (e.g. index.html plus about.html) with a nav that links between them."
+                toolPolicy: .canDoForThem,
+                outcome: "A preview of your site that matches the plan."
             ),
             CourseLearningGoal(
-                id: "push-to-github",
-                title: "Push to GitHub",
-                goal: "Initialize a Git repo and push your site to GitHub so it is backed up and ready to deploy.",
-                coachAsk: "My site is done locally. Help me put it on GitHub so it is saved online and ready to deploy.",
-                doneWhen: "A GitHub repository exists with all site files committed and pushed.",
-                artifactDelta: "Code on GitHub",
-                remediationGoalID: "add-more-pages",
+                id: "ship-on-vercel",
+                title: "Ship on Vercel",
+                goal: "Deploy to Vercel and open your live *.vercel.app URL.",
+                coachAsk: "Open Vercel for me, help me deploy this project, and get a live *.vercel.app link. If I have a custom domain, we attach it AFTER the vercel.app URL works.",
+                doneWhen: "A public https://*.vercel.app URL loads the learner's site in a browser.",
+                artifactDelta: "Live on Vercel",
+                remediationGoalID: "build-it",
                 tips: [
-                    "git init then git add . then git commit then git push",
-                    "Add a .gitignore with just .DS_Store to keep macOS junk out",
-                    "Name the repo something simple like my-website",
+                    "OPEN https://vercel.com or https://vercel.com/new for them",
+                    "First win is always *.vercel.app — never block on DNS",
+                    "Custom domain only after the vercel.app link works",
+                    "Have them text the URL to someone — that is the trophy",
                 ],
                 teachingContext: CourseTeachingContext(
                     concepts: [
-                        "Git tracks changes to files over time",
-                        "git init, git add, git commit, git push — the core loop",
-                        "GitHub is where your Git repo lives online",
-                        "README.md is the file GitHub shows on the repo homepage",
+                        "Vercel hosts the site on the public internet",
+                        "vercel.app is enough to share today",
+                        "custom domains are optional and later",
                     ],
                     commonMistakes: [
-                        "running git commands in the wrong directory",
-                        "committing before adding files (git add first)",
-                        "forgetting to create the GitHub repo before pushing",
-                        "pushing to main vs main branch naming confusion",
+                        "fiddling with DNS before the first deploy works",
+                        "deploying the wrong project/folder",
+                        "not opening the live URL to verify",
                     ],
                     successExamples: [
-                        "git status shows nothing to commit and git remote -v shows your GitHub URL",
-                        "Opening github.com/YOU/repo-name shows all your files",
+                        "Incognito window loads their landing at a vercel.app URL",
+                        "They copy the link and can text it",
                     ],
-                    whyItMatters: "Git is your safety net — you can always go back. GitHub is where your code lives before it goes live.",
-                    teachBackPrompt: "what are the four git commands in the core workflow and what does each one do?",
+                    whyItMatters: "A link you can text is the finish line — not a local preview.",
+                    teachBackPrompt: "what is your live URL?",
                     skipTeachBack: false
                 ),
-                toolPolicy: .helpWhenStuck,
-                outcome: "Your site code is on GitHub in a repository with all your files committed."
-            ),
-            CourseLearningGoal(
-                id: "deploy-to-github-pages",
-                title: "Deploy to GitHub Pages",
-                goal: "Turn your GitHub repo into a live website with a public URL anyone can visit.",
-                coachAsk: "My code is on GitHub. Help me deploy it to GitHub Pages so I can share a live link with anyone.",
-                doneWhen: "The GitHub Pages URL loads in a browser and shows the deployed site.",
-                artifactDelta: "Live on the internet",
-                remediationGoalID: "push-to-github",
-                tips: [
-                    "Settings then Pages then Source: main branch then Save",
-                    "It takes 1-2 minutes to deploy the first time",
-                    "If it 404s, check that your main file is named index.html",
-                ],
-                teachingContext: CourseTeachingContext(
-                    concepts: [
-                        "GitHub Pages serves your repo as a website for free",
-                        "Settings then Pages then choose your branch",
-                        "the deployment URL format: username.github.io/repo-name",
-                        "pushing a new commit triggers automatic redeployment",
-                    ],
-                    commonMistakes: [
-                        "forgetting to enable GitHub Pages in Settings",
-                        "selecting the wrong branch (use main, not a feature branch)",
-                        "naming the file something other than index.html",
-                        "not waiting long enough for the first deploy",
-                    ],
-                    successExamples: [
-                        "The URL loads and shows your site exactly as it looks locally",
-                        "You can share the link and someone else can open it",
-                        "Pushing a change to GitHub updates the live site within minutes",
-                    ],
-                    whyItMatters: "This is the moment your work becomes real — a URL you can put in your bio, share with friends, or add to a resume.",
-                    teachBackPrompt: "what is GitHub Pages and how does pushing a commit update the live site?",
-                    skipTeachBack: false
-                ),
-                toolPolicy: .preferPointing,
-                outcome: "Your site is live at a public URL anyone can visit."
-            ),
-            CourseLearningGoal(
-                id: "share-your-site",
-                title: "Share your site",
-                goal: "Open your live site, verify everything works, and share the link.",
-                coachAsk: "My site is deployed! Help me open it, check that everything looks right, and grab the link so I can share it.",
-                doneWhen: "The learner has opened their live site, verified the content and navigation work, and can state their URL.",
-                artifactDelta: "Site shared",
-                tips: [
-                    "Open in a private/incognito window to see the fresh version",
-                    "Test every link and page",
-                    "Copy the URL — you earned it",
-                ],
-                teachingContext: CourseTeachingContext(
-                    concepts: [
-                        "cache busting (hard refresh or incognito for fresh deploys)",
-                        "testing navigation across pages on the live version",
-                        "what to share: the URL in a bio, message, or social post",
-                    ],
-                    commonMistakes: [
-                        "checking the cached old version and thinking deploy failed",
-                        "forgetting to test links on the live site (not just locally)",
-                        "not saving the URL",
-                    ],
-                    successExamples: [
-                        "The live site loads with correct content, styling, and navigation",
-                        "All links work on the live version",
-                        "You have the URL copied and ready to share",
-                    ],
-                    whyItMatters: "Building something is great. Sharing it is what makes it matter.",
-                    teachBackPrompt: "what is the URL of your site and how would you describe it to someone?",
-                    skipTeachBack: false
-                ),
-                toolPolicy: .pointOnly,
-                outcome: "You can open your live site, confirm it looks right, and share the URL with anyone."
+                toolPolicy: .canDoForThem,
+                outcome: "A live Vercel URL you can text someone."
             ),
         ],
         artifact: CourseArtifactSpec(
             kind: "website",
             icon: "globe",
-            initialState: "no files, no site, nothing exists yet",
-            finalState: "a live personal website deployed on GitHub Pages with a public URL",
-            previewIfNoProgress: "No website yet — let's build one"
+            initialState: "no plan, no site, nothing live",
+            finalState: "a live personal site on Vercel with a public URL",
+            previewIfNoProgress: "No website yet — let's plan one"
         ),
-        trackID: webFundamentalsTrackID,
-        trackTitle: webFundamentalsTrackTitle,
+        trackID: nil,
+        trackTitle: nil,
         trackOrder: nil,
         prerequisiteCourseIDs: nil
     )
@@ -1280,6 +1162,24 @@ enum ClickyCourseCatalog {
             artifactSection = ""
         }
 
+        // Flagship "Make a Website" — Teachy is the active prompter; open links; Vercel.
+        let flagshipWebsiteCourseSection: String
+        if course.id == buildAWebsiteCourse.id {
+            flagshipWebsiteCourseSection = """
+
+            FLAGSHIP COURSE RULES (Make a Website):
+            - You run the interview normies skip. Ask ONE question at a time. Never accept a vague "make me a website" without context.
+            - YOU write the perfect ChatGPT prompt from their answers, then OPEN chatgpt.com and PASTE it in the SAME turn (open_browser_tab / tools). Never finish the interview and wait for "next step" to open ChatGPT — open as soon as the prompt is ready. Do not make them hunt links or retype the prompt.
+            - Remember intake forever this session: goal, what they have, Replit vs agent, paid AI (Cursor/Claude/ChatGPT/none/willing to pay). Route the build tool from that — do not invent a new stack.
+            - Agent routing: Cursor→Cursor; Claude→Claude Code; ChatGPT→Codex/ChatGPT; unpaid→Codex free beginner tier; willing to pay→Claude Code; vibe→Replit (skip paid quiz).
+            - Host is Vercel (*.vercel.app). Never GitHub Pages. Custom domain only AFTER vercel.app works.
+            - Free ChatGPT image gens are scarce (~2–3 / 24h). Landing mock FIRST. More pages only if quota left.
+            - When they say "plan is good", move on — do not endless-refine.
+            """
+        } else {
+            flagshipWebsiteCourseSection = ""
+        }
+
         return """
         You are Teachy — sitting right next to them at their computer, looking at the same screen.
         You are not a manual, not a lecture, not a chatbot. You are a calm, sharp human coach
@@ -1308,6 +1208,7 @@ enum ClickyCourseCatalog {
         \(globalLearnerSection)
         \(relationshipMemorySection)
         \(continuitySectionText)
+        \(flagshipWebsiteCourseSection)
 
         \(TeachyCourseCapabilityCard.text)
 
@@ -1369,14 +1270,17 @@ enum ClickyCourseCatalog {
         case buildAWebsiteCourse.id:
             return [
                 "website",
-                "HTML",
-                "CSS",
+                "ChatGPT",
+                "prompt",
+                "Replit",
+                "Vercel",
+                "Codex",
+                "Claude",
+                "Cursor",
+                "mock",
                 "deploy",
-                "GitHub",
-                "page",
-                "code",
-                "browser",
-                "responsive",
+                "landing",
+                "plan is good",
             ] + sharedAdvance
         default:
             return sharedAdvance
