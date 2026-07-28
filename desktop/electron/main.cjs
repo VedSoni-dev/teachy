@@ -1,4 +1,4 @@
-const { app, BrowserWindow, screen, ipcMain, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, screen, ipcMain, Tray, Menu, nativeImage, clipboard } = require('electron');
 const path = require('node:path');
 const { SidecarBridge } = require('./sidecar.cjs');
 
@@ -218,6 +218,16 @@ ipcMain.on('notch:set-interactive', (_event, isInteractive) => {
 ipcMain.handle('sidecar:send', async (_event, command, args) => {
   return sidecar.send(command, args ?? {});
 });
+
+/**
+ * Clipboard read for key setup.
+ *
+ * Ctrl+V into a frameless, non-activating window is genuinely awkward — the
+ * window does not take focus the way a normal one does — so the flow offers the
+ * key it just told the learner to copy. Read-only, and only when the renderer
+ * asks: nothing here lets it poll the clipboard in the background.
+ */
+ipcMain.handle('clipboard:read-text', () => clipboard.readText());
 
 /**
  * Manual notch dragging. `-webkit-app-region: drag` would be simpler but it

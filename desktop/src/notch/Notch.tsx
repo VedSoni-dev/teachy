@@ -8,6 +8,8 @@ import { ProgressTab } from '../tabs/ProgressTab';
 import { PortfolioTab } from '../tabs/PortfolioTab';
 import { SkillsTab } from '../tabs/SkillsTab';
 import { SettingsTab } from '../tabs/SettingsTab';
+import { KeySetup } from '../onboarding/KeySetup';
+import { useTeachyConfig } from '../state/useTeachyConfig';
 import './notch.css';
 
 export type NotchTab = 'learn' | 'progress' | 'portfolio' | 'skills' | 'settings';
@@ -28,6 +30,19 @@ export function Notch() {
 
   const { session, startCourse, exitCourse, requestHint, requestVerification, requestDoItForMe,
     handleVoiceTeachBackAnswer } = useCourseSession();
+
+  const { config, saveApiKey } = useTeachyConfig();
+
+  /**
+   * Key setup takes over the panel until there is a working key, because there
+   * is nothing else the app can honestly do without one — every tab would just
+   * lead to "add your API key". Dismissing it (`I'll do this later`) lets them
+   * look around; Settings reopens it.
+   */
+  const [hasDismissedKeySetup, setHasDismissedKeySetup] = useState(false);
+  const [isKeySetupRequested, setIsKeySetupRequested] = useState(false);
+  const needsKey = config !== null && !config.hasApiKey;
+  const isKeySetupVisible = !session && (isKeySetupRequested || (needsKey && !hasDismissedKeySetup));
 
   // The always-on voice loop lives here, in the single long-lived window.
   // When a course teach-back is pending, voice answers flow through the callback.
@@ -58,7 +73,12 @@ export function Notch() {
 
   function handlePointerLeave() {
     // A live course must stay open — collapsing would hide the lesson controls.
-    if (isCourseActive) {
+    //
+    // Key setup pins it open for a sharper reason: the flow deliberately sends
+    // the learner to their browser to sign up and copy a key. If the notch
+    // collapsed while they were away it would unmount mid-flow, and they would
+    // come back holding a key with the panel gone and their progress reset.
+    if (isCourseActive || isKeySetupVisible) {
       return;
     }
     // Small grace period so crossing a gap between controls doesn't collapse it.
@@ -84,6 +104,18 @@ export function Notch() {
     });
     return () => unsubscribe?.();
   }, []);
+
+  /**
+   * Open on a first run that has no key. Otherwise Teachy's whole first
+   * impression is a small unexplained bar, and setup is something you have to
+   * find by hovering it.
+   */
+  useEffect(() => {
+    if (isKeySetupVisible) {
+      reportInteractive(true);
+      setIsExpanded(true);
+    }
+  }, [isKeySetupVisible]);
 
   /**
    * Drag the collapsed notch to reposition it. Pointer capture keeps the moves
@@ -193,13 +225,27 @@ export function Notch() {
                   onIDidIt={() => void requestVerification()}
                   onExit={exitCourse}
                 />
+              ) : isKeySetupVisible ? (
+                <KeySetup
+                  hasExistingKey={config?.hasApiKey ?? false}
+                  onSaveKey={saveApiKey}
+                  onClose={() => {
+                    setIsKeySetupRequested(false);
+                    setHasDismissedKeySetup(true);
+                  }}
+                />
               ) : (
                 <>
                   {selectedTab === 'learn' && <LearnTab onStartCourse={startCourse} />}
                   {selectedTab === 'progress' && <ProgressTab />}
                   {selectedTab === 'portfolio' && <PortfolioTab />}
                   {selectedTab === 'skills' && <SkillsTab />}
-                  {selectedTab === 'settings' && <SettingsTab onAskQuestion={handleTypedQuestion} />}
+                  {selectedTab === 'settings' && (
+                    <SettingsTab
+                      onAskQuestion={handleTypedQuestion}
+                      onOpenKeySetup={() => setIsKeySetupRequested(true)}
+                    />
+                  )}
                 </>
               )}
             </div>

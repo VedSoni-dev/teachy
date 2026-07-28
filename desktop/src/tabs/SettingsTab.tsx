@@ -20,21 +20,13 @@ const MODEL_OPTIONS = [
 
 interface SettingsTabProps {
   onAskQuestion?: (question: string) => void;
+  /** Opens the guided key flow — signup, key creation, validated save. */
+  onOpenKeySetup?: () => void;
 }
 
-export function SettingsTab({ onAskQuestion }: SettingsTabProps) {
-  const { config, isSaving, saveApiKey, updateConfig } = useTeachyConfig();
-  const [apiKeyDraft, setApiKeyDraft] = useState('');
+export function SettingsTab({ onAskQuestion, onOpenKeySetup }: SettingsTabProps) {
+  const { config, updateConfig } = useTeachyConfig();
   const [questionDraft, setQuestionDraft] = useState('');
-
-  async function handleSaveApiKey() {
-    const trimmedKey = apiKeyDraft.trim();
-    if (trimmedKey.length === 0) {
-      return;
-    }
-    await saveApiKey(trimmedKey);
-    setApiKeyDraft('');
-  }
 
   function handleAskQuestion() {
     const trimmedQuestion = questionDraft.trim();
@@ -90,31 +82,14 @@ export function SettingsTab({ onAskQuestion }: SettingsTabProps) {
       <section>
         <div className="section-label">AI Brain</div>
         <div className="field-row">
-          <input
-            className="text-field"
-            type="password"
-            placeholder="OpenRouter API key"
-            value={apiKeyDraft}
-            onChange={(changeEvent) => setApiKeyDraft(changeEvent.target.value)}
-            onKeyDown={(keyEvent) => {
-              if (keyEvent.key === 'Enter') {
-                void handleSaveApiKey();
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => void handleSaveApiKey()}
-            disabled={isSaving}
-          >
-            {isSaving ? 'Saving…' : 'Save key'}
+          <button type="button" className="primary-button" onClick={() => onOpenKeySetup?.()}>
+            {config?.hasApiKey ? 'Replace my key' : 'Set up my key'}
           </button>
         </div>
         <p className="field-hint">
           {config?.hasApiKey
-            ? 'Key saved (encrypted with Windows DPAPI). Paste a new one to rotate it.'
-            : 'Paste your free OpenRouter API key (openrouter.ai) — stored encrypted on this machine.'}
+            ? 'Your OpenRouter key is saved, encrypted with Windows DPAPI. Replacing it walks you through checking the new one before it is saved.'
+            : "Teachy will open OpenRouter, show you how to make a free key, and check it works before saving it."}
         </p>
 
         <div className="section-label" style={{ marginTop: 12 }}>Model</div>
@@ -181,7 +156,7 @@ export function SettingsTab({ onAskQuestion }: SettingsTabProps) {
       </section>
 
       <div className="settings-footer">
-        <span>{config?.hasApiKey ? `● ready · ${currentModelLabel}` : '● needs API key'}</span>
+        <span>{config?.hasApiKey ? `● ready · ${currentModelLabel}` : '● no key yet'}</span>
         <button
           type="button"
           className="quiet-button"

@@ -28,6 +28,16 @@ contextBridge.exposeInMainWorld('teachy', {
     return () => ipcRenderer.removeListener(`sidecar:${eventName}`, ipcListener);
   },
 
+  /**
+   * Reads the clipboard as text. Used by key setup to offer the key the learner
+   * was just told to copy, so they never have to hunt for the paste shortcut in
+   * a frameless always-on-top window. Pull-only and on an explicit step — the
+   * renderer cannot watch the clipboard.
+   */
+  readClipboardText() {
+    return ipcRenderer.invoke('clipboard:read-text');
+  },
+
   /** Notch window placement — manual drag and preset positioning. */
   notch: {
     moveBy(dx, dy) {

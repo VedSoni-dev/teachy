@@ -41,6 +41,8 @@ declare global {
       invoke<TResult = unknown>(command: string, args?: Record<string, unknown>): Promise<TResult>;
       /** Subscribes to a sidecar event; returns an unsubscribe function. */
       on(eventName: TeachyEventName, listener: (payload: unknown) => void): () => void;
+      /** Reads the clipboard as text — used by key setup, on an explicit step. */
+      readClipboardText(): Promise<string>;
       /** Notch window placement — manual drag and preset positioning. */
       notch: {
         moveBy(dx: number, dy: number): void;
