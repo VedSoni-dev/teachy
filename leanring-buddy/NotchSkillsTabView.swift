@@ -30,6 +30,8 @@ struct NotchSkillsTabView: View {
                     retentionReviewCard(reviews: dueReviews)
                 }
 
+                retentionStrengthSection(learnerModel: learnerModel)
+
                 if !atRiskSkills.isEmpty {
                     atRiskSkillsCard(skills: atRiskSkills)
                 }
@@ -183,6 +185,78 @@ struct NotchSkillsTabView: View {
         }
         .padding(14)
         .glassCard(tint: DS.Colors.skillsAccent)
+    }
+
+    /// Per-skill forgetting-curve strength, sorted weakest first. Uses
+    /// `SpacedRepetitionEngine.retentionProbability` (SM-2 forgetting curve
+    /// already computed from `lastPracticedAt` + `confidenceScore` — no new
+    /// storage, just a read of existing state at "now").
+    private func retentionStrengthSection(learnerModel: LearnerModel) -> some View {
+        let now = Date()
+        let weakestSkillsFirst = learnerModel.skillNodes
+            .filter { $0.proficiencyLevel > .novice }
+            .map { skill in (skill: skill, retention: SpacedRepetitionEngine.retentionProbability(for: skill, at: now)) }
+            .sorted { $0.retention < $1.retention }
+            .prefix(6)
+
+        guard !weakestSkillsFirst.isEmpty else { return AnyView(EmptyView()) }
+
+        return AnyView(
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: "waveform.path.ecg")
+                        .font(.system(size: 12))
+                        .foregroundColor(DS.Colors.skillsAccent)
+                    Text("Retention Strength")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                    Spacer()
+                    Text("weakest first")
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.textTertiary)
+                }
+
+                ForEach(Array(weakestSkillsFirst), id: \.skill.id) { entry in
+                    retentionStrengthRow(skill: entry.skill, retention: entry.retention)
+                }
+            }
+            .padding(14)
+            .glassCard(tint: DS.Colors.skillsAccent)
+        )
+    }
+
+    private func retentionStrengthRow(skill: LearnerSkillNode, retention: Double) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(skill.skillName)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+
+                Spacer()
+
+                if skill.isDueForReview {
+                    Text("review now")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(DS.Colors.warning)
+                }
+
+                Text("\(Int(retention * 100))%")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                        .frame(height: 3)
+                    Capsule()
+                        .fill(DS.Colors.skillsAccent)
+                        .frame(width: geometry.size.width * retention, height: 3)
+                }
+            }
+            .frame(height: 3)
+        }
     }
 
     private func atRiskSkillsCard(skills: [LearnerSkillNode]) -> some View {

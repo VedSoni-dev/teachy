@@ -22,6 +22,12 @@ final class LessonPlayer: ObservableObject {
     private weak var host: CompanionManager?
     private var playerTask: Task<Void, Never>?
     private var yourTurnContinuation: CheckedContinuation<YourTurnAction, Never>?
+    /// A HUD tap (Hint / Do it / I did it) that arrived while the coach was
+    /// still speaking or thinking — the your-turn wait isn't armed yet, so the
+    /// tap is buffered here (and the speech cut short) instead of being
+    /// silently dropped. Consumed the moment the lesson loop reaches its
+    /// your-turn wait.
+    private var pendingYourTurnAction: YourTurnAction?
     private var hintTimeoutTask: Task<Void, Never>?
     private var didOpenStartURL = false
     private var didPlayCourseIntroVideo = false
@@ -118,6 +124,16 @@ final class LessonPlayer: ObservableObject {
     func handleTextQuestion(_ text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        // Match voice routing — typed "next step" / "i did it" must advance, not
+        // get answered as a normal question (that left learners stuck on interview goals).
+        if ClickyCourseVoiceCommands.isManualAdvanceRequest(transcript: trimmed) {
+            resumeYourTurn(.confirm)
+            return
+        }
+        if Self.isDoItForMeRequest(transcript: trimmed) {
+            resumeYourTurn(.doItForMe)
+            return
+        }
         await answerUserQuestion(trimmed)
     }
 
@@ -426,11 +442,23 @@ final class LessonPlayer: ObservableObject {
                 host.setCourseVoiceStateProcessing()
 
                 do {
+                    // Conversational goals (interview / prompt-writing) have nothing on
+                    // screen to match — skip vision and advance on confirm.
+                    let visionDescription: String?
+                    if goal.advancesOnUserConfirmWithoutVision {
+                        visionDescription = nil
+                    } else {
+                        visionDescription = goal.doneWhen ?? goal.goal
+                    }
+                    // write-the-prompt must NOT soft-pass on a failed vision check —
+                    // soft-pass would skip opening ChatGPT. Other goals keep trust-the-user advance.
+                    let allowSoftUserAdvance =
+                        goal.advancesOnUserConfirmWithoutVision || goal.id != "write-the-prompt"
                     let structuredResult = await CourseVerifier.verifyStructured(
                         criteria: CourseSuccessCriteria(
-                            visionDescription: goal.doneWhen ?? goal.goal,
+                            visionDescription: visionDescription,
                             urlContains: nil,
-                            requireUserAdvance: true
+                            requireUserAdvance: allowSoftUserAdvance
                         ),
                         claudeAPI: host.claudeAPI,
                         treatAsUserAdvance: true
@@ -465,8 +493,35 @@ final class LessonPlayer: ObservableObject {
                         try? await Task.sleep(for: .milliseconds(900))
                         return true
 
+                    case .partial, .offTrack where goal.id == "write-the-prompt":
+                        // Interview finished but ChatGPT isn't open yet — don't vision-loop.
+                        setPhase(.coaching)
+                        host.setCourseVoiceStateResponding()
+                        try? await host.speechSynthesizer.speakText(
+                            "got it — opening chatgpt and pasting your prompt now."
+                        )
+                        let openChatGPTAsk = """
+                        They said they're ready (next step / i did it), but ChatGPT does not yet \
+                        show a locked site plan on screen.
+                        You already have their context from this session. RIGHT NOW in this turn:
+                        1) Open https://chatgpt.com with open_browser_tab (do not make them hunt the link)
+                        2) Paste the perfect planning prompt you already wrote from their answers \
+                        (or rewrite it quickly from memory — include purpose, audience, pages, tone)
+                        3) Point at send / the composer so they see it go
+                        Do NOT ask more intake questions. Do NOT wait. Open and paste.
+                        """
+                        _ = await runCoachAsk(
+                            session: session,
+                            ask: openChatGPTAsk,
+                            host: host,
+                            allowActions: true,
+                            applyAutonomyTightening: false
+                        )
+                        didOfferHint = true
+
                     case .partial:
                         if goal.artifactDelta != nil, session.course.artifact != nil {
+
                             coursesManager.appendArtifactSnapshotFromVerifyResult(
                                 goalID: goal.id,
                                 result: structuredResult
@@ -1091,16 +1146,29 @@ final class LessonPlayer: ObservableObject {
     // MARK: - Your-turn waiting
 
     private func waitForYourTurnAction() async -> YourTurnAction {
-        await withCheckedContinuation { continuation in
+        // A tap buffered while the coach was still talking applies immediately —
+        // this is what makes button interruptions feel instant instead of lost.
+        if let bufferedAction = pendingYourTurnAction {
+            pendingYourTurnAction = nil
+            return bufferedAction
+        }
+        return await withCheckedContinuation { continuation in
             yourTurnContinuation?.resume(returning: .cancel)
             yourTurnContinuation = continuation
         }
     }
 
     private func resumeYourTurn(_ action: YourTurnAction) {
-        guard let continuation = yourTurnContinuation else { return }
-        yourTurnContinuation = nil
-        continuation.resume(returning: action)
+        if let continuation = yourTurnContinuation {
+            yourTurnContinuation = nil
+            continuation.resume(returning: action)
+            return
+        }
+        // The your-turn wait isn't armed — the coach is mid-speech or mid-think.
+        // Buffer the tap and cut the speech short so the action lands the moment
+        // the lesson loop reaches its wait, instead of talking over the user.
+        pendingYourTurnAction = action
+        host?.speechSynthesizer.stopPlayback()
     }
 
     private func scheduleHintTimeout(alreadyOffered: Bool) {
@@ -1109,7 +1177,11 @@ final class LessonPlayer: ObservableObject {
         hintTimeoutTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(22))
             guard !Task.isCancelled else { return }
-            self?.resumeYourTurn(.hint)
+            // Auto-hint only fires while the your-turn wait is actually armed —
+            // it must never buffer like a user tap (that would cut off whatever
+            // the coach is saying for a hint nobody asked for).
+            guard let self, self.yourTurnContinuation != nil else { return }
+            self.resumeYourTurn(.hint)
         }
     }
 
@@ -1122,6 +1194,9 @@ final class LessonPlayer: ObservableObject {
         playerTask?.cancel()
         playerTask = nil
         cancelHintTimeout()
+        // A tap buffered against a now-dead lesson must not leak into the next
+        // course's first your-turn wait.
+        pendingYourTurnAction = nil
         if let placementAnswerContinuation {
             self.placementAnswerContinuation = nil
             placementAnswerContinuation.resume(returning: "I'm brand new — explain everything")

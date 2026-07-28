@@ -240,7 +240,7 @@ struct NotchCoursesTabView: View {
                     )
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Continue learning")
+                    Text(resumeIndex > 0 ? "Continue learning" : "Start here")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundColor(DS.Colors.learnAccent)
                     Text(course.title)
@@ -901,8 +901,16 @@ struct NotchCoursesTabView: View {
     }
 
     private var coursesCatalogList: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ForEach(companionManager.coursesManager.catalogSections) { section in
+        // Avoid twinning the continue card with the same course in the list below.
+        let continueCourseID = companionManager.coursesManager.continueCourse?.id
+        let catalogSections = companionManager.coursesManager.catalogSections.compactMap { section -> CourseCatalogSection? in
+            let courses = section.courses.filter { $0.id != continueCourseID }
+            guard !courses.isEmpty else { return nil }
+            return CourseCatalogSection(id: section.id, title: section.title, courses: courses)
+        }
+
+        return VStack(alignment: .leading, spacing: 16) {
+            ForEach(catalogSections) { section in
                 VStack(alignment: .leading, spacing: 8) {
                     if let sectionTitle = section.title {
                         Text(sectionTitle)
@@ -1022,6 +1030,19 @@ struct NotchCoursesTabView: View {
                                     .padding(.vertical, 2)
                                     .background(
                                         Capsule().fill(DS.Colors.learnAccent.opacity(0.16))
+                                    )
+                            }
+
+                            if companionManager.coursesManager.recentlyAutoUpdatedCourseIDs.contains(course.id) {
+                                // Silent auto-update just refreshed this course —
+                                // the chip clears the next time it's started.
+                                Text("updated")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(DS.Colors.success)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule().fill(DS.Colors.success.opacity(0.16))
                                     )
                             }
 

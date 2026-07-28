@@ -108,12 +108,15 @@ struct LearnerSkillNode: Codable, Identifiable, Equatable {
     }
 
     mutating func updateProficiency(newLevel: ProficiencyLevel, reason: String) {
-        let oldLevel = proficiencyLevel
+        // Verified evidence only ever levels UP — a weaker verifier (e.g. a
+        // vision-only pass suggesting beginner) re-confirming a skill must not
+        // demote a level earned through a richer assessment (teach-back,
+        // transfer test). Struggle signals flow through struggleNotes and
+        // confidence decay instead of level demotion.
+        guard newLevel > proficiencyLevel else { return }
         proficiencyLevel = newLevel
-        if newLevel > oldLevel {
-            successNotes.append(reason)
-            successNotes = Array(successNotes.suffix(8))
-        }
+        successNotes.append(reason)
+        successNotes = Array(successNotes.suffix(8))
     }
 
     mutating func addStruggle(note: String) {

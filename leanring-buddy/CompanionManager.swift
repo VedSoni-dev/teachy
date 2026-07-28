@@ -242,6 +242,7 @@ final class CompanionManager: ObservableObject {
 
     private var shortcutTransitionCancellable: AnyCancellable?
     private var voiceStateCancellable: AnyCancellable?
+    private var dictationErrorCancellable: AnyCancellable?
     private var audioPowerCancellable: AnyCancellable?
     private var composioConnectionCancellable: AnyCancellable?
     private var coursesManagerCancellable: AnyCancellable?
@@ -724,6 +725,18 @@ final class CompanionManager: ObservableObject {
     }
 
     private func bindVoiceStateObservation() {
+        // Voice-input failures previously set `lastErrorMessage` and nothing
+        // anywhere read it — push-to-talk could fail in complete silence. Speak
+        // each new error once so the user knows what happened and what to do.
+        dictationErrorCancellable = buddyDictationManager.$lastErrorMessage
+            .receive(on: DispatchQueue.main)
+            .compactMap { $0 }
+            .removeDuplicates()
+            .sink { [weak self] dictationErrorMessage in
+                guard let self else { return }
+                self.speakErrorMessage(dictationErrorMessage)
+            }
+
         voiceStateCancellable = buddyDictationManager.$isRecordingFromKeyboardShortcut
             .combineLatest(
                 buddyDictationManager.$isFinalizingTranscript,
@@ -2814,41 +2827,70 @@ final class CompanionManager: ObservableObject {
         "i can't see your screen right now. open system settings, screen recording, remove teachy and add it back, then restart the app."
     }
 
+    /// Spoken error lines a NON-developer can act on. Key users and proxy/dev
+    /// users get different guidance — "run npm run local" means nothing to
+    /// someone who downloaded a DMG, and "check your internet" is wrong advice
+    /// for a developer whose local proxy just isn't running.
     private func companionAPIErrorUtterance(for error: Error) -> String {
         let errorDescription = error.localizedDescription.lowercased()
+        let userHasOwnKey = TeachyAPIKeyStore.isConfigured
 
         if let urlError = error as? URLError {
             switch urlError.code {
             case .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet:
-                return "can't reach the backend — run npm run local in the worker folder, then try again."
+                return userHasOwnKey
+                    ? "i can't reach the internet right now — check your connection and try again."
+                    : "i need an AI backend — paste your free OpenRouter key in the Home tab, then try again."
+            case .timedOut:
+                return "that took too long — the AI service might be slow right now. try again in a moment."
             default:
                 break
             }
         }
 
         if errorDescription.contains("image input") || errorDescription.contains("no endpoints found") {
-            return "Sorry, that model can't see your screen. In the Teachy panel, pick Gemini 2.5 Flash, then restart the app."
-        }
-
-        if errorDescription.contains("provider returned error") && errorDescription.contains("429") {
-            return "Sorry, the AI model is rate limited right now. Wait a minute, or switch to Gemini 2.5 Flash Lite in the Teachy panel."
+            return "sorry, that model can't see your screen. pick a different model in the Home tab, then try again."
         }
 
         if errorDescription.contains("429") || errorDescription.contains("rate-limit") || errorDescription.contains("rate limit") {
-            return "Sorry, the free AI model is rate limited right now. Wait a minute and try again, or switch the agent model in the Teachy panel."
+            return userHasOwnKey
+                ? "the AI model is rate limited right now. wait a minute and try again, or switch models in the Home tab."
+                : "the free AI model is rate limited right now. wait a minute and try again — or add your own OpenRouter key in the Home tab to skip the free-tier limits."
         }
 
-        if errorDescription.contains("401") || errorDescription.contains("403") || errorDescription.contains("invalid api key") {
-            return "Sorry, the Open Router API key looks invalid. Check worker slash env and restart the proxy."
+        if errorDescription.contains("401") || errorDescription.contains("403") || errorDescription.contains("invalid api key") || errorDescription.contains("unauthorized") {
+            return userHasOwnKey
+                ? "your OpenRouter key isn't working — it may have been rotated or run out of credits. check it in the Home tab under AI Brain."
+                : "the AI backend rejected the request. paste a fresh OpenRouter key in the Home tab under AI Brain."
         }
 
-        return "Sorry, something went wrong talking to the AI model. Check the Xcode console for details."
+        if errorDescription.contains("insufficient") || errorDescription.contains("quota") || errorDescription.contains("credits") {
+            return "your OpenRouter account looks out of credits. top it up at openrouter.ai, or switch to a free model in the Home tab."
+        }
+
+        return "sorry, something went wrong talking to the AI. try again — and if it keeps happening, try a different model in the Home tab."
     }
 
     private func speakErrorMessage(_ message: String) {
-        let synthesizer = NSSpeechSynthesizer()
-        synthesizer.startSpeaking(message)
-        voiceState = .responding
+        // Route through the shared synthesizer (the old throwaway
+        // NSSpeechSynthesizer deallocated mid-sentence, cutting errors off) and
+        // ALWAYS land voiceState back at idle — the old version left the
+        // responding spinner stuck forever after any error.
+        speechSynthesizer.stopPlayback()
+        Task {
+            voiceState = .responding
+            do {
+                try await speechSynthesizer.speakText(message)
+                voiceState = .idle
+                scheduleTransientHideIfNeeded()
+            } catch is CancellationError {
+                // Superseded by a newer interaction — it owns voiceState now.
+            } catch {
+                print("⚠️ Error-message TTS failed: \(error)")
+                voiceState = .idle
+                scheduleTransientHideIfNeeded()
+            }
+        }
     }
 
     private func applyVoiceKeytermsForActiveCourse() {

@@ -236,6 +236,9 @@ final class CoursesManager: ObservableObject {
     func startCourse(courseID: String) -> ClickyCourseSession? {
         guard activeSession == nil, let course = course(withID: courseID) else { return nil }
 
+        // Starting the course is the moment the "updated" chip has done its job.
+        recentlyAutoUpdatedCourseIDs.remove(courseID)
+
         let startIndex = resumeStepIndex(for: course)
         let session = ClickyCourseSession(
             course: course,
@@ -673,6 +676,11 @@ final class CoursesManager: ObservableObject {
         return course
     }
 
+    /// Course IDs freshly swapped by the silent auto-update — drives a small
+    /// "updated" chip on the catalog row so updates feel alive instead of
+    /// invisible. Cleared per-course when that course is next started.
+    @Published private(set) var recentlyAutoUpdatedCourseIDs: Set<String> = []
+
     /// Silently keeps installed courses current: re-fetches each installed
     /// course's remembered source URL, and when the hosted JSON has changed,
     /// swaps the local copy atomically. B2C continuous updates — no version
@@ -706,6 +714,7 @@ final class CoursesManager: ObservableObject {
                 ensureCoursesDirectoryExists()
                 try remoteData.write(to: localFileURL, options: .atomic)
                 updatedCourseTitles.append(updatedCourse.title)
+                recentlyAutoUpdatedCourseIDs.insert(courseID)
                 print("📚 Auto-updated installed course: \(courseID)")
             } catch {
                 // Offline or a transient fetch/decode problem — keep the local

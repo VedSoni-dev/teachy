@@ -18,6 +18,21 @@ final class LocalSpeechSynthesizer: NSObject {
 
     private(set) var isPlaying = false
 
+    /// Monotonically increasing interruption token — bumped by every
+    /// `stopPlayback()` and every new `speakText`. An interrupted speech turn
+    /// re-checks its captured generation after every await so it can never
+    /// resurrect itself (the old bug: interrupting during the ElevenLabs fetch
+    /// made the cancelled fetch fall through to the LOCAL voice, which started
+    /// speaking the stale line over the new turn).
+    private var playbackGeneration = 0
+    /// The AVSpeech utterance currently on stage — delegate callbacks for any
+    /// other (stopped/stale) utterance are ignored so they can't stomp the
+    /// `isPlaying` state of a newer speech turn.
+    private var activeAVSpeechUtterance: AVSpeechUtterance?
+    /// Generation snapshot for the legacy NSSpeech path (single shared
+    /// synthesizer instance, so utterance-identity comparison isn't possible).
+    private var legacySpeechGeneration = -1
+
     /// Slightly slower than default — reads more like a person sitting next to you.
     private static let localSpeechRate: Float = 0.47
     private static let localSpeechPitch: Float = 1.03
@@ -37,37 +52,54 @@ final class LocalSpeechSynthesizer: NSObject {
         guard !cleaned.isEmpty else { return }
 
         stopPlayback()
+        playbackGeneration += 1
+        let speechGeneration = playbackGeneration
         isPlaying = true
+
+        // Interrupted (stopPlayback bumped the generation) or cancelled while
+        // this turn was awaiting something — bail WITHOUT falling through to a
+        // slower backend, and never touch state a newer turn now owns.
+        func wasInterrupted() -> Bool {
+            speechGeneration != playbackGeneration || Task.isCancelled
+        }
 
         // 1a) User's own ElevenLabs key, called directly (bypasses the Teachy proxy
         // entirely so a user's voice usage never lands on the developer's bill)
         if let audioData = await Self.fetchDirectElevenLabsAudio(text: cleaned) {
+            if wasInterrupted() { throw CancellationError() }
             do {
-                try await playAudioData(audioData)
-                isPlaying = false
+                try await playAudioData(audioData, speechGeneration: speechGeneration)
                 return
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 print("⚠️ Direct ElevenLabs playback failed, falling back: \(error)")
             }
         }
+        if wasInterrupted() { throw CancellationError() }
 
         // 1b) Cloud neural TTS via Teachy proxy (ElevenLabs preferred, OpenAI fallback on proxy)
         if let audioData = await Self.fetchCloudTTSAudio(text: cleaned) {
+            if wasInterrupted() { throw CancellationError() }
             do {
-                try await playAudioData(audioData)
-                isPlaying = false
+                try await playAudioData(audioData, speechGeneration: speechGeneration)
                 return
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 print("⚠️ Cloud TTS playback failed, falling back to local: \(error)")
             }
         }
+        if wasInterrupted() { throw CancellationError() }
 
         // 2) macOS neural / enhanced voices
-        if await speakWithAVSpeech(cleaned) {
+        if await speakWithAVSpeech(cleaned, speechGeneration: speechGeneration) {
             return
         }
+        if wasInterrupted() { throw CancellationError() }
 
         // 3) Legacy NSSpeech last resort
+        legacySpeechGeneration = speechGeneration
         let success = legacySynthesizer.startSpeaking(cleaned)
         if !success {
             isPlaying = false
@@ -78,15 +110,23 @@ final class LocalSpeechSynthesizer: NSObject {
             )
         }
 
-        while isPlaying {
-            try Task.checkCancellation()
-            try await Task.sleep(for: .milliseconds(50))
+        while isPlaying, speechGeneration == playbackGeneration {
+            if Task.isCancelled {
+                legacySynthesizer.stopSpeaking()
+                isPlaying = false
+                throw CancellationError()
+            }
+            try? await Task.sleep(for: .milliseconds(50))
         }
     }
 
     func stopPlayback() {
+        // Invalidate any in-flight speakText turn FIRST so its post-await
+        // checks see the interruption before any audio object is touched.
+        playbackGeneration += 1
         audioPlayer?.stop()
         audioPlayer = nil
+        activeAVSpeechUtterance = nil
         avSynthesizer.stopSpeaking(at: .immediate)
         legacySynthesizer.stopSpeaking()
         isPlaying = false
@@ -191,7 +231,7 @@ final class LocalSpeechSynthesizer: NSObject {
         return false
     }
 
-    private func playAudioData(_ data: Data) async throws {
+    private func playAudioData(_ data: Data, speechGeneration: Int) async throws {
         let player = try AVAudioPlayer(data: data)
         player.delegate = self
         player.prepareToPlay()
@@ -208,16 +248,32 @@ final class LocalSpeechSynthesizer: NSObject {
             )
         }
 
-        while isPlaying {
-            try Task.checkCancellation()
-            try await Task.sleep(for: .milliseconds(40))
+        while isPlaying, speechGeneration == playbackGeneration {
+            if Task.isCancelled {
+                // Stop OUR audio on cancellation — checkCancellation alone would
+                // throw out of here while the player kept talking.
+                player.stop()
+                if audioPlayer === player { audioPlayer = nil }
+                isPlaying = false
+                throw CancellationError()
+            }
+            try? await Task.sleep(for: .milliseconds(40))
         }
+        // Superseded mid-play by a newer turn: the newer turn owns all state
+        // now (stopPlayback already silenced this player) — just leave.
+        if speechGeneration != playbackGeneration {
+            throw CancellationError()
+        }
+        isPlaying = false
     }
 
     // MARK: - Local neural speech
 
-    private func speakWithAVSpeech(_ text: String) async -> Bool {
+    private func speakWithAVSpeech(_ text: String, speechGeneration: Int) async -> Bool {
         guard let voice = Self.preferredAVVoice() else { return false }
+        // Interrupted before this fallback even started — report handled so
+        // the caller doesn't cascade into the legacy voice with stale text.
+        guard speechGeneration == playbackGeneration, !Task.isCancelled else { return true }
 
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voice
@@ -228,9 +284,16 @@ final class LocalSpeechSynthesizer: NSObject {
         utterance.volume = 1.0
 
         isPlaying = true
+        activeAVSpeechUtterance = utterance
         avSynthesizer.speak(utterance)
 
-        while isPlaying {
+        while isPlaying, speechGeneration == playbackGeneration {
+            if Task.isCancelled {
+                avSynthesizer.stopSpeaking(at: .immediate)
+                if activeAVSpeechUtterance === utterance { activeAVSpeechUtterance = nil }
+                isPlaying = false
+                break
+            }
             try? await Task.sleep(for: .milliseconds(40))
         }
         return true
@@ -304,9 +367,17 @@ final class LocalSpeechSynthesizer: NSObject {
 
 // MARK: - Delegates
 
+// All delegate callbacks land asynchronously on the main actor, so a callback
+// for STOPPED/stale audio can arrive after a newer speech turn already started.
+// Every handler therefore verifies it belongs to the CURRENT audio (player
+// identity / utterance identity / legacy generation) before clearing state —
+// otherwise an old callback would mark the new speech as finished while it's
+// still talking (overlap + early-idle glitches).
+
 extension LocalSpeechSynthesizer: NSSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ sender: NSSpeechSynthesizer, didFinishSpeaking finishedSpeaking: Bool) {
         Task { @MainActor in
+            guard self.legacySpeechGeneration == self.playbackGeneration else { return }
             self.isPlaying = false
         }
     }
@@ -315,12 +386,16 @@ extension LocalSpeechSynthesizer: NSSpeechSynthesizerDelegate {
 extension LocalSpeechSynthesizer: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            guard utterance === self.activeAVSpeechUtterance else { return }
+            self.activeAVSpeechUtterance = nil
             self.isPlaying = false
         }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Task { @MainActor in
+            guard utterance === self.activeAVSpeechUtterance else { return }
+            self.activeAVSpeechUtterance = nil
             self.isPlaying = false
         }
     }
@@ -329,6 +404,7 @@ extension LocalSpeechSynthesizer: AVSpeechSynthesizerDelegate {
 extension LocalSpeechSynthesizer: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
+            guard player === self.audioPlayer else { return }
             self.audioPlayer = nil
             self.isPlaying = false
         }
@@ -336,6 +412,7 @@ extension LocalSpeechSynthesizer: AVAudioPlayerDelegate {
 
     nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
         Task { @MainActor in
+            guard player === self.audioPlayer else { return }
             self.audioPlayer = nil
             self.isPlaying = false
             if let error {

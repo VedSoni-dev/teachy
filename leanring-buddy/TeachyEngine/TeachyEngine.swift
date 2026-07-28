@@ -620,9 +620,27 @@ final class TeachyEngine: ObservableObject {
         return skills.map { skillID in
             ExtendedVerificationResult.SkillUpdate(
                 skillID: skillID,
-                newLevel: .beginner,
+                newLevel: progressedProficiencyLevel(forSkillID: skillID),
                 reason: "Goal completed"
             )
+        }
+    }
+
+    /// Evidence-based leveling — the fix for the "always beginner" cap that
+    /// kept the autonomy-transfer mechanic from ever firing. Each verified
+    /// goal completion is one rep on the skill; cumulative reps map to a
+    /// level: 1 → beginner, 3 → competent, 6 → proficient. Rep-based
+    /// progression deliberately caps at proficient — expert stays reserved
+    /// for the richer assessments (transfer tests, code-quality) that prove
+    /// depth rather than repetition. `reviewCount` is read BEFORE
+    /// `noteSkillVerified` increments it, so the Nth completion lands the level.
+    private func progressedProficiencyLevel(forSkillID skillID: String) -> ProficiencyLevel {
+        let completedVerificationsIncludingThisOne =
+            (state.learnerModel.skillNode(byID: skillID)?.reviewCount ?? 0) + 1
+        switch completedVerificationsIncludingThisOne {
+        case ..<3: return .beginner
+        case 3..<6: return .competent
+        default: return .proficient
         }
     }
 
