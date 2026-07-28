@@ -10,6 +10,11 @@
     "start": "electron .",
     "dev:electron": "vite build && electron .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "app:stop": "node scripts/stopRunningApp.mjs",
+    "sidecar:build": "npm run app:stop && dotnet build ../windows/Teachy.Sidecar/Teachy.Sidecar.csproj -c Release --nologo",
+    "verify": "npm run sidecar:build && npm run typecheck && npm run test && npm run build",
     "dist:win": "vite build && electron-builder --win"
   },
   "devDependencies": {
@@ -19,7 +24,8 @@
     "electron": "^33.2.0",
     "electron-builder": "^26.0.0",
     "typescript": "^5.7.2",
-    "vite": "^6.0.3"
+    "vite": "^6.0.3",
+    "vitest": "^3.2.7"
   },
   "dependencies": {
     "@fontsource/inter": "^5.1.0",
@@ -29,17 +35,27 @@
   "build": {
     "appId": "ai.teachy.desktop",
     "productName": "Teachy",
-    "directories": { "output": "dist-installers" },
-    "files": ["dist/**/*", "electron/**/*", "package.json"],
+    "directories": {
+      "output": "dist-installers"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
     "extraResources": [
       {
         "from": "../windows/Teachy.Sidecar/bin/Release/net8.0-windows",
         "to": "sidecar",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "artifactName": "Teachy-Setup-${version}.${ext}"
     },
     "nsis": {

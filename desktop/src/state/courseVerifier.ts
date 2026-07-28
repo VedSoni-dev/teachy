@@ -5,8 +5,19 @@
  */
 
 import { postOpenRouterChat } from './openRouterClient';
+import { describeFailureForLearner } from './failureMessages';
 
-export type CourseVerificationStatus = 'pass' | 'partial' | 'offTrack';
+/**
+ * `checkFailed` is deliberately NOT one of the model's three answers — the model
+ * only ever returns pass/partial/offTrack. It marks "we never got an answer":
+ * the request 500'd, the key was rejected, the network dropped.
+ *
+ * Before it existed, those cases returned `offTrack`, so an OpenRouter outage was
+ * indistinguishable from the learner doing the step wrong: it counted against
+ * their failure streak and told them "Not quite there yet" for something that
+ * was never their fault.
+ */
+export type CourseVerificationStatus = 'pass' | 'partial' | 'offTrack' | 'checkFailed';
 
 export interface CourseVerificationResult {
   status: CourseVerificationStatus;
@@ -67,12 +78,11 @@ What is the current state on screen? Is this goal complete, partially complete, 
     const rawText: string = responseJson?.choices?.[0]?.message?.content ?? '';
     return parseVerificationResult(rawText);
   } catch (verificationError) {
-    const message = verificationError instanceof Error ? verificationError.message : String(verificationError);
     return {
-      status: 'offTrack',
+      status: 'checkFailed',
       whatsGood: '',
-      whatsMissing: `vision check failed — ${message}`,
-      suggestedNextAction: 'try the step and press I did it again',
+      whatsMissing: null,
+      suggestedNextAction: describeFailureForLearner(verificationError, 'check that step off'),
       visibleErrorSummary: null,
     };
   }

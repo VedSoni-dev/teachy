@@ -8,6 +8,7 @@ import {
 } from './companion';
 import type { CapturedScreen, TeachyConfigSnapshot } from '../types/global';
 import { DEFAULT_CHAT_MODEL } from './models';
+import { describeFailureForLearner } from './failureMessages';
 
 const MAX_REMEMBERED_TURNS = 20;
 
@@ -133,8 +134,7 @@ export function useCompanionLoop(courseTeachBackCallback?: (userAnswer: string) 
         const estimatedSpeechSeconds = Math.min(30, Math.max(3, 1.5 + wordCount * 0.38));
         window.setTimeout(restOverlay, estimatedSpeechSeconds * 1000);
       } catch (turnError) {
-        const message = turnError instanceof Error ? turnError.message : String(turnError);
-        setOverlay('responding', undefined, `Something went wrong: ${message}`);
+        setOverlay('responding', undefined, describeFailureForLearner(turnError, 'answer that'));
         window.setTimeout(restOverlay, 7000);
       } finally {
         isHandlingTurnRef.current = false;

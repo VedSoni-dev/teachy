@@ -11,6 +11,7 @@ import {
 } from './companion';
 import type { CapturedScreen, TeachyConfigSnapshot } from '../types/global';
 import { DEFAULT_CHAT_MODEL } from './models';
+import { describeFailureForLearner } from './failureMessages';
 
 const AUTO_HINT_TIMEOUT_MS = 22_000;
 
@@ -155,8 +156,11 @@ the whole plan. Celebrate real progress briefly, then move.`;
         }
       });
     } catch (coachError) {
-      const message = coachError instanceof Error ? coachError.message : String(coachError);
-      updateSession((current) => ({ ...current, isBusy: false, coachLine: `Something went wrong: ${message}` }));
+      updateSession((current) => ({
+        ...current,
+        isBusy: false,
+        coachLine: describeFailureForLearner(coachError, 'get to your screen just then'),
+      }));
     }
   }, []);
 
@@ -264,11 +268,10 @@ the whole plan. Celebrate real progress briefly, then move.`;
 
       updateSession((current) => ({ ...current, isBusy: false, coachLine: finalSummary }));
     } catch (agentError) {
-      const message = agentError instanceof Error ? agentError.message : String(agentError);
       updateSession((current) => ({
         ...current,
         isBusy: false,
-        coachLine: `I couldn't finish that automatically: ${message}`,
+        coachLine: describeFailureForLearner(agentError, 'finish that step for you'),
       }));
     }
   }, []);
@@ -338,7 +341,16 @@ the whole plan. Celebrate real progress briefly, then move.`;
 
     try {
       const apiKey = await teachy.invoke<string | null>('get-api-key');
-      if (!apiKey) return;
+      if (!apiKey) {
+        // Returning here used to leave isBusy true, so the panel sat on
+        // "Checking your screen…" forever with no way out.
+        updateSession((current) => ({
+          ...current,
+          isBusy: false,
+          coachLine: 'Add your OpenRouter API key in Settings, then press I did it again.',
+        }));
+        return;
+      }
 
       const capturedScreen = await teachy.invoke<CapturedScreen>('capture-screen', {
         includeElements: false,
@@ -354,7 +366,14 @@ the whole plan. Celebrate real progress briefly, then move.`;
 
       updateSession((current) => ({ ...current, isBusy: false }));
 
-      if (verification.status === 'pass') {
+      if (verification.status === 'checkFailed') {
+        // We never got an answer, so we know nothing about their screen. Do NOT
+        // count this against their failure streak — it was not their step that failed.
+        const checkFailedLine =
+          verification.suggestedNextAction ?? "I couldn't check your screen just then. Try I did it again.";
+        updateSession((current) => ({ ...current, coachLine: checkFailedLine }));
+        void teachy.invoke('speak', { text: checkFailedLine });
+      } else if (verification.status === 'pass') {
         goalFailureCountRef.current = 0;
         beginTeachBackOrAdvance(currentGoal, verification.whatsGood);
       } else if (verification.status === 'partial') {
@@ -385,8 +404,11 @@ the whole plan. Celebrate real progress briefly, then move.`;
         }
       }
     } catch (verifyError) {
-      const message = verifyError instanceof Error ? verifyError.message : String(verifyError);
-      updateSession((current) => ({ ...current, isBusy: false, coachLine: `Verification hiccup: ${message}` }));
+      updateSession((current) => ({
+        ...current,
+        isBusy: false,
+        coachLine: describeFailureForLearner(verifyError, 'check that step off'),
+      }));
     }
 
     function beginTeachBackOrAdvance(passedGoal: CourseLearningGoal, whatWentWell: string) {

@@ -165,17 +165,45 @@ class SidecarBridge {
     }
   }
 
-  /** Sends a command and resolves with its result. */
-  send(command, args = {}) {
-    return new Promise((resolve, reject) => {
-      if (!this.childProcess) {
-        reject(new Error('Teachy background service is not running.'));
-        return;
-      }
+  /**
+   * Sends a command and resolves with its result.
+   *
+   * If the sidecar is mid-restart the command waits for it rather than failing:
+   * a crash otherwise surfaces to the learner as raw error text in the coach line
+   * ("Teachy background service is not running") for a gap they did nothing to
+   * cause. Waiting is only safe because the command has not been written yet —
+   * requests already in flight when the process died stay rejected, since
+   * silently replaying something like record-goal-completed would double-count.
+   */
+  async send(command, args = {}) {
+    if (!this.childProcess) {
+      await this.waitForRunningSidecar();
+    }
+    if (!this.childProcess) {
+      throw new Error('Teachy background service is not running.');
+    }
 
+    const childProcessForThisRequest = this.childProcess;
+    return new Promise((resolve, reject) => {
       const requestId = String(this.nextRequestId++);
       this.pendingRequests.set(requestId, { resolve, reject });
-      this.childProcess.stdin.write(`${JSON.stringify({ id: requestId, command, args })}\n`);
+      childProcessForThisRequest.stdin.write(`${JSON.stringify({ id: requestId, command, args })}\n`);
+    });
+  }
+
+  /** Resolves as soon as a sidecar process exists again, or after giving up. */
+  waitForRunningSidecar(timeoutMs = 5_000) {
+    const pollIntervalMs = 100;
+    return new Promise((resolve) => {
+      const startedWaitingAt = Date.now();
+      const poll = () => {
+        if (this.childProcess || this.isShuttingDown || Date.now() - startedWaitingAt >= timeoutMs) {
+          resolve();
+          return;
+        }
+        setTimeout(poll, pollIntervalMs);
+      };
+      poll();
     });
   }
 
