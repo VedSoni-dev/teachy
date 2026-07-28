@@ -19,6 +19,21 @@ public sealed class MicrophoneRecorder : IDisposable
     private WaveFileWriter? recordedWavWriter;
     private readonly object recordingStateLock = new();
 
+    /// <summary>
+    /// Signalled when NAudio's record thread for the current session has actually
+    /// exited. We must not dispose the device before that — see StopRecordingAndGetWavBytes.
+    /// Never disposed: a stale RecordingStopped callback may still Set() it, and
+    /// ManualResetEventSlim only needs disposal once its WaitHandle has been touched.
+    /// </summary>
+    private ManualResetEventSlim? recordThreadExited;
+
+    /// <summary>
+    /// How long to wait for NAudio's record thread to exit before disposing anyway.
+    /// Generous: a 50ms buffer loop exits almost immediately, so hitting this means
+    /// the driver is wedged and we would rather leak the device than hang the sidecar.
+    /// </summary>
+    private static readonly TimeSpan RecordThreadExitTimeout = TimeSpan.FromSeconds(2);
+
     private static readonly WaveFormat RecordingWaveFormat = new(rate: 16000, bits: 16, channels: 1);
 
     /// <summary>Null when a capture device is available, otherwise why recording can't start.</summary>
@@ -51,6 +66,12 @@ public sealed class MicrophoneRecorder : IDisposable
             recordedAudioBuffer = new MemoryStream();
             recordedWavWriter = new WaveFileWriter(new IgnoreDisposeStream(recordedAudioBuffer), RecordingWaveFormat);
 
+            // Owned by this session only, and captured by the handler below rather than
+            // read back off the field — so a late callback from a previous session can
+            // never signal the current one.
+            ManualResetEventSlim thisSessionRecordThreadExited = new(initialState: false);
+            recordThreadExited = thisSessionRecordThreadExited;
+
             try
             {
                 activeWaveInDevice = new WaveInEvent
@@ -59,6 +80,14 @@ public sealed class MicrophoneRecorder : IDisposable
                     BufferMilliseconds = 50,
                 };
                 activeWaveInDevice.DataAvailable += HandleAudioDataAvailable;
+                activeWaveInDevice.RecordingStopped += (_, stoppedEventArgs) =>
+                {
+                    if (stoppedEventArgs.Exception is not null)
+                    {
+                        TeachyLog.Write($"Mic: recording stopped with {stoppedEventArgs.Exception.GetType().Name}: {stoppedEventArgs.Exception.Message}");
+                    }
+                    thisSessionRecordThreadExited.Set();
+                };
                 activeWaveInDevice.StartRecording();
             }
             catch (Exception recordingStartError)
@@ -66,13 +95,35 @@ public sealed class MicrophoneRecorder : IDisposable
                 TeachyLog.Write($"Mic start failed: {recordingStartError.GetType().Name}: {recordingStartError.Message}");
                 activeWaveInDevice?.Dispose();
                 activeWaveInDevice = null;
+                recordedWavWriter?.Dispose();
+                recordedWavWriter = null;
+                recordedAudioBuffer?.Dispose();
+                recordedAudioBuffer = null;
+                recordThreadExited = null;
             }
         }
     }
 
     /// <summary>Stops recording and returns the captured audio as WAV bytes (null if nothing captured).</summary>
+    /// <remarks>
+    /// Teardown deliberately happens OUTSIDE <see cref="recordingStateLock"/>. NAudio raises
+    /// DataAvailable on its own record thread, and that handler takes the same lock — so
+    /// stopping and disposing the device while holding it deadlocked the record thread inside
+    /// the callback, let Dispose free the wave headers underneath it, and the thread then
+    /// resumed into WaveInBuffer.Reuse() → waveInAddBuffer on freed memory. That is an
+    /// AccessViolationException, which .NET cannot catch: it killed the whole sidecar process
+    /// (exit 0xC0000005) and left the app with no background service.
+    ///
+    /// So: detach state under the lock (any in-flight callback immediately becomes a no-op),
+    /// release it, then stop, wait for the record thread to actually exit, and only then dispose.
+    /// </remarks>
     public byte[]? StopRecordingAndGetWavBytes()
     {
+        WaveInEvent? deviceBeingStopped;
+        WaveFileWriter? writerBeingClosed;
+        MemoryStream? bufferBeingClosed;
+        ManualResetEventSlim? exitSignal;
+
         lock (recordingStateLock)
         {
             if (activeWaveInDevice is null)
@@ -80,30 +131,49 @@ public sealed class MicrophoneRecorder : IDisposable
                 return null;
             }
 
-            activeWaveInDevice.DataAvailable -= HandleAudioDataAvailable;
-            activeWaveInDevice.StopRecording();
-            activeWaveInDevice.Dispose();
+            deviceBeingStopped = activeWaveInDevice;
+            writerBeingClosed = recordedWavWriter;
+            bufferBeingClosed = recordedAudioBuffer;
+            exitSignal = recordThreadExited;
+
+            // Clearing these first means a DataAvailable callback already waiting on the
+            // lock writes nothing and returns, instead of touching a disposed writer.
             activeWaveInDevice = null;
-
-            recordedWavWriter?.Dispose(); // flushes WAV headers into recordedAudioBuffer
             recordedWavWriter = null;
-
-            byte[]? recordedWavBytes = recordedAudioBuffer?.ToArray();
-            recordedAudioBuffer?.Dispose();
             recordedAudioBuffer = null;
-
-            // 16kHz mono PCM16 = 32000 bytes/sec, so 8000 bytes ≈ 0.25s — below that
-            // it's a stray hotkey tap, not speech.
-            const int minimumUsableWavByteCount = 8000;
-            if (recordedWavBytes is null || recordedWavBytes.Length < minimumUsableWavByteCount)
-            {
-                TeachyLog.Write($"Mic: discarded short capture ({recordedWavBytes?.Length ?? 0} bytes).");
-                return null;
-            }
-
-            TeachyLog.Write($"Mic: captured {recordedWavBytes.Length} bytes.");
-            return recordedWavBytes;
+            recordThreadExited = null;
         }
+
+        deviceBeingStopped.DataAvailable -= HandleAudioDataAvailable;
+        deviceBeingStopped.StopRecording();
+
+        // StopRecording only signals the record thread; it returns before that thread has
+        // finished its current buffer pass. Disposing now is what corrupted memory before.
+        if (exitSignal is null || exitSignal.Wait(RecordThreadExitTimeout))
+        {
+            deviceBeingStopped.Dispose();
+        }
+        else
+        {
+            TeachyLog.Write("Mic: record thread did not exit in time; leaking the device rather than disposing under it.");
+        }
+
+        writerBeingClosed?.Dispose(); // flushes WAV headers into the captured buffer
+
+        byte[]? recordedWavBytes = bufferBeingClosed?.ToArray();
+        bufferBeingClosed?.Dispose();
+
+        // 16kHz mono PCM16 = 32000 bytes/sec, so 8000 bytes ≈ 0.25s — below that
+        // it's a stray hotkey tap, not speech.
+        const int minimumUsableWavByteCount = 8000;
+        if (recordedWavBytes is null || recordedWavBytes.Length < minimumUsableWavByteCount)
+        {
+            TeachyLog.Write($"Mic: discarded short capture ({recordedWavBytes?.Length ?? 0} bytes).");
+            return null;
+        }
+
+        TeachyLog.Write($"Mic: captured {recordedWavBytes.Length} bytes.");
+        return recordedWavBytes;
     }
 
     private void HandleAudioDataAvailable(object? sender, WaveInEventArgs waveInEventArgs)

@@ -19,6 +19,11 @@ class SidecarBridge {
     this.nextRequestId = 1;
     this.pendingRequests = new Map();
     this.eventListeners = new Map();
+    /** Set by stop() so a deliberate shutdown is not mistaken for a crash. */
+    this.isShuttingDown = false;
+    /** Exit timestamps inside the crash window, used to give up on a crash loop. */
+    this.recentCrashTimestamps = [];
+    this.restartTimer = null;
   }
 
   /**
@@ -54,6 +59,7 @@ class SidecarBridge {
   }
 
   start() {
+    this.isShuttingDown = false;
     const executablePath = this.resolveExecutablePath();
 
     this.childProcess = spawn(executablePath, [], {
@@ -76,11 +82,55 @@ class SidecarBridge {
       }
       this.pendingRequests.clear();
       this.childProcess = null;
+
+      if (!this.isShuttingDown) {
+        this.scheduleRestartAfterCrash();
+      }
     });
 
     this.childProcess.on('error', (spawnError) => {
       console.error('[sidecar] failed to start:', spawnError.message);
     });
+  }
+
+  /**
+   * The sidecar owns every OS capability the app has — screen capture, speech,
+   * the key store, push-to-talk. When it dies, nothing in the UI works and every
+   * command fails with "not running" forever. A native crash in an audio or UI
+   * Automation driver is exactly the kind of failure a restart clears, so bring
+   * it back rather than leaving the app a shell.
+   *
+   * Bounded: if it dies repeatedly in a short window the fault is not transient,
+   * and respawning becomes a spin loop that buries the real error in log noise.
+   */
+  scheduleRestartAfterCrash() {
+    const crashWindowMs = 60_000;
+    const maximumCrashesPerWindow = 3;
+    const restartDelayMs = 1_000;
+
+    const now = Date.now();
+    this.recentCrashTimestamps = this.recentCrashTimestamps.filter(
+      (timestamp) => now - timestamp < crashWindowMs,
+    );
+    this.recentCrashTimestamps.push(now);
+
+    if (this.recentCrashTimestamps.length > maximumCrashesPerWindow) {
+      console.error(
+        `[sidecar] crashed ${this.recentCrashTimestamps.length} times in ${crashWindowMs / 1000}s — not restarting again.`,
+      );
+      return;
+    }
+
+    console.error(`[sidecar] restarting in ${restartDelayMs}ms`);
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      if (this.isShuttingDown) {
+        return;
+      }
+      // Event listeners live on the bridge, not the child, so they survive this
+      // and keep firing against the new process with no re-subscription.
+      this.start();
+    }, restartDelayMs);
   }
 
   handleSidecarLine(line) {
@@ -138,6 +188,11 @@ class SidecarBridge {
   }
 
   stop() {
+    this.isShuttingDown = true;
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
     if (this.childProcess) {
       // Closing stdin is the sidecar's shutdown signal.
       this.childProcess.stdin.end();
