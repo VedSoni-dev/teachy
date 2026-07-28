@@ -17,5 +17,7 @@ teachy-sparkle-private.key
 # Windows / Electron build artifacts
 node_modules/
 dist/
+# Packaged installers from `npm run dist:win` — hundreds of MB, never committed
+dist-installers/
 **/bin/
 **/obj/
