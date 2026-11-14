@@ -3624,7 +3624,7 @@ final class CompanionManager: ObservableObject {
     }
 
     private func startOnboardingPromptStream() {
-        let message = "press control + option and say hey"
+        let message = "press \(PushToTalkShortcutKeys.currentShortcutDisplayText) and say hey"
         onboardingPromptText = ""
         showOnboardingPrompt = true
         onboardingPromptOpacity = 0.0

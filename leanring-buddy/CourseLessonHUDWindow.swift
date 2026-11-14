@@ -301,7 +301,7 @@ private struct CourseLessonHUDView: View {
                         hudActionButton(title: "I get it", emphasized: true) {
                             companionManager.submitCourseUnderstandingAnswer("i get it — we did the goal")
                         }
-                        Text("or hold ctrl+option")
+                        Text("or hold \(PushToTalkShortcutKeys.currentShortcutDisplayText)")
                             .font(.system(size: 9, weight: .medium))
                             .foregroundColor(DS.Colors.textTertiary)
                         Spacer(minLength: 0)
@@ -455,10 +455,10 @@ private struct CourseLessonHUDView: View {
             return "clip beside Teachy — say “skip” anytime"
         }
         if case .placement = phase {
-            return "tap a chip · or hold ctrl+option and say it"
+            return "tap a chip · or hold \(PushToTalkShortcutKeys.currentShortcutDisplayText) and say it"
         }
         if case .understanding = phase {
-            return "hold ctrl+option and explain · or tap “I get it”"
+            return "hold \(PushToTalkShortcutKeys.currentShortcutDisplayText) and explain · or tap “I get it”"
         }
         if case .interactiveChoice = phase {
             return "tap an answer to see how you did"
@@ -473,7 +473,7 @@ private struct CourseLessonHUDView: View {
             if !TeachyPromptChips.chips(forGoalID: session.currentStep.id).isEmpty {
                 return "tap a prompt · paste · then say “next step”"
             }
-            return "ctrl+option to ask · say “next step” when done"
+            return "\(PushToTalkShortcutKeys.currentShortcutDisplayText) to ask · say “next step” when done"
         }
         if case .coaching = phase {
             return "coaching…"

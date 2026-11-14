@@ -106,20 +106,9 @@ struct NotchHomeTabView: View {
 
     private var pushToTalkInstructions: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text("Hold")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.Colors.textPrimary)
-
-                KeyboardKeyLabel(text: "control")
-                Text("+")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(DS.Colors.textSecondary)
-                KeyboardKeyLabel(text: "option")
-                Text("to talk")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.Colors.textPrimary)
-            }
+            PushToTalkShortcutPickerRow(
+                shortcutMonitor: companionManager.globalPushToTalkShortcutMonitor
+            )
 
             Text("Ask about your screen, or talk during a course for hints and help.")
                 .font(.system(size: 11))
@@ -472,6 +461,118 @@ struct NotchHomeTabView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .glassCard(cornerRadius: 8)
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+    }
+}
+
+/// "Hold [key] + [key] to talk" with a Change button that records any two keys.
+/// Recording runs through the global event tap, so it works even though the
+/// notch panel never becomes the key window.
+private struct PushToTalkShortcutPickerRow: View {
+    @ObservedObject var shortcutMonitor: GlobalPushToTalkShortcutMonitor
+    /// Bumped when the saved shortcut changes so the key capsules re-read it.
+    @State private var shortcutRefreshCounter = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                if shortcutMonitor.isRecordingNewShortcut {
+                    recordingInProgressLabel
+                } else {
+                    currentShortcutLabel
+                }
+
+                Spacer(minLength: 0)
+
+                if shortcutMonitor.isRecordingNewShortcut {
+                    shortcutRowButton(title: "Cancel") {
+                        shortcutMonitor.cancelRecordingNewShortcut()
+                    }
+                } else {
+                    if !PushToTalkShortcutKeys.isUsingDefaultShortcut {
+                        shortcutRowButton(title: "Reset") {
+                            PushToTalkShortcutKeys.resetToDefaultShortcut()
+                        }
+                    }
+                    shortcutRowButton(title: "Change") {
+                        shortcutMonitor.beginRecordingNewShortcut()
+                    }
+                }
+            }
+            .id(shortcutRefreshCounter)
+
+            if shortcutMonitor.isRecordingNewShortcut {
+                Text("Press any two keys, one after the other. Esc cancels.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.learnAccent)
+            } else if !shortcutMonitor.isEventTapActive {
+                Text("Needs Accessibility permission to listen for your shortcut.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: PushToTalkShortcutKeys.shortcutDidChangeNotification)) { _ in
+            shortcutRefreshCounter += 1
+        }
+        .onDisappear {
+            // Don't leave the tap silently capturing keys after the panel closes.
+            shortcutMonitor.cancelRecordingNewShortcut()
+        }
+    }
+
+    private var currentShortcutLabel: some View {
+        HStack(spacing: 6) {
+            Text("Hold")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
+            keyCapsules(labels: PushToTalkShortcutKeys.currentKeyCapsuleLabels)
+            Text("to talk")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
+        }
+    }
+
+    private var recordingInProgressLabel: some View {
+        let recordedKeyLabels = shortcutMonitor.keyCodesRecordedSoFar.map {
+            PushToTalkShortcutKeys.displayName(forKeyCode: $0)
+        }
+        let placeholderCount = PushToTalkShortcutKeys.numberOfKeysInShortcut - recordedKeyLabels.count
+        let labelsWithPlaceholders = recordedKeyLabels + Array(repeating: "…", count: max(0, placeholderCount))
+
+        return HStack(spacing: 6) {
+            Text("New keys")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
+            keyCapsules(labels: labelsWithPlaceholders)
+        }
+    }
+
+    private func keyCapsules(labels: [String]) -> some View {
+        HStack(spacing: 6) {
+            ForEach(Array(labels.enumerated()), id: \.offset) { keyIndex, keyLabel in
+                if keyIndex > 0 {
+                    Text("+")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(DS.Colors.textSecondary)
+                }
+                KeyboardKeyLabel(text: keyLabel)
+            }
+        }
+    }
+
+    private func shortcutRowButton(title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(DS.Colors.textSecondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                )
         }
         .buttonStyle(.plain)
         .pointerCursor()

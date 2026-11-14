@@ -253,12 +253,12 @@ final class LessonPlayer: ObservableObject {
         Explain in plain words what this path is about (building something tiny with an AI chatbot — \
         a website where you type and it writes back). Don't dump steps.
         Then ask what they already know. Offer the vibe of: brand new / used ChatGPT or Claude / already builds with AI.
-        Use [INFO] and [TODO] tags. TODO should tell them to tap a chip on the HUD or hold ctrl+option and say it.
+        Use [INFO] and [TODO] tags. TODO should tell them to tap a chip on the HUD or hold \(PushToTalkShortcutKeys.currentShortcutDisplayText) and say it.
         """
         _ = await runCoachAsk(session: session, ask: introAsk, host: host, allowActions: false)
         guard !Task.isCancelled, coursesManager.activeSession != nil else { return }
 
-        let placementPrompt = "quick check — tap a chip or hold ctrl+option and tell me what you already know."
+        let placementPrompt = "quick check — tap a chip or hold \(PushToTalkShortcutKeys.currentShortcutDisplayText) and tell me what you already know."
         setPhase(.placement(prompt: placementPrompt))
         coursesManager.setCourseInteractionRunning(false)
         host.setCourseVoiceStateIdle()
@@ -380,7 +380,7 @@ final class LessonPlayer: ObservableObject {
 
         var didOfferHint = false
         while !Task.isCancelled, coursesManager.activeSession != nil {
-            let turnPrompt = "your turn — \(goal.title). hold ctrl+option, or say \"next step\" when you've got it."
+            let turnPrompt = "your turn — \(goal.title). hold \(PushToTalkShortcutKeys.currentShortcutDisplayText), or say \"next step\" when you've got it."
             yourTurnPrompt = turnPrompt
             setPhase(.yourTurn(prompt: turnPrompt))
             coursesManager.setCourseInteractionRunning(false)
@@ -884,7 +884,7 @@ final class LessonPlayer: ObservableObject {
                 coachPrompt = """
                 The screen check passed for "\(goal.title)". Before we move on, run a 10-second understanding beat.
                 Ask them this (warm, lowercase): \(initialQuestion)
-                Use [INFO] with the question vibe and [TODO] telling them to hold ctrl+option and answer, or tap "I get it" if they're sure.
+                Use [INFO] with the question vibe and [TODO] telling them to hold \(PushToTalkShortcutKeys.currentShortcutDisplayText) and answer, or tap "I get it" if they're sure.
                 Do not advance them yourself — just ask.
                 """
             } else {
@@ -1099,7 +1099,7 @@ final class LessonPlayer: ObservableObject {
         Don't wander into other goals. If they're ready to move on, tell them to say "next step".
         """
         _ = await runCoachAsk(session: session, ask: ask, host: host, allowActions: true)
-        yourTurnPrompt = "your turn — \(session.currentGoal.title). hold ctrl+option to ask, or say \"next step\" when done."
+        yourTurnPrompt = "your turn — \(session.currentGoal.title). hold \(PushToTalkShortcutKeys.currentShortcutDisplayText) to ask, or say \"next step\" when done."
         setPhase(.yourTurn(prompt: yourTurnPrompt))
         coursesManager.setCourseInteractionRunning(false)
         host.setCourseVoiceStateIdle()

@@ -8,6 +8,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 import Combine
 import CoreGraphics
 import Foundation
@@ -24,8 +25,81 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     @Published private(set) var isShortcutCurrentlyPressed = false
     @Published private(set) var isEventTapActive = false
 
+    /// True while the Home tab's "Change" button is waiting for the person to
+    /// press their two new keys. Push-to-talk is paused during recording.
+    @Published private(set) var isRecordingNewShortcut = false
+    /// Keys captured so far during recording, shown live in the UI.
+    @Published private(set) var keyCodesRecordedSoFar: [UInt16] = []
+
+    /// The two keys that start push-to-talk. Reloaded whenever the saved shortcut changes.
+    private var activeShortcutKeyCodes: [UInt16] = PushToTalkShortcutKeys.currentShortcutKeyCodes
+    /// Regular (non-modifier) keys currently held down, from keyDown/keyUp events.
+    private var heldRegularKeyCodes: Set<UInt16> = []
+    /// Modifier flags from the latest flagsChanged event. Only flagsChanged updates
+    /// this, because keyDown events for arrows/F-keys carry a synthetic fn flag.
+    private var latestModifierFlags: NSEvent.ModifierFlags = []
+    private var shortcutDidChangeObserver: NSObjectProtocol?
+
+    init() {
+        shortcutDidChangeObserver = NotificationCenter.default.addObserver(
+            forName: PushToTalkShortcutKeys.shortcutDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.activeShortcutKeyCodes = PushToTalkShortcutKeys.currentShortcutKeyCodes
+            self?.releaseShortcutIfPressed()
+        }
+    }
+
     deinit {
+        if let shortcutDidChangeObserver {
+            NotificationCenter.default.removeObserver(shortcutDidChangeObserver)
+        }
         stop()
+    }
+
+    // MARK: - Recording a new shortcut
+
+    /// Captures the next two distinct keys the person presses and saves them as
+    /// the push-to-talk shortcut. Pressing Escape first cancels. Uses the same
+    /// global event tap, so it works even though the notch panel never takes focus.
+    func beginRecordingNewShortcut() {
+        releaseShortcutIfPressed()
+        keyCodesRecordedSoFar = []
+        isRecordingNewShortcut = true
+    }
+
+    func cancelRecordingNewShortcut() {
+        isRecordingNewShortcut = false
+        keyCodesRecordedSoFar = []
+    }
+
+    private func recordKeyPressDuringShortcutRecording(keyCode: UInt16) {
+        let normalizedKeyCode = PushToTalkShortcutKeys.normalizedKeyCode(keyCode)
+
+        if normalizedKeyCode == UInt16(kVK_Escape) && keyCodesRecordedSoFar.isEmpty {
+            cancelRecordingNewShortcut()
+            return
+        }
+        // Caps Lock toggles rather than being held, so it can't work as push-to-talk.
+        guard normalizedKeyCode != UInt16(kVK_CapsLock) else { return }
+        guard !keyCodesRecordedSoFar.contains(normalizedKeyCode) else { return }
+
+        keyCodesRecordedSoFar.append(normalizedKeyCode)
+
+        if keyCodesRecordedSoFar.count == PushToTalkShortcutKeys.numberOfKeysInShortcut {
+            let newShortcutKeyCodes = keyCodesRecordedSoFar
+            isRecordingNewShortcut = false
+            PushToTalkShortcutKeys.saveShortcutKeyCodes(newShortcutKeyCodes)
+            print("⌨️ Push-to-talk shortcut set to \(PushToTalkShortcutKeys.currentShortcutDisplayText)")
+        }
+    }
+
+    private func releaseShortcutIfPressed() {
+        if isShortcutCurrentlyPressed {
+            isShortcutCurrentlyPressed = false
+            shortcutTransitionPublisher.send(.released)
+        }
     }
 
     func start() {
@@ -87,11 +161,13 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
         CFRunLoopAddSource(CFRunLoopGetMain(), globalEventTapRunLoopSource, .commonModes)
         CGEvent.tapEnable(tap: globalEventTap, enable: true)
         isEventTapActive = true
-        print("⌨️ Global push-to-talk monitor active (ctrl + option)")
+        print("⌨️ Global push-to-talk monitor active (\(PushToTalkShortcutKeys.currentShortcutDisplayText))")
     }
 
     func stop() {
         isShortcutCurrentlyPressed = false
+        heldRegularKeyCodes = []
+        latestModifierFlags = []
         isEventTapActive = false
 
         if let globalEventTapRunLoopSource {
@@ -140,20 +216,46 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
         }
 
         let eventKeyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        let shortcutTransition = BuddyPushToTalkShortcut.shortcutTransition(
-            for: eventType,
-            keyCode: eventKeyCode,
-            modifierFlagsRawValue: event.flags.rawValue,
-            wasShortcutPreviouslyPressed: isShortcutCurrentlyPressed
-        )
+        let isAutoRepeatKeyDown = eventType == .keyDown
+            && event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        let previousModifierFlags = latestModifierFlags
 
-        switch shortcutTransition {
-        case .none:
-            break
-        case .pressed:
+        switch eventType {
+        case .flagsChanged:
+            latestModifierFlags = NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
+                .intersection(.deviceIndependentFlagsMask)
+        case .keyDown:
+            heldRegularKeyCodes.insert(eventKeyCode)
+        case .keyUp:
+            heldRegularKeyCodes.remove(eventKeyCode)
+        default:
+            return Unmanaged.passUnretained(event)
+        }
+
+        if isRecordingNewShortcut {
+            if eventType == .keyDown && !isAutoRepeatKeyDown {
+                recordKeyPressDuringShortcutRecording(keyCode: eventKeyCode)
+            } else if eventType == .flagsChanged,
+                      let changedModifierFlag = PushToTalkShortcutKeys.modifierFlag(forKeyCode: eventKeyCode),
+                      latestModifierFlags.contains(changedModifierFlag),
+                      !previousModifierFlags.contains(changedModifierFlag) {
+                // A modifier went down (flagsChanged also fires on release, which we skip).
+                recordKeyPressDuringShortcutRecording(keyCode: eventKeyCode)
+            }
+            return Unmanaged.passUnretained(event)
+        }
+
+        let areAllShortcutKeysHeld = activeShortcutKeyCodes.allSatisfy { shortcutKeyCode in
+            if let shortcutModifierFlag = PushToTalkShortcutKeys.modifierFlag(forKeyCode: shortcutKeyCode) {
+                return latestModifierFlags.contains(shortcutModifierFlag)
+            }
+            return heldRegularKeyCodes.contains(shortcutKeyCode)
+        }
+
+        if areAllShortcutKeysHeld && !isShortcutCurrentlyPressed {
             isShortcutCurrentlyPressed = true
             shortcutTransitionPublisher.send(.pressed)
-        case .released:
+        } else if !areAllShortcutKeysHeld && isShortcutCurrentlyPressed {
             isShortcutCurrentlyPressed = false
             shortcutTransitionPublisher.send(.released)
         }
