@@ -33,6 +33,9 @@ final class OpenAPIConnectorTool: BackgroundAgentTool {
         self.jsonSchema = operation.inputSchema
     }
 
+    /// Lets the permission gate ask every time before a DELETE.
+    var httpMethodForPolicy: String? { operation.httpMethod }
+
     func execute(arguments: [String: Any]) async throws -> String {
         let requestComponents = try buildRequestComponents(arguments: arguments)
 
