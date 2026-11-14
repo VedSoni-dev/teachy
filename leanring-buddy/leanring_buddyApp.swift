@@ -60,6 +60,9 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             notchManager: notchManager!
         )
         companionManager.start()
+        // Fn+Control dictation: waits for the publik gate and for the Accessibility
+        // and Microphone permissions before it listens for the hotkey.
+        DictationController.shared.startWhenReady()
 
         // Show the notch on launch so the user sees it right away
         notchManager?.show()
