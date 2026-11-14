@@ -2,8 +2,10 @@
 //  NotchHomeTabView.swift
 //  leanring-buddy
 //
-//  Home tab content for the notch panel — push-to-talk instructions, trust
-//  copy, software updates, cursor color, model picker, and feedback link.
+//  Home tab content for the notch panel: how to talk to Teachy, the publik
+//  account, then settings as collapsed cards (voice, dictation, shortcuts,
+//  cursor, memory, privacy, updates, advanced) and the feedback link.
+//  The settings cards themselves live in Settings/SettingsSections.swift.
 //
 
 import SwiftUI
@@ -12,12 +14,7 @@ struct NotchHomeTabView: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject var notchManager: NotchWindowManager
     @ObservedObject private var softwareUpdater = TeachySoftwareUpdater.shared
-
-    @State private var elevenLabsAPIKeyInput: String = ""
-    @State private var elevenLabsIsValidating: Bool = false
-    @State private var elevenLabsError: String?
-    @State private var elevenLabsIsConfigured: Bool = TeachyElevenLabsKeyStore.isConfigured
-
+    @ObservedObject private var settings = TeachySettings.shared
 
     /// Flips locally the moment a reaction is tapped so the card disappears without
     /// needing to reopen the tab (the durable gate lives on `LearnerModel.lastRelationshipCheckInAt`).
@@ -34,24 +31,48 @@ struct NotchHomeTabView: View {
 
             pushToTalkInstructions
 
-            trustAndPrivacySection
-
-            teachyRemembersSection
-
-            softwareUpdatesSection
-
             PublikAccountSection()
+
+            settingsHeader
+
+            VStack(alignment: .leading, spacing: 8) {
+                VoiceSettingsSection()
+
+                DictationSettingsSection()
+
+                ShortcutsSettingsSection()
+
+                cursorColorSection
+
+                // MOUNT: ConnectorsSection()
+
+                // MOUNT: AgentJobsSection()
+
+                PrivacySettingsSection()
+
+                softwareUpdatesSection
+
+                AdvancedSettingsSection()
+            }
 
             BrainMemorySection()
 
-            voiceSection
-
-            cursorColorSection
+            teachyRemembersSection
 
             watchIntroAgainButton
 
             dmFeedbackButton
         }
+    }
+
+    private var settingsHeader: some View {
+        Text("SETTINGS")
+            .font(.system(size: 10, weight: .bold))
+            .tracking(0.8)
+            .foregroundColor(DS.Colors.textTertiary)
+            .padding(.leading, 4)
+            .padding(.top, 2)
+            .padding(.bottom, -6)
     }
 
     /// Engine-computed wins and nudges (level-ups, retention reminders, celebrations)
@@ -105,33 +126,24 @@ struct NotchHomeTabView: View {
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("Double-tap Control for text mode.")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard()
-    }
-
-    private var trustAndPrivacySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Trust & privacy")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(DS.Colors.textPrimary)
-
-            Text("Screen captures go to publik’s AI so the tutor can see what you’re doing — only for the turn you’re in. publik doesn’t train on them or keep them. Voice is transcribed on this Mac, and course memory stays here too. You can wipe progress anytime by Retaking a path.")
+            Text("While you hold the keys, move the pointer to circle the thing you mean.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("We don’t sell your screen.")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.Colors.learnAccent)
+            HStack(spacing: 6) {
+                Text("Double-tap")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textTertiary)
+                KeyboardKeyLabel(text: "control")
+                Text("to type a question instead.")
+                    .font(.system(size: 11))
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard(tint: DS.Colors.learnAccent)
+        .glassCard()
     }
 
     private var teachyRemembersSection: some View {
@@ -319,12 +331,12 @@ struct NotchHomeTabView: View {
     }
 
     private var softwareUpdatesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Updates")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(DS.Colors.textPrimary)
-
-            Text("Teachy \(softwareUpdater.shortVersionString) (\(softwareUpdater.buildNumberString)) — free updates via GitHub Releases.")
+        SettingsDisclosureCard(
+            icon: "arrow.triangle.2.circlepath",
+            title: "Updates",
+            summary: "Teachy \(softwareUpdater.shortVersionString)"
+        ) {
+            Text("Teachy \(softwareUpdater.shortVersionString) (\(softwareUpdater.buildNumberString)). Updates are free and come from GitHub Releases.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -355,163 +367,6 @@ struct NotchHomeTabView: View {
             .opacity(softwareUpdater.canCheckForUpdates ? 1 : 0.45)
             .pointerCursor(isEnabled: softwareUpdater.canCheckForUpdates)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard()
-    }
-
-    private var voiceSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Voice")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(DS.Colors.textPrimary)
-
-            Text("Optional — use your own ElevenLabs key so Teachy speaks with its real voice. Get a key at elevenlabs.io (their pricing applies) — Teachy sounds great without one too.")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if elevenLabsIsConfigured {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.learnAccent)
-                    Text("Voice configured")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
-
-                    Spacer()
-
-                    Button {
-                        TeachyElevenLabsKeyStore.apiKey = nil
-                        elevenLabsAPIKeyInput = ""
-                        elevenLabsError = nil
-                        elevenLabsIsConfigured = false
-                    } label: {
-                        Text("Remove")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.red)
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    SecureField("ElevenLabs API key", text: $elevenLabsAPIKeyInput)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(DS.Colors.textPrimary)
-                        .padding(8)
-                        .glassCard(cornerRadius: 8, tint: DS.Colors.learnAccent)
-                        .onSubmit {
-                            validateAndSaveElevenLabsKey()
-                        }
-
-                    if let error = elevenLabsError {
-                        Text(error)
-                            .font(.system(size: 10))
-                            .foregroundColor(.red)
-                    }
-                }
-
-                Button {
-                    validateAndSaveElevenLabsKey()
-                } label: {
-                    HStack {
-                        if elevenLabsIsValidating {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                        } else {
-                            Text("Save")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(DS.Colors.learnAccent)
-                    )
-                    .foregroundColor(.white)
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .disabled(
-                    elevenLabsAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || elevenLabsIsValidating
-                )
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard()
-    }
-
-    private func validateAndSaveElevenLabsKey() {
-        let key = elevenLabsAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return }
-
-        elevenLabsIsValidating = true
-        elevenLabsError = nil
-
-        Task {
-            // Validate against the REAL endpoint Teachy uses (text-to-speech), not a
-            // side endpoint like /v1/voices or /v1/user. ElevenLabs keys can be scoped
-            // to specific permissions at creation — a key restricted to "Text to Speech
-            // only" is exactly what Teachy needs and is completely valid, but it 401s
-            // on /v1/voices (missing voices_read) or /v1/user (missing user_read). This
-            // sends a 1-character synthesis request so "validation passes" reliably
-            // means "the actual feature will work," not just "some other scope exists."
-            let url = URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(TeachyElevenLabsKeyStore.voiceID)")!
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.timeoutInterval = 10
-            request.setValue(key, forHTTPHeaderField: "xi-api-key")
-            request.setValue("application/json", forHTTPHeaderField: "content-type")
-            request.setValue("audio/mpeg", forHTTPHeaderField: "accept")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: [
-                "text": "Hi",
-                "model_id": "eleven_turbo_v2_5",
-            ])
-
-            do {
-                let (data, response) = try await URLSession.shared.data(for: request)
-                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                    TeachyElevenLabsKeyStore.apiKey = key
-                    await MainActor.run {
-                        elevenLabsIsValidating = false
-                        elevenLabsIsConfigured = true
-                    }
-                } else {
-                    await MainActor.run {
-                        elevenLabsIsValidating = false
-                        elevenLabsError = Self.elevenLabsErrorMessage(from: data)
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    elevenLabsIsValidating = false
-                    elevenLabsError = "Couldn't reach ElevenLabs. Check your connection."
-                }
-            }
-        }
-    }
-
-    /// ElevenLabs distinguishes an outright-invalid key from a valid key that's
-    /// missing a required permission scope — surface that distinction instead of
-    /// a generic "invalid key" message that sends people chasing the wrong fix.
-    private static func elevenLabsErrorMessage(from responseData: Data) -> String {
-        guard
-            let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
-            let detail = json["detail"] as? [String: Any],
-            let status = detail["status"] as? String
-        else {
-            return "That key doesn't seem valid. Check it and try again."
-        }
-        if status == "missing_permissions" {
-            return "That key is missing the Text to Speech permission — enable it in ElevenLabs → API Keys."
-        }
-        return "That key doesn't seem valid. Check it and try again."
     }
 
     private var watchIntroAgainButton: some View {
@@ -536,10 +391,15 @@ struct NotchHomeTabView: View {
     }
 
     private var cursorColorSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Cursor color")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(DS.Colors.textSecondary)
+        SettingsDisclosureCard(
+            icon: "cursorarrow",
+            title: "Cursor",
+            summary: companionManager.selectedCursorColor.rawValue.capitalized
+        ) {
+            Text("The colour of Teachy's pointer, and of the trail you draw while holding the talk keys.")
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 8) {
                 ForEach(ClickyCursorColor.allCases) { cursorColor in
@@ -553,6 +413,8 @@ struct NotchHomeTabView: View {
         let isSelected = companionManager.selectedCursorColor == cursorColor
         return Button(action: {
             companionManager.setSelectedCursorColor(cursorColor)
+            // Same UserDefaults key; this keeps the settings object's copy current.
+            settings.cursorColor = cursorColor
         }) {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(Color.black.opacity(0.55))
