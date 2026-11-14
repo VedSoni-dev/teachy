@@ -426,8 +426,7 @@ struct DictationSettingsSection: View {
 
             SettingsDivider()
 
-            ShortcutRow(title: "Dictate", shortcut: settings.shortcuts.dictation)
-            ShortcutRow(title: "Hands-free (again to stop)", shortcut: settings.shortcuts.handsFreeDictation)
+            DictationShortcutPickerRow()
         }
         .onAppear { words = dictionary.words }
     }
@@ -578,6 +577,24 @@ struct DictationSettingsSection: View {
 
 // MARK: - Shortcuts
 
+extension ShortcutsSettingsSection {
+    static var dictationKeyNames: String {
+        DictationShortcut.current().map { PushToTalkShortcutKeys.displayName(forKeyCode: $0) }.joined(separator: " + ")
+    }
+
+    func liveShortcutLine(_ title: String, _ keys: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundColor(DS.Colors.textPrimary)
+            Spacer(minLength: 8)
+            Text(keys)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .foregroundColor(DS.Colors.textSecondary)
+        }
+    }
+}
+
 struct ShortcutsSettingsSection: View {
     @ObservedObject private var settings = TeachySettings.shared
     private let startsExpanded: Bool
@@ -593,10 +610,12 @@ struct ShortcutsSettingsSection: View {
             summary: "\(settings.shortcuts.rows.count) shortcuts",
             startsExpanded: startsExpanded
         ) {
-            ForEach(settings.shortcuts.rows) { row in
-                ShortcutRow(title: row.title, shortcut: row.shortcut)
-            }
-            SettingsCaption(text: "These work in any app. Customising shortcuts is coming.")
+            // Live values: the talk and dictation keys can both be changed.
+            liveShortcutLine("Ask by voice", "Hold " + PushToTalkShortcutKeys.currentKeyCapsuleLabels.joined(separator: " + "))
+            liveShortcutLine("Type a question", "Double-tap control")
+            liveShortcutLine("Dictate", "Hold " + Self.dictationKeyNames)
+            liveShortcutLine("Hands-free dictation", "Double-tap " + Self.dictationKeyNames + " (again to stop)")
+            SettingsCaption(text: "These work in any app. Change the talk keys at the top of this tab, and the dictation keys under Dictation.")
         }
     }
 }

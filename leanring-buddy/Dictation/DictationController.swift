@@ -33,6 +33,52 @@ final class DictationController {
 
     private var machine = DictationHotkeyStateMachine()
     private let monitor = DictationHotkeyMonitor()
+
+    // MARK: - Changing the shortcut
+
+    enum ShortcutRecordingResult {
+        case saved([UInt16])
+        case cancelled
+        case rejected(String)
+    }
+
+    /// Records the next keys the person holds and saves them as the dictation shortcut.
+    /// Times out after 10 seconds. Needs the hotkey monitor (Accessibility permission).
+    func recordShortcut(completion: @escaping (ShortcutRecordingResult) -> Void) {
+        guard monitor.start() else {
+            completion(.rejected("Teachy needs Accessibility permission before it can listen for keys."))
+            return
+        }
+        cancelCurrentDictationForShortcutRecording()
+        monitor.beginRecordingShortcut { recordedKeys in
+            guard let recordedKeys else {
+                completion(.cancelled)
+                return
+            }
+            if let problem = DictationShortcut.validationProblem(recordedKeys, pushToTalk: PushToTalkShortcutKeys.currentShortcutKeyCodes) {
+                completion(.rejected(problem))
+                return
+            }
+            DictationShortcut.save(recordedKeys)
+            completion(.saved(DictationShortcut.current()))
+        }
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard let self, self.monitor.isRecordingShortcut else { return }
+            self.monitor.cancelRecordingShortcut()
+        }
+    }
+
+    func cancelShortcutRecording() {
+        monitor.cancelRecordingShortcut()
+    }
+
+    /// A dictation in progress would fight the recorder for the same key presses.
+    private func cancelCurrentDictationForShortcutRecording() {
+        if phase == .recording {
+            handle(.escape, at: ProcessInfo.processInfo.systemUptime)
+        }
+    }
     private let recorder = DictationAudioRecorder()
     private let pill = DictationPillController()
     private let correctionWatcher = DictationCorrectionWatcher()

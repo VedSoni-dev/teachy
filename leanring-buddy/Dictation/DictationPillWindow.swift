@@ -73,7 +73,7 @@ private struct DictationPillView: View {
                     .lineLimit(1)
                     .truncationMode(.head)
             } else if model.mode == .handsFree {
-                Text("double-tap fn + control to stop")
+                Text("double-tap \(DictationShortcut.current().map { PushToTalkShortcutKeys.displayName(forKeyCode: $0) }.joined(separator: " + ")) to stop")
                     .font(.system(size: 11))
                     .foregroundColor(DS.Colors.textTertiary)
                     .fixedSize()
