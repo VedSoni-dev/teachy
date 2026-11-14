@@ -1,6 +1,6 @@
 //
 //  AgentMacNativeTools.swift
-//  Mac-native agent tools: AppleScript, UI automation, screen capture.
+//  Mac-native agent tools: AppleScript, opening browser tabs, screen capture.
 //
 
 import AppKit
@@ -49,191 +49,8 @@ final class RunAppleScriptTool: BackgroundAgentTool {
     }
 }
 
-// MARK: - UI Actions
-
-final class UIActionTool: BackgroundAgentTool {
-    let name = "ui_action"
-    let description = """
-    Control the Mac UI. Actions: click (x,y screen coords), type (text into frontmost app), \
-    key_press (e.g. return, escape, cmd+c), frontmost_app (returns active app and window title). \
-    Requires Accessibility permission.
-    """
-
-    let jsonSchema: [String: Any] = [
-        "type": "object",
-        "properties": [
-            "action": [
-                "type": "string",
-                "enum": ["click", "type", "key_press", "frontmost_app"],
-                "description": "The UI action to perform"
-            ],
-            "x": ["type": "number", "description": "X coordinate for click (Quartz/global screen space)"],
-            "y": ["type": "number", "description": "Y coordinate for click (Quartz/global screen space)"],
-            "text": ["type": "string", "description": "Text to type for the type action"],
-            "key": ["type": "string", "description": "Key name for key_press (return, tab, escape, cmd+c, etc.)"]
-        ],
-        "required": ["action"]
-    ]
-
-    func execute(arguments: [String: Any]) async throws -> String {
-        guard WindowPositionManager.hasAccessibilityPermission() else {
-            throw NSError(domain: "UIActionTool", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Accessibility permission required for ui_action"])
-        }
-
-        guard let actionName = arguments["action"] as? String else {
-            throw NSError(domain: "UIActionTool", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Missing 'action' argument"])
-        }
-
-        switch actionName {
-        case "click":
-            return try performClick(arguments: arguments)
-        case "type":
-            return try performType(arguments: arguments)
-        case "key_press":
-            return try performKeyPress(arguments: arguments)
-        case "frontmost_app":
-            return describeFrontmostApplication()
-        default:
-            throw NSError(domain: "UIActionTool", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Unknown action: \(actionName)"])
-        }
-    }
-
-    private func performClick(arguments: [String: Any]) throws -> String {
-        guard let xNumber = arguments["x"] as? NSNumber,
-              let yNumber = arguments["y"] as? NSNumber else {
-            throw NSError(domain: "UIActionTool", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "click requires x and y"])
-        }
-
-        let clickPoint = CGPoint(x: xNumber.doubleValue, y: yNumber.doubleValue)
-        let source = CGEventSource(stateID: .hidSystemState)
-
-        guard let mouseDown = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown,
-                                      mouseCursorPosition: clickPoint, mouseButton: .left),
-              let mouseUp = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp,
-                                    mouseCursorPosition: clickPoint, mouseButton: .left) else {
-            throw NSError(domain: "UIActionTool", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Could not create mouse events"])
-        }
-
-        mouseDown.post(tap: .cghidEventTap)
-        mouseUp.post(tap: .cghidEventTap)
-        return "Clicked at (\(Int(clickPoint.x)), \(Int(clickPoint.y)))"
-    }
-
-    private func performType(arguments: [String: Any]) throws -> String {
-        guard let text = arguments["text"] as? String else {
-            throw NSError(domain: "UIActionTool", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "type requires text"])
-        }
-
-        let source = CGEventSource(stateID: .hidSystemState)
-        for character in text {
-            let unicodeScalars = Array(String(character).utf16)
-            guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                  let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false) else {
-                continue
-            }
-            keyDown.keyboardSetUnicodeString(stringLength: unicodeScalars.count, unicodeString: unicodeScalars)
-            keyUp.keyboardSetUnicodeString(stringLength: unicodeScalars.count, unicodeString: unicodeScalars)
-            keyDown.post(tap: .cghidEventTap)
-            keyUp.post(tap: .cghidEventTap)
-        }
-
-        return "Typed \(text.count) characters"
-    }
-
-    private func performKeyPress(arguments: [String: Any]) throws -> String {
-        guard let keyName = arguments["key"] as? String else {
-            throw NSError(domain: "UIActionTool", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "key_press requires key"])
-        }
-
-        let (virtualKeyCode, flags) = try virtualKeyAndFlags(forKeyName: keyName.lowercased())
-        let source = CGEventSource(stateID: .hidSystemState)
-
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: virtualKeyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: virtualKeyCode, keyDown: false) else {
-            throw NSError(domain: "UIActionTool", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Could not create key events"])
-        }
-
-        keyDown.flags = flags
-        keyUp.flags = flags
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
-        return "Pressed \(keyName)"
-    }
-
-    private func virtualKeyAndFlags(forKeyName keyName: String) throws -> (CGKeyCode, CGEventFlags) {
-        if keyName.contains("cmd+") || keyName.contains("command+") {
-            let parts = keyName.replacingOccurrences(of: "command+", with: "cmd+").split(separator: "+")
-            guard parts.count == 2 else {
-                throw NSError(domain: "UIActionTool", code: -1,
-                              userInfo: [NSLocalizedDescriptionKey: "Invalid shortcut: \(keyName)"])
-            }
-            let (baseKey, _) = try virtualKeyAndFlags(forKeyName: String(parts[1]))
-            return (baseKey, .maskCommand)
-        }
-
-        switch keyName {
-        case "return", "enter": return (36, [])
-        case "tab": return (48, [])
-        case "escape", "esc": return (53, [])
-        case "space": return (49, [])
-        case "delete", "backspace": return (51, [])
-        case "up": return (126, [])
-        case "down": return (125, [])
-        case "left": return (123, [])
-        case "right": return (124, [])
-        default:
-            if let firstCharacter = keyName.first, keyName.count == 1 {
-                let uppercased = String(firstCharacter).uppercased()
-                if let scalar = uppercased.unicodeScalars.first {
-                    let keyMap: [UnicodeScalar: CGKeyCode] = [
-                        "A": 0, "B": 11, "C": 8, "D": 2, "E": 14, "F": 3, "G": 5, "H": 4,
-                        "I": 34, "J": 38, "K": 40, "L": 37, "M": 46, "N": 45, "O": 31, "P": 35,
-                        "Q": 12, "R": 15, "S": 1, "T": 17, "U": 32, "V": 9, "W": 13, "X": 7,
-                        "Y": 16, "Z": 6
-                    ]
-                    if let keyCode = keyMap[scalar] {
-                        return (keyCode, [])
-                    }
-                }
-            }
-            throw NSError(domain: "UIActionTool", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Unknown key: \(keyName)"])
-        }
-    }
-
-    private func describeFrontmostApplication() -> String {
-        guard let frontmostApplication = NSWorkspace.shared.frontmostApplication else {
-            return "No frontmost application"
-        }
-
-        let appName = frontmostApplication.localizedName ?? frontmostApplication.bundleIdentifier ?? "Unknown"
-        var windowTitle = ""
-
-        let appElement = AXUIElementCreateApplication(frontmostApplication.processIdentifier)
-        var focusedWindowValue: AnyObject?
-        if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWindowValue) == .success,
-           let focusedWindow = focusedWindowValue {
-            var titleValue: AnyObject?
-            if AXUIElementCopyAttributeValue(focusedWindow as! AXUIElement, kAXTitleAttribute as CFString, &titleValue) == .success,
-               let title = titleValue as? String {
-                windowTitle = title
-            }
-        }
-
-        if windowTitle.isEmpty {
-            return "Frontmost app: \(appName)"
-        }
-        return "Frontmost app: \(appName) — window: \(windowTitle)"
-    }
-}
+// ui_action (raw-coordinate clicks and global keystrokes) is gone. Drive replaces it:
+// see Agent/Drive/DriveTools.swift.
 
 // MARK: - Open Browser Tab
 
@@ -399,7 +216,16 @@ final class CaptureScreenTool: BackgroundAgentTool {
             ? captures.filter(\.isCursorScreen)
             : captures
 
-        guard let primaryCapture = selectedCaptures.first(where: { $0.isCursorScreen })
+        // While driving an app, look at the screen that app's window is on, not just the pointer's screen.
+        var drivenWindowCapture: CompanionScreenCapture?
+        if let job = AgentJobContext.current, let windowFrame = await job.drive.targetWindowFrameInGlobalCG, !windowFrame.isEmpty {
+            let primaryDisplayHeight = await MainActor.run { NSScreen.screens.first?.frame.height ?? 0 }
+            let centerInAppKit = CGPoint(x: windowFrame.midX, y: primaryDisplayHeight - windowFrame.midY)
+            drivenWindowCapture = captures.first { $0.displayFrame.contains(centerInAppKit) }
+        }
+
+        guard let primaryCapture = drivenWindowCapture
+            ?? selectedCaptures.first(where: { $0.isCursorScreen })
             ?? selectedCaptures.first else {
             return .textOnly("No screen capture available")
         }
@@ -419,10 +245,24 @@ final class CaptureScreenTool: BackgroundAgentTool {
             screenshotHeightInPixels: primaryCapture.screenshotHeightInPixels
         ) ?? primaryCapture.imageData
 
+        // Remember how this image maps onto its display, so a point named in its pixels
+        // can be turned into the right place on the right screen (drive_click_point).
+        var captureIDNote = ""
+        if let job = AgentJobContext.current {
+            let primaryDisplayHeight = await MainActor.run { NSScreen.screens.first?.frame.height ?? 0 }
+            let captureID = await job.drive.registerCapture(
+                screenshotWidth: primaryCapture.screenshotWidthInPixels,
+                screenshotHeight: primaryCapture.screenshotHeightInPixels,
+                displayFrameInAppKitPoints: primaryCapture.displayFrame,
+                primaryDisplayHeight: primaryDisplayHeight
+            )
+            captureIDNote = " capture_id: \(captureID)."
+        }
+
         var textLines: [String] = []
         textLines.append(describeFrontmostApplicationForCapture())
         textLines.append(
-            "\(primaryCapture.label) — saved to \(fileURL.path) (\(primaryCapture.screenshotWidthInPixels)x\(primaryCapture.screenshotHeightInPixels) px). Current screen attached below."
+            "\(primaryCapture.label) — saved to \(fileURL.path) (\(primaryCapture.screenshotWidthInPixels)x\(primaryCapture.screenshotHeightInPixels) px).\(captureIDNote) Current screen attached below."
         )
 
         return .withVisionImage(

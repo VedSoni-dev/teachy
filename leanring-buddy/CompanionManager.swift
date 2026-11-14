@@ -1917,7 +1917,7 @@ final class CompanionManager: ObservableObject {
         - If completing this step would require ANY destructive or financial action, STOP
           immediately, do NOT proceed, and explain in plain language what you were trying to do
           and why you stopped — then guide the user to do it themselves safely.
-        - Prefer navigation and read-only actions over writes. Use ui_action only for clicks
+        - Prefer navigation and read-only actions over writes. Use the drive_ tools only for presses
           and typed text that are clearly part of the step above.
         - After finishing, report what you did in one short, natural sentence.
         """
@@ -2143,7 +2143,7 @@ final class CompanionManager: ObservableObject {
 
         Tool preference: use control_app for app open/activate/quit/hide; use control_browser for \
         tab/window operations in the frontmost browser. Prefer these purpose-built native tools over \
-        run_applescript or ui_action clicking wherever they cover the need.
+        the drive_ tools wherever they cover the need.
 
         When done, report what you did in one short, natural sentence. No markdown, no bullet points.
         """
@@ -2155,6 +2155,7 @@ final class CompanionManager: ObservableObject {
                 conversationHistory: [],
                 screenCaptures: screenCaptures,
                 mouseOutlineContext: nil,
+                toolset: .nativeControl,
                 onToolStep: { [weak self] agentToolStep in
                     self?.coursesManager.recordCourseToolStep(agentToolStep)
                 }

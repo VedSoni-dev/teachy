@@ -116,7 +116,7 @@ final class AppConnectorManager: ObservableObject {
         let connectedConnectors = connectionStates.filter { $0.status == .connected }
         guard !connectedConnectors.isEmpty else { return "" }
 
-        var lines = ["Connections / custom app tools (prefer these over ui_action when the task matches):"]
+        var lines = ["Connections / custom app tools (prefer these over the drive_ tools when the task matches):"]
         for connector in connectedConnectors {
             let toolList = connector.registeredToolNames
                 .map { registeredName in
@@ -128,7 +128,7 @@ final class AppConnectorManager: ObservableObject {
             lines.append("- \(connector.name) (\(connector.connectorID), \(transportLabel))\(descriptionSuffix)")
             lines.append("  Tools: \(toolList). Call with the full registered name, e.g. \(connector.registeredToolNames.first ?? "connector_id__tool_name").")
         }
-        lines.append("- Connection tools talk directly to the app's API. Do not use ui_action or screenshots for tasks these tools can handle.")
+        lines.append("- Connection tools talk directly to the app's API. Do not use the drive_ tools or screenshots for tasks these tools can handle.")
         return lines.joined(separator: "\n")
     }
 

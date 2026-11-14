@@ -233,12 +233,10 @@ enum TeachyCourseCapabilityCard {
     static let text = """
     YOUR MAC CAPABILITIES (course mode — use when policy allows):
     - see the live screen (screenshot attached every turn; invisible A–X / 1–16 grid for [POINT:…])
-    - open_browser_tab: open a URL in their browser
-    - bash / read_file / write_file: terminal + files when the goal needs it
-    - run_applescript: control native Mac apps
-    - ui_action: click, type, keys in the frontmost app (Accessibility) — last resort for "do it for me"
+    - web_search / web_fetch: look something up on the public web
+    - read_file: read a normal file in their home folder
     - capture_screen: fresher look mid-turn if the UI changed
-    - authenticated_fetch / list_browser_sessions: logged-in web pages via their browser cookies
+    - drive_snapshot, then drive_press / drive_set_text / drive_menu / drive_key / drive_scroll: do a step FOR them inside one app, for "do it for me". Teachy asks them first, by itself; never ask in your reply
 
     teaching rules for tools:
     - default is coach + POINT so THEY do the move (learning > automation)

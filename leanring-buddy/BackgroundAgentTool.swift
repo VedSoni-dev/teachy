@@ -8,13 +8,24 @@ protocol BackgroundAgentTool {
     var jsonSchema: [String: Any] { get }
 
     func execute(arguments: [String: Any]) async throws -> String
+
+    /// For tools that are one HTTP call (connectors): the method, so the permission
+    /// gate can tell a read from a delete. nil for everything else.
+    var httpMethodForPolicy: String? { get }
+}
+
+extension BackgroundAgentTool {
+    var httpMethodForPolicy: String? { nil }
 }
 
 // MARK: - Bash Tool
 
 final class BashTool: BackgroundAgentTool {
     let name = "bash"
-    let description = "Run a shell command on the user's Mac. Returns stdout + stderr. Use for file operations, git, npm, scripting, etc."
+    let description = "Run a shell command on the user's Mac (zsh). Returns stdout, stderr and the exit code. Not interactive: nothing can be typed into the command. Output past about 200 KB is dropped."
+
+    static let defaultTimeoutSeconds: TimeInterval = 30
+    static let maximumTimeoutSeconds: TimeInterval = 300
 
     let jsonSchema: [String: Any] = [
         "type": "object",
@@ -22,58 +33,44 @@ final class BashTool: BackgroundAgentTool {
             "command": [
                 "type": "string",
                 "description": "The shell command to execute"
+            ],
+            "timeout_seconds": [
+                "type": "number",
+                "description": "How long to let it run. Default 30, at most 300. Use more for installs and builds."
             ]
         ],
         "required": ["command"]
     ]
 
+    static func timeoutSeconds(from arguments: [String: Any]) -> TimeInterval {
+        let requested = (arguments["timeout_seconds"] as? NSNumber)?.doubleValue ?? defaultTimeoutSeconds
+        return min(max(1, requested), maximumTimeoutSeconds)
+    }
+
     func execute(arguments: [String: Any]) async throws -> String {
         guard let command = arguments["command"] as? String else {
             throw NSError(domain: "BashTool", code: -1, userInfo: [NSLocalizedDescriptionKey: "Missing 'command' argument"])
         }
+        let timeout = Self.timeoutSeconds(from: arguments)
+        let home = NSHomeDirectory()
 
-        // Run off the MainActor — waitUntilExit would freeze the UI (course spinner stuck).
-        return try await Task.detached(priority: .userInitiated) {
-            try Self.runShellCommand(command, timeoutSeconds: 20)
-        }.value
-    }
-
-    private static func runShellCommand(_ command: String, timeoutSeconds: TimeInterval) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
-
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-
-        try process.run()
-
-        let timeoutDeadline = Date().addingTimeInterval(timeoutSeconds)
-        while process.isRunning {
-            if Date() > timeoutDeadline {
-                process.terminate()
-                throw NSError(
-                    domain: "BashTool",
-                    code: -2,
-                    userInfo: [NSLocalizedDescriptionKey: "Command timed out after \(Int(timeoutSeconds))s"]
-                )
-            }
-            Thread.sleep(forTimeInterval: 0.05)
+        // Off the MainActor: the runner blocks its thread until the command ends.
+        // It drains stdout and stderr while the command runs, caps what it keeps,
+        // and on timeout or Stop kills the command's whole process group.
+        let worker = Task.detached(priority: .userInitiated) {
+            try ShellRunner.run(
+                command: command,
+                timeoutSeconds: timeout,
+                workingDirectory: home,
+                isCancelled: { Task.isCancelled }
+            )
         }
-
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: outputData, encoding: .utf8) ?? ""
-        let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
-
-        let exitCode = process.terminationStatus
-        var result = ""
-        if !output.isEmpty { result += "stdout:\n\(output)\n" }
-        if !errorOutput.isEmpty { result += "stderr:\n\(errorOutput)\n" }
-        result += "exit code: \(exitCode)"
-        return result
+        let result = try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+        return result.report
     }
 }
 
@@ -142,58 +139,4 @@ final class WriteFileTool: BackgroundAgentTool {
     }
 }
 
-// MARK: - Tool Registry
-
-final class BackgroundAgentToolRegistry {
-    private var tools: [String: any BackgroundAgentTool] = [:]
-    private var connectorToolNames: Set<String> = []
-
-    init() {
-        registerBuiltInTools()
-    }
-
-    private func registerBuiltInTools() {
-        register(BashTool())
-        register(ReadFileTool())
-        register(WriteFileTool())
-        register(RunAppleScriptTool())
-        register(OpenBrowserTabTool())
-        register(UIActionTool())
-        register(CaptureScreenTool())
-        register(AuthenticatedFetchTool())
-        register(WebSearchTool())
-        register(WebFetchTool())
-        register(ListBrowserSessionsTool())
-        // Phase L: dedicated native app/browser control tools.
-        // Registered alongside the existing tools so they are available to Phase K
-        // .act steps, course "do it for me", and the new one-shot [DO:] path alike.
-        register(ControlAppTool())
-        register(ControlBrowserTool())
-    }
-
-    func register(_ tool: any BackgroundAgentTool) {
-        tools[tool.name] = tool
-    }
-
-    func registerConnectorTools(_ connectorTools: [any BackgroundAgentTool]) {
-        for connectorTool in connectorTools {
-            register(connectorTool)
-            connectorToolNames.insert(connectorTool.name)
-        }
-    }
-
-    func unregisterAllConnectorTools() {
-        for connectorToolName in connectorToolNames {
-            tools.removeValue(forKey: connectorToolName)
-        }
-        connectorToolNames.removeAll()
-    }
-
-    func allTools() -> [any BackgroundAgentTool] {
-        Array(tools.values)
-    }
-
-    func tool(named name: String) -> (any BackgroundAgentTool)? {
-        tools[name]
-    }
-}
+// The tool registry (and the permission gate every call passes through) lives in Agent/AgentToolRegistry.swift.
