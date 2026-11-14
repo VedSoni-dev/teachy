@@ -16,19 +16,8 @@ struct NotchHomeTabView: View {
     @ObservedObject private var softwareUpdater = TeachySoftwareUpdater.shared
     @ObservedObject private var settings = TeachySettings.shared
 
-    /// Flips locally the moment a reaction is tapped so the card disappears without
-    /// needing to reopen the tab (the durable gate lives on `LearnerModel.lastRelationshipCheckInAt`).
-    @State private var isCheckInDismissed: Bool = false
-    /// Picked once per appearance (see `relationshipCheckInSection`'s `.onAppear`) so the
-    /// templated line doesn't re-roll on every unrelated re-render of this view.
-    @State private var cachedRelationshipCheckInLine: String?
-
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            relationshipCheckInSection
-
-            proactiveMomentsSection
-
             pushToTalkInstructions
 
             PublikAccountSection()
@@ -59,8 +48,6 @@ struct NotchHomeTabView: View {
 
             BrainMemorySection()
 
-            teachyRemembersSection
-
             watchIntroAgainButton
 
             dmFeedbackButton
@@ -77,47 +64,23 @@ struct NotchHomeTabView: View {
             .padding(.bottom, -6)
     }
 
-    /// Engine-computed wins and nudges (level-ups, retention reminders, celebrations)
-    /// queued since the last chat. They also get offered to the coach's next spoken
-    /// turn and are consumed there — this card is the visual mirror until that happens.
-    @ViewBuilder
-    private var proactiveMomentsSection: some View {
-        if !companionManager.pendingProactiveMoments.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.learnAccent)
-                    Text("Since last time")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(DS.Colors.textPrimary)
-                }
-
-                ForEach(companionManager.pendingProactiveMoments, id: \.self) { momentText in
-                    Text("· \(momentText)")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassCard(tint: DS.Colors.learnAccent, prominent: true)
-        }
-    }
-
     private var pushToTalkInstructions: some View {
         VStack(alignment: .leading, spacing: 8) {
             PushToTalkShortcutPickerRow(
                 shortcutMonitor: companionManager.globalPushToTalkShortcutMonitor
             )
 
-            Text("Ask about your screen, or talk during a course for hints and help.")
+            Text("Ask anything about what's on your screen. Teachy answers out loud, and points or draws right on it.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text("While you hold the keys, move the pointer to circle the thing you mean.")
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Say \u{201C}do it for me\u{201D} and it takes the job. It asks before anything risky.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -135,190 +98,6 @@ struct NotchHomeTabView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
-    }
-
-    private var teachyRemembersSection: some View {
-        let learnerModel = companionManager.teachyEngine.getLearnerModel()
-        let datedFacts = learnerModel.datedPersonalFacts
-
-        // How long this learner has been using Teachy, shown as a header line
-        // so there's always a visible signal that Teachy remembers across time.
-        let totalDaysLearning = Calendar.current.dateComponents(
-            [.day],
-            from: learnerModel.createdAt,
-            to: Date()
-        ).day ?? 0
-        let learningDurationLine: String? = totalDaysLearning >= 1
-            ? "Learning with Teachy for \(totalDaysLearning) day\(totalDaysLearning == 1 ? "" : "s")"
-            : nil
-
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("Teachy remembers")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(DS.Colors.textPrimary)
-
-            if let durationLine = learningDurationLine {
-                Text(durationLine)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DS.Colors.learnAccent.opacity(0.8))
-            }
-
-            if datedFacts.isEmpty {
-                Text("Nothing yet — the more you talk, the more Teachy remembers.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(datedFacts.suffix(6).reversed()), id: \.text) { fact in
-                        HStack(alignment: .top, spacing: 6) {
-                            Text("·")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundColor(DS.Colors.textTertiary)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(fact.text)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(DS.Colors.textSecondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Text(LearnerTemporalContext.relativeTimeLabel(for: fact.capturedAt))
-                                    .font(.system(size: 9))
-                                    .foregroundColor(DS.Colors.textTertiary.opacity(0.7))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard()
-    }
-
-    // MARK: - Relationship check-in (outside any lesson)
-
-    /// Shows only when there's actually a personal fact to reference AND it hasn't
-    /// been shown (and reacted to) in the last 24 hours — avoids repeating the same
-    /// callback every time someone opens the panel.
-    private var shouldShowRelationshipCheckIn: Bool {
-        guard !isCheckInDismissed else { return false }
-        let learnerModel = companionManager.teachyEngine.getLearnerModel()
-        guard !learnerModel.personalFacts.isEmpty else { return false }
-        guard let lastCheckIn = learnerModel.lastRelationshipCheckInAt else { return true }
-        return Date().timeIntervalSince(lastCheckIn) > 86400
-    }
-
-    /// A project that's been idle at least a day — the check-in card offers to
-    /// resume it (project momentum beats small talk when both are available).
-    private var staleResumableProject: TeachyProject? {
-        companionManager.teachyEngine.activeProjects
-            .filter { !$0.steps.isEmpty && Date().timeIntervalSince($0.lastWorkedAt) > 86400 }
-            .sorted { $0.lastWorkedAt > $1.lastWorkedAt }
-            .first
-    }
-
-    @ViewBuilder
-    private var relationshipCheckInSection: some View {
-        if let staleProject = staleResumableProject, !isCheckInDismissed {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Want to keep going on \(staleProject.title)? You're at step \(min(staleProject.currentStepIndex + 1, staleProject.steps.count)) of \(staleProject.steps.count).")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 10) {
-                    Button {
-                        isCheckInDismissed = true
-                        companionManager.submitSyntheticCompanionRequest(
-                            "Let's keep going on my project \"\(staleProject.title)\" — pick up where we left off."
-                        )
-                    } label: {
-                        Text("Resume")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(Color.black.opacity(0.85))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 5)
-                            .background(Capsule().fill(DS.Colors.learnAccent))
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-
-                    Button {
-                        isCheckInDismissed = true
-                    } label: {
-                        Text("Not now")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.Colors.textTertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-
-                    Spacer(minLength: 0)
-                }
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassCard(tint: DS.Colors.learnAccent, prominent: true)
-        } else if shouldShowRelationshipCheckIn {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(cachedRelationshipCheckInLine ?? relationshipCheckInLine())
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 10) {
-                    Button {
-                        companionManager.teachyEngine.recordRelationshipCheckInReaction(wasPositive: true)
-                        isCheckInDismissed = true
-                    } label: {
-                        Image(systemName: "hand.thumbsup")
-                    }
-                    .dsIconButtonStyle(size: 28, tooltip: "Good update")
-
-                    Button {
-                        companionManager.teachyEngine.recordRelationshipCheckInReaction(wasPositive: false)
-                        isCheckInDismissed = true
-                    } label: {
-                        Image(systemName: "hand.thumbsdown")
-                    }
-                    .dsIconButtonStyle(size: 28, isDestructiveOnHover: true, tooltip: "Not really")
-
-                    Spacer(minLength: 0)
-                }
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassCard(tint: DS.Colors.learnAccent, prominent: true)
-            .onAppear {
-                if cachedRelationshipCheckInLine == nil {
-                    cachedRelationshipCheckInLine = relationshipCheckInLine()
-                }
-            }
-        }
-    }
-
-    /// Templated callback line — no LLM call, same "simple heuristic over classifier"
-    /// philosophy already used for humor/mood detection elsewhere in this codebase.
-    /// Tone varies by `humorReceptivity` so repeat visits don't feel robotic.
-    private func relationshipCheckInLine() -> String {
-        let learnerModel = companionManager.teachyEngine.getLearnerModel()
-        let recentFacts = Array(learnerModel.personalFacts.suffix(4))
-        guard let fact = recentFacts.randomElement() ?? learnerModel.personalFacts.last else {
-            return ""
-        }
-        switch learnerModel.humorReceptivity {
-        case .warm:
-            let templates = [
-                "Ok but real talk — how's the \(fact) thing going?",
-                "Still thinking about \(fact). Update me?",
-            ]
-            return templates.randomElement() ?? templates[0]
-        case .efficient, .neutral, .none:
-            let templates = [
-                "Last time you mentioned \(fact) — how's that going?",
-                "Quick one: any update on \(fact)?",
-            ]
-            return templates.randomElement() ?? templates[0]
-        }
     }
 
     private var softwareUpdatesSection: some View {
