@@ -161,6 +161,8 @@ final class BackgroundAgentToolRegistry {
         register(UIActionTool())
         register(CaptureScreenTool())
         register(AuthenticatedFetchTool())
+        register(WebSearchTool())
+        register(WebFetchTool())
         register(ListBrowserSessionsTool())
         // Phase L: dedicated native app/browser control tools.
         // Registered alongside the existing tools so they are available to Phase K

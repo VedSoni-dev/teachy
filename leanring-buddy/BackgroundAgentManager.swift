@@ -35,23 +35,15 @@ final class BackgroundAgentManager: ObservableObject {
     /// OpenRouter model ID sent on each agent request.
     var selectedModel: String
 
-    /// When user has an API key, calls OpenRouter directly (no proxy needed).
-    private var useDirectAPI: Bool { TeachyAPIKeyStore.isConfigured }
-    private var effectiveURL: URL {
-        if useDirectAPI {
-            return URL(string: "https://openrouter.ai/api/v1/chat/completions")!
-        }
-        return proxyURL
-    }
 
     private static let baseSystemPrompt = """
     You are Teachy, the user's Mac teaching companion. You can execute real tasks by calling tools.
 
     The user's first message may include live screenshots of their screen(s). You can see them directly — the cursor screen is labeled as primary focus. Use capture_screen if you need a fresher look mid-task.
 
-    Web tools (handled by OpenRouter — search and fetch run server-side):
-    - openrouter:web_search: Search the web for current information. Use 1–2 focused queries, then answer.
-    - openrouter:web_fetch: Fetch full page content from a public URL found during search.
+    Web tools:
+    - web_search: Search the web for current information. Use 1–2 focused queries, then answer.
+    - web_fetch: Fetch the readable text of a public URL found during search.
 
     Mac tools (run locally on the device):
     - bash: Run shell commands (terminal, scripts, git, npm, etc.)
@@ -522,8 +514,8 @@ final class BackgroundAgentManager: ObservableObject {
         tools: [[String: Any]],
         model: String
     ) async throws -> [String: Any] {
+        // `model` is ignored: TeachyAIRouter picks the publik tier for agent work.
         var body: [String: Any] = [
-            "model": model,
             "max_tokens": 4096,
             "messages": messages
         ]
@@ -533,27 +525,11 @@ final class BackgroundAgentManager: ObservableObject {
             body["parallel_tool_calls"] = false
         }
 
-        var request = URLRequest(url: effectiveURL)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 120
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        if useDirectAPI, let apiKey = TeachyAPIKeyStore.apiKey {
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            request.setValue("https://teachy.app", forHTTPHeaderField: "HTTP-Referer")
-            request.setValue("Teachy", forHTTPHeaderField: "X-Title")
-        }
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            let errorText = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw NSError(domain: "BackgroundAgent", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "API error: \(errorText)"])
-        }
+        let data = try await TeachyAIRouter.sendJSON(
+            job: .agent,
+            hasImages: Self.messagesContainImages(messages),
+            body: body
+        )
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw NSError(domain: "BackgroundAgent", code: -1,
@@ -563,29 +539,16 @@ final class BackgroundAgentManager: ObservableObject {
         return json
     }
 
+    private static func messagesContainImages(_ messages: [[String: Any]]) -> Bool {
+        messages.contains { message in
+            guard let blocks = message["content"] as? [[String: Any]] else { return false }
+            return blocks.contains { ($0["type"] as? String) == "image_url" }
+        }
+    }
+
     // MARK: - Tool Definitions
 
     private func buildToolsPayload(allowedToolNames: Set<String>? = nil) -> [[String: Any]] {
-        let openRouterServerTools: [[String: Any]] = allowedToolNames == nil ? [
-            [
-                "type": "openrouter:web_search",
-                "parameters": [
-                    "engine": "exa",
-                    "max_results": 5,
-                    "max_total_results": 10,
-                    "max_characters": 2000
-                ]
-            ],
-            [
-                "type": "openrouter:web_fetch",
-                "parameters": [
-                    "engine": "exa",
-                    "max_uses": 5,
-                    "max_content_tokens": 8000
-                ]
-            ]
-        ] : []
-
         let localFunctionTools = toolRegistry.allTools()
             .filter { tool in
                 guard let allowedToolNames else { return true }
@@ -602,6 +565,6 @@ final class BackgroundAgentManager: ObservableObject {
             ] as [String: Any]
         }
 
-        return openRouterServerTools + localFunctionTools
+        return localFunctionTools
     }
 }

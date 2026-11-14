@@ -891,11 +891,13 @@ enum ClickyCourseCatalog {
                 id: "write-the-prompt",
                 title: "Plan in ChatGPT",
                 goal: "Interview for context, write a sharp prompt, open ChatGPT, paste it, and lock a concrete site plan.",
-                coachAsk: """Intake is done. Do this in ONE flow — do not wait for them to say next step between beats:
+                coachAsk: """
+Intake is done. Do this in ONE flow — do not wait for them to say next step between beats:
 1) Ask planning questions ONE at a time (who it's for, 10-second feeling, pages, must-haves, tone) until you have enough context.
 2) Write the perfect first ChatGPT prompt from their answers and briefly say what makes it good.
 3) IMMEDIATELY open https://chatgpt.com (open_browser_tab) and paste the full prompt for them — they must not retype or hunt the link.
-4) Help them refine until the plan is solid (purpose, page list, landing outline). When they say the plan is good, tell them to say next step.""",
+4) Help them refine until the plan is solid (purpose, page list, landing outline). When they say the plan is good, tell them to say next step.
+""",
                 doneWhen: "ChatGPT shows a concrete site plan (purpose, page list, landing outline) on screen, or the learner confirmed the plan is good.",
                 artifactDelta: "Plan locked",
                 remediationGoalID: "intake",

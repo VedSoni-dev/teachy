@@ -24,10 +24,14 @@ struct NotchPanelView: View {
     // view would re-trap key-less users forever, and the Home tab (where the key
     // can be added later) would be unreachable.
     @AppStorage("teachyHasSkippedAPIKeySetup") private var hasSkippedAPIKeySetup = false
+    @ObservedObject private var publikSession = TeachyPublikSession.shared
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
+                if publikSession.isReady {
+                    PublikBillingBanner()
+                }
                 tabContent
                     .id(notchManager.selectedTab)
                     .transition(
@@ -50,8 +54,9 @@ struct NotchPanelView: View {
     }
 
     private var needsSetup: Bool {
-        !companionManager.allPermissionsGranted
-            || (!TeachyAPIKeyStore.isConfigured && !hasSkippedAPIKeySetup)
+        !publikSession.isReady
+            || !companionManager.allPermissionsGranted
+            || (publikSession.choice == "own_key" && !TeachyAPIKeyStore.isConfigured && !hasSkippedAPIKeySetup)
             || !companionManager.hasCompletedOnboarding
     }
 

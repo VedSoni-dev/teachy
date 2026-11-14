@@ -27,11 +27,14 @@ struct NotchSetupOnboardingView: View {
     // re-trapped on the key screen. The Home tab's AI Brain section is the
     // add-a-key-later path.
     @AppStorage("teachyHasSkippedAPIKeySetup") private var hasSkippedAPIKeySetup = false
+    @ObservedObject private var publikSession = TeachyPublikSession.shared
 
     @ViewBuilder
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if !companionManager.allPermissionsGranted {
+            if !publikSession.isReady {
+                PublikGateView(gate: publikSession.gate)
+            } else if !companionManager.allPermissionsGranted {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Let's get set up")
                         .font(.system(size: 14, weight: .bold))
@@ -46,7 +49,7 @@ struct NotchSetupOnboardingView: View {
                 PermissionChoreographyView(companionManager: companionManager)
             } else if !hasSeenAutomationPermissionExplainer {
                 automationPermissionExplainer
-            } else if !TeachyAPIKeyStore.isConfigured && !hasSkippedAPIKeySetup {
+            } else if publikSession.choice == "own_key" && !TeachyAPIKeyStore.isConfigured && !hasSkippedAPIKeySetup {
                 apiKeySetupView
             } else if !companionManager.hasCompletedOnboarding {
                 teachyProductOnboarding
@@ -61,7 +64,7 @@ struct NotchSetupOnboardingView: View {
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(DS.Colors.textPrimary)
 
-                Text("Paste your OpenRouter API key so Teachy can talk to AI models. Get one free at openrouter.ai.")
+                Text("You chose your own key. Paste your OpenRouter API key — Teachy still picks the models for you. Get one at openrouter.ai.")
                     .font(.system(size: 11))
                     .foregroundColor(DS.Colors.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)

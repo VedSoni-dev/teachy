@@ -47,6 +47,10 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
         UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 0])
 
+        // Sign in with publik runs before any Teachy screen. PUBLIK_SELF_TEST=1
+        // makes it print its self-test line and exit here.
+        TeachyPublikSession.shared.start()
+
         ClickyAnalytics.configure()
         ClickyAnalytics.trackAppOpened()
 

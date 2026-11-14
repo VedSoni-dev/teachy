@@ -18,10 +18,6 @@ struct NotchHomeTabView: View {
     @State private var elevenLabsError: String?
     @State private var elevenLabsIsConfigured: Bool = TeachyElevenLabsKeyStore.isConfigured
 
-    @State private var openRouterAPIKeyInput: String = ""
-    @State private var openRouterIsValidating: Bool = false
-    @State private var openRouterError: String?
-    @State private var openRouterIsConfigured: Bool = TeachyAPIKeyStore.isConfigured
 
     /// Flips locally the moment a reaction is tapped so the card disappears without
     /// needing to reopen the tab (the durable gate lives on `LearnerModel.lastRelationshipCheckInAt`).
@@ -44,13 +40,11 @@ struct NotchHomeTabView: View {
 
             softwareUpdatesSection
 
-            aiBrainSection
+            PublikAccountSection()
 
             voiceSection
 
             cursorColorSection
-
-            modeAndModelSection
 
             watchIntroAgainButton
 
@@ -124,12 +118,12 @@ struct NotchHomeTabView: View {
                 .font(.system(size: 12, weight: .bold))
                 .foregroundColor(DS.Colors.textPrimary)
 
-            Text("Teachy is free by design. Screen captures and voice go to your configured Teachy proxy so the tutor can see what you’re doing — only for the turn you’re in. Course memory stays on this Mac. You can wipe progress anytime by Retaking a path.")
+            Text("Screen captures go to publik’s AI so the tutor can see what you’re doing — only for the turn you’re in. publik doesn’t train on them or keep them. Voice is transcribed on this Mac, and course memory stays here too. You can wipe progress anytime by Retaking a path.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("We don’t sell your screen. No subscription funnel.")
+            Text("We don’t sell your screen.")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(DS.Colors.learnAccent)
         }
@@ -364,136 +358,6 @@ struct NotchHomeTabView: View {
         .glassCard()
     }
 
-    /// OpenRouter key management after onboarding — the onboarding key step is
-    /// skippable, so this is the only place a downloaded-app user can add (or
-    /// rotate) the key that powers everything. With a key, Teachy talks to
-    /// OpenRouter directly; without one, it needs the developer proxy.
-    private var aiBrainSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("AI Brain")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(DS.Colors.textPrimary)
-
-            Text("Your OpenRouter API key powers Teachy's coaching, courses, and screen understanding. Get one free at openrouter.ai.")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if openRouterIsConfigured {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.learnAccent)
-                    Text("Key configured — Teachy talks to OpenRouter directly")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
-
-                    Spacer()
-
-                    Button {
-                        TeachyAPIKeyStore.apiKey = nil
-                        openRouterAPIKeyInput = ""
-                        openRouterError = nil
-                        openRouterIsConfigured = false
-                        companionManager.refreshBackendReachability()
-                    } label: {
-                        Text("Remove")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.red)
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                }
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    SecureField("sk-or-v1-...", text: $openRouterAPIKeyInput)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(DS.Colors.textPrimary)
-                        .padding(8)
-                        .glassCard(cornerRadius: 8, tint: DS.Colors.learnAccent)
-                        .onSubmit {
-                            validateAndSaveOpenRouterKey()
-                        }
-
-                    if let error = openRouterError {
-                        Text(error)
-                            .font(.system(size: 10))
-                            .foregroundColor(.red)
-                    }
-                }
-
-                Button {
-                    validateAndSaveOpenRouterKey()
-                } label: {
-                    HStack {
-                        if openRouterIsValidating {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                        } else {
-                            Text("Save")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(DS.Colors.learnAccent)
-                    )
-                    .foregroundColor(.white)
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
-                .disabled(
-                    openRouterAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || openRouterIsValidating
-                )
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard()
-    }
-
-    /// Same validation as the onboarding key step — a real request against
-    /// OpenRouter's models endpoint, so "saved" reliably means "working".
-    private func validateAndSaveOpenRouterKey() {
-        let key = openRouterAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return }
-
-        openRouterIsValidating = true
-        openRouterError = nil
-
-        Task {
-            var request = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/models")!)
-            request.timeoutInterval = 10
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-
-            do {
-                let (_, response) = try await URLSession.shared.data(for: request)
-                if let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
-                    TeachyAPIKeyStore.apiKey = key
-                    await MainActor.run {
-                        openRouterIsValidating = false
-                        openRouterIsConfigured = true
-                        companionManager.refreshBackendReachability()
-                    }
-                } else {
-                    await MainActor.run {
-                        openRouterIsValidating = false
-                        openRouterError = "That key doesn't seem valid. Check it and try again."
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    openRouterIsValidating = false
-                    openRouterError = "Couldn't reach OpenRouter. Check your connection."
-                }
-            }
-        }
-    }
-
     private var voiceSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Voice")
@@ -725,16 +589,6 @@ struct NotchHomeTabView: View {
         }
         .buttonStyle(.plain)
         .pointerCursor()
-    }
-
-    private var modeAndModelSection: some View {
-        openRouterModelPickerRow(
-            title: "Tutor model",
-            models: OpenRouterModelOption.models,
-            selectedModelID: companionManager.selectedModel
-        ) { modelID in
-            companionManager.setSelectedModel(modelID)
-        }
     }
 
     private var dmFeedbackButton: some View {

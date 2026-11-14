@@ -560,9 +560,9 @@ private enum BackgroundAgentSideDockColors {
 private enum BackgroundAgentSideDockFormatting {
     static func formattedToolName(_ toolName: String) -> String {
         switch toolName {
-        case "openrouter:web_search":
+        case "web_search", "openrouter:web_search":
             return "web search"
-        case "openrouter:web_fetch":
+        case "web_fetch", "openrouter:web_fetch":
             return "web fetch"
         case "authenticated_fetch":
             return "authenticated fetch"

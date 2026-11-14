@@ -2152,9 +2152,8 @@ final class CompanionManager: ObservableObject {
 
     /// Starts a guided course session after verifying the proxy is reachable.
     func refreshBackendReachability() {
-        // BYO-key users talk to OpenRouter directly — no proxy required, so the
-        // health probe would only produce a false "backend offline" for them.
-        if TeachyAPIKeyStore.isConfigured {
+        // publik (or the own-key path) is the only backend; there is no local proxy.
+        if TeachyAIRouter.isReadyForAI {
             isBackendReachable = true
             backendConnectionHint = nil
             return
@@ -2209,9 +2208,8 @@ final class CompanionManager: ObservableObject {
         speechSynthesizer.stopPlayback()
 
         currentResponseTask = Task {
-            // BYO-key users skip the proxy health gate — their course calls go
-            // straight to OpenRouter with their own key.
-            if !TeachyAPIKeyStore.isConfigured {
+            // Courses need a signed-in publik session (or the own-key path) first.
+            if !TeachyAIRouter.isReadyForAI {
                 let healthResult = await ClickyProxyHealthChecker.fetchHealth()
                 guard healthResult.isReachable, healthResult.isOpenRouterConfigured else {
                     isBackendReachable = false
@@ -2219,7 +2217,7 @@ final class CompanionManager: ObservableObject {
                     voiceState = .responding
                     do {
                         try await speechSynthesizer.speakText(
-                            "i need an AI backend first — paste your OpenRouter key in the Home tab, then hit start again."
+                            "sign in with publik in the Teachy panel first, then hit start again."
                         )
                     } catch {
                         print("⚠️ Course proxy hint TTS error: \(error)")
@@ -2440,7 +2438,7 @@ final class CompanionManager: ObservableObject {
             isBackendReachable = false
             // With a key configured a connection error means OpenRouter itself is
             // unreachable (network trouble) — the proxy hint would mislead.
-            backendConnectionHint = TeachyAPIKeyStore.isConfigured ? nil : Self.localProxyStartHint
+            backendConnectionHint = TeachyAIRouter.isReadyForAI ? nil : Self.localProxyStartHint
         }
         speakErrorMessage(companionAPIErrorUtterance(for: error))
     }
@@ -2821,7 +2819,7 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    private static let localProxyStartHint = "cd worker && cp .env.template .env  # add OPENROUTER_API_KEY\nnpm run local"
+    private static let localProxyStartHint = "Open the Teachy panel and sign in with publik."
 
     private static func screenCaptureFailureUtterance() -> String {
         "i can't see your screen right now. open system settings, screen recording, remove teachy and add it back, then restart the app."
@@ -2832,15 +2830,23 @@ final class CompanionManager: ObservableObject {
     /// someone who downloaded a DMG, and "check your internet" is wrong advice
     /// for a developer whose local proxy just isn't running.
     private func companionAPIErrorUtterance(for error: Error) -> String {
+        if let billingError = error as? TeachyAIBillingError {
+            // The panel shows publik's message with its one top-up link.
+            return "\(billingError.message.lowercased()) i put the link in the Teachy panel."
+        }
+        if error is TeachyAINotReadyError {
+            return "sign in with publik in the Teachy panel first, then try again."
+        }
+
         let errorDescription = error.localizedDescription.lowercased()
-        let userHasOwnKey = TeachyAPIKeyStore.isConfigured
+        let userHasOwnKey = TeachyAIRouter.isReadyForAI
 
         if let urlError = error as? URLError {
             switch urlError.code {
             case .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet:
                 return userHasOwnKey
                     ? "i can't reach the internet right now — check your connection and try again."
-                    : "i need an AI backend — paste your free OpenRouter key in the Home tab, then try again."
+                    : "sign in with publik in the Teachy panel, then try again."
             case .timedOut:
                 return "that took too long — the AI service might be slow right now. try again in a moment."
             default:
@@ -2849,26 +2855,22 @@ final class CompanionManager: ObservableObject {
         }
 
         if errorDescription.contains("image input") || errorDescription.contains("no endpoints found") {
-            return "sorry, that model can't see your screen. pick a different model in the Home tab, then try again."
+            return "sorry, i couldn't read your screen that time. try again in a moment."
         }
 
         if errorDescription.contains("429") || errorDescription.contains("rate-limit") || errorDescription.contains("rate limit") {
-            return userHasOwnKey
-                ? "the AI model is rate limited right now. wait a minute and try again, or switch models in the Home tab."
-                : "the free AI model is rate limited right now. wait a minute and try again — or add your own OpenRouter key in the Home tab to skip the free-tier limits."
+            return "the AI is busy right now. wait a minute and try again."
         }
 
         if errorDescription.contains("401") || errorDescription.contains("403") || errorDescription.contains("invalid api key") || errorDescription.contains("unauthorized") {
-            return userHasOwnKey
-                ? "your OpenRouter key isn't working — it may have been rotated or run out of credits. check it in the Home tab under AI Brain."
-                : "the AI backend rejected the request. paste a fresh OpenRouter key in the Home tab under AI Brain."
+            return "publik signed this Mac out. open the Teachy panel and sign in again."
         }
 
         if errorDescription.contains("insufficient") || errorDescription.contains("quota") || errorDescription.contains("credits") {
-            return "your OpenRouter account looks out of credits. top it up at openrouter.ai, or switch to a free model in the Home tab."
+            return "your publik balance looks empty. open the Teachy panel to top it up."
         }
 
-        return "sorry, something went wrong talking to the AI. try again — and if it keeps happening, try a different model in the Home tab."
+        return "sorry, something went wrong talking to the AI. try again in a moment."
     }
 
     private func speakErrorMessage(_ message: String) {

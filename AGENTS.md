@@ -282,3 +282,22 @@ When you make changes to this project that affect the information in this file, 
 6. **Line count drift**: If a file's line count changes significantly (>50 lines), update the approximate count in the Key Files table
 
 Do NOT update this file for minor edits, bug fixes, or changes that don't affect the documented architecture or conventions.
+
+## publik API
+- Base URL: https://publikhq.com/api/v1 (OpenAI Chat Completions, Responses, Anthropic Messages)
+- Models: publik-fast, publik-balanced, publik-smart only; never a vendor model name
+- Sign in with publik: the publik module's gate runs at start-up, before the first screen; it also sends usage telemetry
+- Key: per-install `pk_` from POST /installs, stored at the publik credential path; env PUBLIK_API_KEY / PUBLIK_API_BASE_URL override
+- App token: publik-app-token.txt (public by design, committed) or PUBLIK_APP_TOKEN
+- 402: show error.message plus error.top_up_url only
+- Never print or log a key
+- Docs: https://publikhq.com/llms.txt, https://publikhq.com/developers, https://publikhq.com/skills/api.md
+
+### How Teachy uses it
+- Listing: Teachy signs in through the vedanttalksai **builds hub** listing (slug `deckhand`, token copied from `~/Projects/vedanttalksai/kit/publik-app-token.txt`). `TeachyHubBeacon` reports `build: "teachy"` to https://builds.vedantsoni.com/api/beacon so the hub's /stats splits Teachy out.
+- `leanring-buddy/Publik.swift` is publik's Swift module, copied verbatim (only `appSlug`/`appVersion` set). Re-copy it from https://publikhq.com/sdk/publik.swift.md rather than hand-editing.
+- `leanring-buddy/TeachyAIRouter.swift` is the only path to a model. Users never pick a model: the router maps each job to a tier (quickCheck → fast, coach/agent/write → balanced, plan → smart), falls back to the next tier on errors, remembers tiers that reject images, and never falls back on 402.
+- `ClaudeAPI` and `BackgroundAgentManager.sendChatRequest` call the router; the agent's web tools are local (`web_search` → publik `/search`, `web_fetch` → local fetch).
+- The "Use my own key" button on publik's gate is kept (publik requires it); that path uses the person's OpenRouter key with fixed open-weight models, still chosen per job.
+- `worker/` and the Windows port still speak OpenRouter; the macOS app no longer uses the worker for AI.
+- Self-test: `PUBLIK_SELF_TEST=1 ~/Applications/Teachy.app/Contents/MacOS/Teachy` → `publik self-test: ok deckhand 1.0`.

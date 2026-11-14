@@ -22,14 +22,20 @@ enum ClickyProxyHealthChecker {
     }
 
     static func fetchHealth() async -> HealthResult {
-        // Direct API mode — user has configured their own key, no proxy needed
-        if TeachyAPIKeyStore.isConfigured {
+        // publik (or the own-key path) is the backend. Ready means signed in and a
+        // payment choice is stored; network trouble shows up on the call itself.
+        if TeachyAIRouter.isReadyForAI {
             return HealthResult(
                 isReachable: true,
                 isOpenRouterConfigured: true,
-                serviceName: "openrouter-direct"
+                serviceName: TeachyAIRouter.isUsingPublik ? "publik" : "own-key"
             )
         }
+        return .unreachable
+    }
+
+    /// The old local-proxy probe, kept for developers running worker/ by hand.
+    static func fetchLocalProxyHealth() async -> HealthResult {
 
         guard let healthURL = URL(string: "\(ClickyWorkerConfiguration.workerBaseURL)/health") else {
             return .unreachable
