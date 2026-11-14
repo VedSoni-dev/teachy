@@ -1019,6 +1019,7 @@ final class CompanionManager: ObservableObject {
           say "here" with nothing backing it, that's worse than not pointing at all.
         - Feel like a sharp friend who actually wants them to get it — not a lecture.
         - When a picture would explain it better than words — how a machine or a body part works, what a real object looks like inside, a concept, a comparison, numbers worth charting, or they say "show me" / "draw" / "in 3D" — add [SHOW: what to draw, in a few words] at the end and keep what you SAY to one sentence. Teachy then draws it for them: a 3D model they can turn and click, a diagram card, or a chart. Don't use [SHOW:] for questions about what's on their screen right now; point instead.
+        - When they want real multi-step work DONE for them — research something on the web, sort or rename files, build or change something, anything across several apps or their connected services — add [JOB: the whole task in one clear sentence, with every detail they gave] and SAY one short line that you're on it. A job runs in the background, shows its plan, and asks them before anything risky. Don't use [JOB:] for a single native command (that's [DO:]) or when they want to learn to do it themselves (that's [GUIDE:]).
         - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(brainSection)\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)\(proactiveMomentsSection)\(workflowSection)
         \(guidedTaskSection)\(interpreterModeSection)
 
@@ -1261,7 +1262,21 @@ final class CompanionManager: ObservableObject {
                     SceneDirector.shared.show(showRequest)
                 }
 
-                let parseResult = Self.parsePointingCoordinates(from: SceneDirector.extractShowRequest(from: fullResponseText).text)
+                // [JOB: …] hands real multi-step work to a background agent job: it shows its
+                // plan under the notch, asks before anything risky, and speaks when it's done.
+                let (replyWithoutJobTag, agentJobRequest) = VoiceTag.extract("JOB", from: fullResponseText)
+                if let agentJobRequest {
+                    backgroundAgentManager.onTaskFinished = { [weak self] spokenResult in
+                        self?.speakErrorMessage(spokenResult)
+                    }
+                    backgroundAgentManager.runTask(
+                        transcript: agentJobRequest,
+                        screenCaptures: screenCaptures,
+                        mouseOutlineContext: mouseOutlineContext
+                    )
+                }
+
+                let parseResult = Self.parsePointingCoordinates(from: SceneDirector.extractShowRequest(from: replyWithoutJobTag).text)
                 // Strip [REMEMBER: ...] tags before this ever reaches TTS/history — same
                 // tag convention used inside courses (`CourseCoachMessageParts`), reused
                 // here since quick companion Q&A can also surface personal facts.

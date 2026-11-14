@@ -95,6 +95,9 @@ final class BackgroundAgentManager: ObservableObject {
     /// Starts an explicit agent job: the full toolset behind the permission gate, a visible plan,
     /// a budget (25 steps / 10 minutes by default) and a Stop button. Progress is published on
     /// `status` / `stepLog` here and as a job in `AgentJobCenter.shared.jobs`.
+    /// Called with what to say when a job started by `runTask` ends (its answer, or why it failed).
+    var onTaskFinished: ((String) -> Void)?
+
     func runTask(
         transcript: String,
         screenCaptures: [CompanionScreenCapture] = [],
@@ -125,11 +128,13 @@ final class BackgroundAgentManager: ObservableObject {
                 let result = try await AgentJobRunner.run(request, registry: self.toolRegistry)
                 if !Task.isCancelled {
                     self.status = .completed(result: result)
+                    self.onTaskFinished?(result)
                 }
             } catch is CancellationError {
                 self.status = .idle
             } catch {
                 self.status = .failed(error: error.localizedDescription)
+                self.onTaskFinished?("I couldn't finish that. \(error.localizedDescription)")
             }
         }
     }

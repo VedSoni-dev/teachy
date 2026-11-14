@@ -184,7 +184,8 @@ enum ToolPolicy {
 
         case "open_browser_tab":
             let url = string(arguments["url"])
-            return decision(.needsConsent, "opens a page in your browser", summary: "open \(host(of: url).isEmpty ? "a page" : host(of: url)) in your browser", detail: url, app: string(arguments["browser"]))
+            // Opening a page is visible and trivially undone, so it doesn't interrupt with a prompt.
+            return decision(.safe, "opens a page in your browser", summary: "open \(host(of: url).isEmpty ? "a page" : host(of: url)) in your browser", detail: url, app: string(arguments["browser"]))
 
         case "control_app":
             let action = string(arguments["action"]).lowercased()
@@ -192,7 +193,11 @@ enum ToolPolicy {
             if isOwnOrProtectedApp(name: app, bundleID: "", settings: settings) == .own {
                 return decision(.blocked, "Teachy does not control itself", summary: "\(action) Teachy")
             }
-            return decision(.needsConsent, "changes which apps are running or in front", summary: "\(action.isEmpty ? "control" : action) \(app.isEmpty ? "an app" : app)", app: app)
+            // "Open Spotify" should just happen: opening, showing or hiding an app loses nothing.
+            // Quitting can lose unsaved work, so that still asks.
+            let harmlessAppActions: Set<String> = ["open", "launch", "activate", "focus", "show", "unhide", "hide"]
+            let appRisk: ToolRisk = harmlessAppActions.contains(action) ? .safe : .needsConsent
+            return decision(appRisk, "changes which apps are running or in front", summary: "\(action.isEmpty ? "control" : action) \(app.isEmpty ? "an app" : app)", app: app)
 
         case "control_browser":
             let action = string(arguments["action"]).lowercased()

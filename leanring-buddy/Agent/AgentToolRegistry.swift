@@ -25,9 +25,9 @@ protocol ConsentAsking: AnyObject {
 final class AgentToolGate {
     static let shared = AgentToolGate()
 
-    /// Off by default. Until a settings screen exists this is the switch:
-    /// `defaults write <bundle id> teachy.agent.allowBrowserCookies -bool YES`
-    static let allowBrowserCookiesDefaultsKey = "teachy.agent.allowBrowserCookies"
+    /// Off by default. The same key as the "browser sign-ins" toggle in Privacy settings
+    /// (`TeachySettingsKey.allowBrowserCookieTools`), so there is one switch, not two.
+    static let allowBrowserCookiesDefaultsKey = "teachyAllowBrowserCookieTools"
 
     let ledger = ConsentLedger(store: UserDefaults.standard)
     var prompter: ConsentAsking = ConsentPrompter.shared
