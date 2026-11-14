@@ -493,7 +493,8 @@ final class LessonPlayer: ObservableObject {
                         try? await Task.sleep(for: .milliseconds(900))
                         return true
 
-                    case .partial, .offTrack where goal.id == "write-the-prompt":
+                    case .partial where goal.id == "write-the-prompt",
+                         .offTrack where goal.id == "write-the-prompt":
                         // Interview finished but ChatGPT isn't open yet — don't vision-loop.
                         setPhase(.coaching)
                         host.setCourseVoiceStateResponding()
@@ -1219,7 +1220,13 @@ final class LessonPlayer: ObservableObject {
         }
         host?.clearCoursePresenceBubble()
         host?.courseSuccessCelebration = nil
-        resumeYourTurn(.cancel)
+        // Only cancel a wait that is actually armed. Going through resumeYourTurn here
+        // would BUFFER a .cancel when nothing is waiting, and the next course's first
+        // your-turn wait would consume it and exit immediately.
+        if let armedContinuation = yourTurnContinuation {
+            yourTurnContinuation = nil
+            armedContinuation.resume(returning: .cancel)
+        }
         host?.skipCurriculumVideo()
         coursesManager.clearActiveTeacherVideoNotes()
         if clearSession {

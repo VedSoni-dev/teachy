@@ -180,7 +180,8 @@ class ClaudeAPI {
 
         // Parse SSE: {"choices":[{"delta":{"content":"..."}}]}
         var accumulatedResponseText = ""
-        for try await line in byteStream.lines {
+        // Guarded: some tiers finish the answer but never close the connection.
+        for try await line in StreamIdleGuard.lines(from: byteStream) {
             guard line.hasPrefix("data:") else { continue }
             let jsonString = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             guard jsonString != "[DONE]" else { break }
@@ -255,7 +256,7 @@ class ClaudeAPI {
             ]
             if let imageLabel, !imageLabel.isEmpty {
                 let dimensionInfo = screenshotWidthInPixels > 0
-                    ? " (image dimensions: \(screenshotWidthInPixels)x\(screenshotHeightInPixels) pixels, grid overlay: columns A-T, rows 1-12)"
+                    ? " (image dimensions: \(screenshotWidthInPixels)x\(screenshotHeightInPixels) pixels, grid overlay: columns A-X, rows 1-16)"
                     : ""
                 contentBlocks.append(["type": "text", "text": imageLabel + dimensionInfo])
             }

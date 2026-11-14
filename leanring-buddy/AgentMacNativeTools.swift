@@ -412,7 +412,7 @@ final class CaptureScreenTool: BackgroundAgentTool {
         let fileURL = captureDirectory.appendingPathComponent(fileName)
         try primaryCapture.imageData.write(to: fileURL)
 
-        let dimensionInfo = " (image dimensions: \(primaryCapture.screenshotWidthInPixels)x\(primaryCapture.screenshotHeightInPixels) pixels, grid overlay: columns A-T, rows 1-12)"
+        let dimensionInfo = " (image dimensions: \(primaryCapture.screenshotWidthInPixels)x\(primaryCapture.screenshotHeightInPixels) pixels, grid overlay: columns A-X, rows 1-16)"
         let annotatedImageData = ScreenGridAnnotationUtility.annotateScreenshotForModel(
             originalJPEGData: primaryCapture.imageData,
             screenshotWidthInPixels: primaryCapture.screenshotWidthInPixels,

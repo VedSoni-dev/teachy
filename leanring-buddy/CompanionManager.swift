@@ -1204,15 +1204,22 @@ final class CompanionManager: ObservableObject {
                 currentBrowserTabContext = nil
                 pendingProactiveMoments = []
 
+                // Speech starts on the first complete sentence while the rest of the
+                // answer is still streaming, instead of after the whole reply.
+                let streamingSpeech = StreamingSpeechFeeder(synthesizer: speechSynthesizer) { [weak self] in
+                    self?.voiceState = .responding
+                }
                 let (fullResponseText, _) = try await claudeAPI.analyzeImageStreaming(
                     images: labeledImages,
                     systemPrompt: systemPromptForThisTurn,
                     conversationHistory: historyForAPI,
                     userPrompt: transcriptWithSpatialHint,
-                    onTextChunk: { _ in }
+                    job: .voice,
+                    onTextChunk: { accumulatedText in streamingSpeech.feed(accumulatedText) }
                 )
 
                 guard !Task.isCancelled else { return }
+                streamingSpeech.finish(fullResponseText)
 
                 let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
                 // Strip [REMEMBER: ...] tags before this ever reaches TTS/history — same
@@ -1303,15 +1310,9 @@ final class CompanionManager: ObservableObject {
                     }
                     ClickyAnalytics.trackAIResponseReceived(response: spokenText)
 
-                    // Speak the heads-up first (announce-before-act), then run the action.
-                    if !spokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        voiceState = .responding
-                        do {
-                            try await speechSynthesizer.speakText(spokenText)
-                        } catch {
-                            print("⚠️ Companion TTS error (direct action heads-up): \(error)")
-                        }
-                    }
+                    // The heads-up is already being spoken by the stream (announce-before-act);
+                    // let it finish, then run the action.
+                    await speechSynthesizer.finishStream()
 
                     guard !Task.isCancelled else { return }
 
@@ -1364,7 +1365,14 @@ final class CompanionManager: ObservableObject {
                 print("🧠 Conversation history: \(conversationHistory.count) exchanges")
                 ClickyAnalytics.trackAIResponseReceived(response: finalSpokenText)
 
-                if !finalSpokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // The streamed answer is already being spoken; wait for it to finish.
+                await speechSynthesizer.finishStream()
+                // A brand-new guided task then reads out its plan, which was generated
+                // after the first answer (skip when planning fell back to that answer).
+                if lifecycleOutcome == .newlyStarted,
+                   finalSpokenText != spokenText,
+                   !finalSpokenText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   !Task.isCancelled {
                     voiceState = .responding
                     do {
                         try await speechSynthesizer.speakText(finalSpokenText)
@@ -3105,22 +3113,10 @@ final class CompanionManager: ObservableObject {
             )
         }
 
-        let bareCellPattern = #"\b(\#(ScreenGridAnnotationUtility.gridCellRegexFragment))\b"#
-        guard let regex = try? NSRegularExpression(pattern: bareCellPattern, options: [.caseInsensitive]),
-              let match = regex.matches(in: responseText, range: NSRange(responseText.startIndex..., in: responseText)).last,
-              let cellRange = Range(match.range(at: 1), in: responseText) else {
-            return nil
-        }
-
-        let cellLabel = String(responseText[cellRange]).uppercased()
-        return PointingParseResult(
-            spokenText: responseText,
-            coordinate: nil,
-            elementLabel: nil,
-            screenNumber: nil,
-            gridCellLabel: cellLabel,
-            axElementID: nil
-        )
+        // No bare-cell fallback: matching any "M4" / "F5" / "H1" in ordinary speech moved
+        // the cursor to a random spot. A cell only counts inside a [POINT:] tag or after
+        // an explicit "cell"/"grid" word (handled above).
+        return nil
     }
 
     private static func responseTextByRemovingPointingTag(from responseText: String, tagRange: Range<String.Index>) -> String {
@@ -3627,7 +3623,7 @@ final class CompanionManager: ObservableObject {
 
     say something short and playful about it — 3 to 6 words max. no emojis. don't quote what's on screen, just react. all lowercase. teachy-energy: warm, cheeky, lovable.
 
-    the screenshot has a hidden grid (columns A-T, rows 1-12). pick a center cell on your target. respond with ONLY your quip plus [POINT:E4:label].
+    the screenshot has a hidden grid (columns A-X, rows 1-16). pick a center cell on your target. respond with ONLY your quip plus [POINT:E4:label].
 
     \(ScreenGridAnnotationUtility.modelInstructions)
     """
@@ -3650,7 +3646,7 @@ final class CompanionManager: ObservableObject {
                     return
                 }
 
-                let dimensionInfo = " (image dimensions: \(cursorScreenCapture.screenshotWidthInPixels)x\(cursorScreenCapture.screenshotHeightInPixels) pixels, grid overlay: columns A-T, rows 1-12)"
+                let dimensionInfo = " (image dimensions: \(cursorScreenCapture.screenshotWidthInPixels)x\(cursorScreenCapture.screenshotHeightInPixels) pixels, grid overlay: columns A-X, rows 1-16)"
                 let annotatedImageData = ScreenGridAnnotationUtility.annotateScreenshotForModel(
                     originalJPEGData: cursorScreenCapture.imageData,
                     screenshotWidthInPixels: cursorScreenCapture.screenshotWidthInPixels,

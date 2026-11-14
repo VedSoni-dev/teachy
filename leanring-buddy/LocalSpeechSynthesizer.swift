@@ -3,7 +3,8 @@
 //  leanring-buddy
 //
 //  Human-sounding TTS for Teachy.
-//  Priority: cloud neural (ElevenLabs / OpenAI via proxy) → macOS AVSpeech neural → NSSpeech.
+//  Priority: the person's own ElevenLabs key → publik speech → macOS AVSpeech neural → NSSpeech.
+//  Streamed replies are spoken sentence by sentence (see "Streaming speech").
 //
 
 import AppKit
@@ -78,7 +79,7 @@ final class LocalSpeechSynthesizer: NSObject {
         }
         if wasInterrupted() { throw CancellationError() }
 
-        // 1b) Cloud neural TTS via Teachy proxy (ElevenLabs preferred, OpenAI fallback on proxy)
+        // 1b) publik speech
         if let audioData = await Self.fetchCloudTTSAudio(text: cleaned) {
             if wasInterrupted() { throw CancellationError() }
             do {
@@ -120,10 +121,97 @@ final class LocalSpeechSynthesizer: NSObject {
         }
     }
 
+    // MARK: - Streaming speech (sentence by sentence)
+
+    private struct QueuedSentence {
+        let text: String
+        let audioFetch: Task<Data?, Never>
+    }
+    private var streamQueue: [QueuedSentence] = []
+    private var streamGeneration = -1
+    private var streamInputEnded = true
+    private var streamDrainTask: Task<Void, Never>?
+    /// True from the first queued sentence until the last one has been spoken.
+    private(set) var isStreamSpeaking = false
+
+    /// Starts a streamed reply: sentences are spoken as they arrive instead of after
+    /// the whole answer. Interrupts anything already playing.
+    /// Returns a token; only sentences queued with this token are spoken, so a
+    /// cancelled turn can never talk over the turn that replaced it.
+    @discardableResult
+    func beginStream() -> Int {
+        stopPlayback()
+        playbackGeneration += 1
+        streamGeneration = playbackGeneration
+        streamInputEnded = false
+        return streamGeneration
+    }
+
+    /// Queues one sentence. Its audio starts downloading immediately, so it is usually
+    /// ready by the time the sentence before it finishes playing.
+    func enqueueStreamSentence(_ sentence: String, streamToken: Int) {
+        guard streamToken == streamGeneration, streamGeneration == playbackGeneration, !streamInputEnded else { return }
+        let cleaned = Self.prepareForSpeech(sentence)
+        guard !cleaned.isEmpty else { return }
+        let audioFetch = Task { await Self.fetchCloudTTSAudio(text: cleaned) }
+        streamQueue.append(QueuedSentence(text: cleaned, audioFetch: audioFetch))
+        isStreamSpeaking = true
+        if streamDrainTask == nil {
+            let generation = streamGeneration
+            streamDrainTask = Task { [weak self] in
+                await self?.drainStream(generation: generation)
+            }
+        }
+    }
+
+    /// Call when the reply is complete. Returns once every queued sentence has been spoken
+    /// (or the stream was interrupted).
+    func finishStream() async {
+        streamInputEnded = true
+        let drain = streamDrainTask
+        await drain?.value
+    }
+
+    private func drainStream(generation: Int) async {
+        defer {
+            if generation == playbackGeneration {
+                streamDrainTask = nil
+                isStreamSpeaking = false
+            }
+        }
+        while generation == playbackGeneration, !Task.isCancelled {
+            guard !streamQueue.isEmpty else {
+                if streamInputEnded { return }
+                try? await Task.sleep(for: .milliseconds(25))
+                continue
+            }
+            let next = streamQueue.removeFirst()
+            let audioData = await next.audioFetch.value
+            guard generation == playbackGeneration, !Task.isCancelled else { return }
+            if let audioData {
+                do {
+                    try await playAudioData(audioData, speechGeneration: generation)
+                    continue
+                } catch is CancellationError {
+                    return
+                } catch {
+                    print("⚠️ Stream sentence playback failed, using the local voice: \(error)")
+                }
+            }
+            guard generation == playbackGeneration else { return }
+            _ = await speakWithAVSpeech(next.text, speechGeneration: generation)
+        }
+    }
+
     func stopPlayback() {
         // Invalidate any in-flight speakText turn FIRST so its post-await
         // checks see the interruption before any audio object is touched.
         playbackGeneration += 1
+        for queued in streamQueue { queued.audioFetch.cancel() }
+        streamQueue.removeAll()
+        streamInputEnded = true
+        streamDrainTask = nil
+        isStreamSpeaking = false
         audioPlayer?.stop()
         audioPlayer = nil
         activeAVSpeechUtterance = nil
@@ -175,50 +263,20 @@ final class LocalSpeechSynthesizer: NSObject {
         }
     }
 
+    /// The voice used for publik speech. Changeable later from settings.
+    static var publikVoiceName: String {
+        UserDefaults.standard.string(forKey: "teachyPublikVoiceName") ?? "alloy"
+    }
+
+    /// Neural speech from publik (`POST /audio/speech`). Nil when not signed in or on any error,
+    /// so the caller falls back to the Mac's own voices.
     private static func fetchCloudTTSAudio(text: String) async -> Data? {
-        guard let url = URL(string: ClickyWorkerConfiguration.ttsEndpointURL) else { return nil }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 28
-
-        let body: [String: Any] = [
-            "text": text,
-            "model_id": "eleven_turbo_v2_5",
-            "voice_settings": [
-                "stability": 0.4,
-                "similarity_boost": 0.8,
-                "style": 0.4,
-                "use_speaker_boost": true,
-            ],
-        ]
-
-        guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else { return nil }
-        request.httpBody = httpBody
-
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else { return nil }
-
-            let contentType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
-            if http.statusCode == 200, contentType.contains("audio") || looksLikeAudio(data) {
-                return data
-            }
-
-            // Stub / not configured returns JSON
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               json["ok"] as? Bool == true {
-                return nil
-            }
-
-            if http.statusCode != 200 {
-                let snippet = String(data: data.prefix(180), encoding: .utf8) ?? ""
-                print("⚠️ Cloud TTS HTTP \(http.statusCode): \(snippet)")
-            }
+            return try await PublikAudio.speech(text: text, voice: publikVoiceName)
+        } catch is TeachyAIBillingError {
             return nil
         } catch {
-            print("⚠️ Cloud TTS request failed: \(error.localizedDescription)")
+            print("⚠️ publik speech failed, using the local voice: \(error.localizedDescription)")
             return nil
         }
     }

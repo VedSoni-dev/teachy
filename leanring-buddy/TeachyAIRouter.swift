@@ -129,7 +129,18 @@ enum TeachyAIRouter {
 
     // MARK: - Requests
 
-    static func makeRequest(for route: TeachyAIRoute, body: [String: Any], timeout: TimeInterval) throws -> URLRequest {
+    /// How hard a publik tier should think before answering. Measured 14 Nov 2026 on the
+    /// smart tier with a screenshot: default effort gave first words at about 4.3 s,
+    /// "minimal" at about 1.4 s, with answers just as specific. Planning keeps the default.
+    static func reasoningEffort(for job: TeachyAIJob) -> String? {
+        switch job {
+        case .voice, .coach, .quickCheck, .cleanup: return "minimal"
+        case .agent, .scene, .write: return "low"
+        case .plan: return nil
+        }
+    }
+
+    static func makeRequest(for route: TeachyAIRoute, job: TeachyAIJob? = nil, body: [String: Any], timeout: TimeInterval) throws -> URLRequest {
         var request = URLRequest(url: route.url)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
@@ -149,7 +160,12 @@ enum TeachyAIRouter {
             routedBody["max_tokens"] = max(requestedMaxTokens, minimumPublikMaxTokens)
         }
         // OpenRouter-only extension; publik rejects unknown routing fields on some tiers.
-        if route.isPublik { routedBody.removeValue(forKey: "reasoning") }
+        if route.isPublik {
+            routedBody.removeValue(forKey: "reasoning")
+            if routedBody["reasoning_effort"] == nil, let job, let effort = reasoningEffort(for: job) {
+                routedBody["reasoning_effort"] = effort
+            }
+        }
         let bodyData = try JSONSerialization.data(withJSONObject: routedBody)
         if route.isPublik && bodyData.count > maximumRequestBodyBytes {
             throw NSError(
@@ -173,7 +189,7 @@ enum TeachyAIRouter {
         var lastError: Error = TeachyAINotReadyError()
         for route in try routes(for: job, hasImages: hasImages) {
             try Task.checkCancellation()
-            let request = try makeRequest(for: route, body: body, timeout: timeout)
+            let request = try makeRequest(for: route, job: job, body: body, timeout: timeout)
             let data: Data
             let response: URLResponse
             do {
@@ -210,7 +226,7 @@ enum TeachyAIRouter {
         var lastError: Error = TeachyAINotReadyError()
         for route in try routes(for: job, hasImages: hasImages) {
             try Task.checkCancellation()
-            let request = try makeRequest(for: route, body: body, timeout: timeout)
+            let request = try makeRequest(for: route, job: job, body: body, timeout: timeout)
             let bytes: URLSession.AsyncBytes
             let response: URLResponse
             do {

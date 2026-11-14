@@ -232,7 +232,7 @@ enum TeachyCourseCapabilityCard {
     /// What Teachy can actually do on the Mac during a lesson — keep in sync with agent tools.
     static let text = """
     YOUR MAC CAPABILITIES (course mode — use when policy allows):
-    - see the live screen (screenshot attached every turn; invisible A–T / 1–12 grid for [POINT:…])
+    - see the live screen (screenshot attached every turn; invisible A–X / 1–16 grid for [POINT:…])
     - open_browser_tab: open a URL in their browser
     - bash / read_file / write_file: terminal + files when the goal needs it
     - run_applescript: control native Mac apps
