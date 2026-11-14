@@ -52,20 +52,15 @@ final class ComposioConnectionManager: ObservableObject {
         return generatedUserID
     }
 
+    /// Retired (14 Nov 2026): this used to poll a Composio worker every 2 seconds, and that
+    /// worker no longer exists. Connectors are MCP now (`Connectors/ConnectorCenter.swift`).
+    /// The method stays so `CompanionManager` still compiles; it starts nothing.
+    /// TODO: delete this type, `ComposioFrontmostAppMapping`, `ComposioToolkitCatalog` and
+    /// their call sites in `CompanionManager` and `BackgroundAgentSideDockWindow`.
     func startMonitoring(companionManager: CompanionManager) {
         self.companionManager = companionManager
         frontmostAppMonitorTimer?.invalidate()
-
-        frontmostAppMonitorTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.evaluateFrontmostApplicationForSyncPrompt()
-            }
-        }
-
-        Task {
-            await refreshComposioConfigurationAndConnections()
-            await evaluateFrontmostApplicationForSyncPrompt()
-        }
+        frontmostAppMonitorTimer = nil
     }
 
     func stopMonitoring() {

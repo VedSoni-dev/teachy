@@ -104,6 +104,9 @@ final class AppConnectorManager: ObservableObject {
             }
         }
 
+        // MCP connectors (Connectors/ConnectorCenter.swift) join the same registry as mcp__<id>__<tool>.
+        connectorToolsToRegister.append(contentsOf: await ConnectorCenter.shared.toolsForAgent())
+
         toolRegistry.unregisterAllConnectorTools()
         toolRegistry.registerConnectorTools(connectorToolsToRegister)
         connectionStates = newConnectionStates
