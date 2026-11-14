@@ -203,7 +203,7 @@ final class DictationController {
         let recorder = self.recorder
         let dictionaryPrompt = DictationDictionary.shared.transcriptionPrompt
 
-        let transcript = await DictationPipeline.transcribe(pcm16: pcm, dictionaryPrompt: dictionaryPrompt) {
+        let transcript = await DictationPipeline.transcribe(pcm16: pcm, dictionaryPrompt: dictionaryPrompt, language: TeachySettingsStorage.dictationLanguageCode()) {
             await recorder.finalLiveText(timeout: 2)
         }
         recorder.cancel()
@@ -213,7 +213,9 @@ final class DictationController {
             return
         }
 
-        let cleaned = await DictationPipeline.cleanUp(raw: transcript.text)
+        let cleaned = TeachySettingsStorage.dictationCleanupEnabled()
+            ? await DictationPipeline.cleanUp(raw: transcript.text)
+            : DictationPipeline.Cleaned(text: transcript.text, usedCleanup: false, milliseconds: 0)
 
         // The app in front now is where the text goes (it may have changed
         // while the person was speaking).

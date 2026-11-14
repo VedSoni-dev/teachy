@@ -192,13 +192,7 @@ struct BlueCursorView: View {
             // Nearly transparent background (helps with compositing)
             Color.black.opacity(0.001)
 
-            // User's live chalk outline while holding push-to-talk
-            if companionManager.voiceState == .listening {
-                ChalkStrokePathView(
-                    points: liveMouseOutlineSwiftUIPoints,
-                    closesPath: liveMouseOutlineSwiftUIPoints.count >= 8
-                )
-            }
+            // The live circle-to-ask trail is drawn by PaintTrailPresenter (Trail/).
 
             // Clicky's chalk draw from a [DRAW:...] model response
             if let drawInstruction = companionManager.activeScreenDrawInstruction,

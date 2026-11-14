@@ -53,6 +53,8 @@ enum BrowserSessionStore {
     }
 
     static func cookies(for url: URL, browser: AgentBrowserChoice = .auto) throws -> [BrowserCookie] {
+        // Off unless the person turned on "browser sign-ins" in Privacy settings.
+        guard TeachySettingsStorage.allowBrowserCookieTools() else { return [] }
         guard let host = url.host?.lowercased() else { return [] }
 
         switch browser {

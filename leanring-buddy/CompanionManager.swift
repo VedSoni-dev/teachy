@@ -827,6 +827,7 @@ final class CompanionManager: ObservableObject {
             clearDetectedElementLocation()
             clearActiveScreenDrawInstruction()
             mouseOutlineTracker.startTracking()
+            PaintTrailPresenter.shared.begin()
 
             // Dismiss the onboarding prompt if it's showing
             if showOnboardingPrompt {
@@ -866,6 +867,7 @@ final class CompanionManager: ObservableObject {
             // leaves the waveform overlay stuck on screen indefinitely.
             ClickyAnalytics.trackPushToTalkReleased()
             mouseOutlineTracker.stopTracking()
+            PaintTrailPresenter.shared.end()
             pendingKeyboardShortcutStartTask?.cancel()
             pendingKeyboardShortcutStartTask = nil
             buddyDictationManager.stopPushToTalkFromKeyboardShortcut()

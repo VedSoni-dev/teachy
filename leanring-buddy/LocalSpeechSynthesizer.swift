@@ -210,11 +210,12 @@ final class LocalSpeechSynthesizer: NSObject {
         }
         while generation == playbackGeneration, !Task.isCancelled {
             guard !streamQueue.isEmpty else {
-                if streamInputEnded { return }
+                if streamInputEnded { CaptionPresenter.shared.speechEnded(); return }
                 try? await Task.sleep(for: .milliseconds(25))
                 continue
             }
             let next = streamQueue.removeFirst()
+            CaptionPresenter.shared.show(sentence: next.text)
             var audioData: Data?
             if let audioFetch = next.audioFetch {
                 audioData = await audioFetch.value
@@ -249,6 +250,7 @@ final class LocalSpeechSynthesizer: NSObject {
         // Invalidate any in-flight speakText turn FIRST so its post-await
         // checks see the interruption before any audio object is touched.
         playbackGeneration += 1
+        CaptionPresenter.shared.hide()
         for queued in streamQueue { queued.audioFetch?.cancel() }
         RealtimeVoice.shared.stop()
         streamQueue.removeAll()
@@ -315,7 +317,7 @@ final class LocalSpeechSynthesizer: NSObject {
     /// so the caller falls back to the Mac's own voices.
     private static func fetchCloudTTSAudio(text: String) async -> Data? {
         do {
-            return try await PublikAudio.speech(text: text, voice: publikVoiceName)
+            return try await PublikAudio.speech(text: text, voice: publikVoiceName, speed: TeachySettingsStorage.speechSpeed())
         } catch is TeachyAIBillingError {
             return nil
         } catch {

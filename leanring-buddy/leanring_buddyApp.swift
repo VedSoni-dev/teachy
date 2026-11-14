@@ -66,6 +66,10 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         // Fn+Control dictation: waits for the publik gate and for the Accessibility
         // and Microphone permissions before it listens for the hotkey.
         DictationController.shared.startWhenReady()
+        TeachyUIExtras.start()
+        TextBoxController.shared.onSubmit = { [weak self] text in
+            self?.companionManager.submitSyntheticCompanionRequest(text)
+        }
 
         // Show the notch on launch so the user sees it right away
         notchManager?.show()
