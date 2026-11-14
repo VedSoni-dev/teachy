@@ -3,7 +3,8 @@
 //  leanring-buddy
 //
 //  Human-sounding TTS for Teachy.
-//  Priority: the person's own ElevenLabs key → publik speech → macOS AVSpeech neural → NSSpeech.
+//  Priority: the person's own ElevenLabs key → publik realtime voice → publik speech →
+//  macOS AVSpeech neural → NSSpeech.
 //  Streamed replies are spoken sentence by sentence (see "Streaming speech").
 //
 
@@ -79,7 +80,21 @@ final class LocalSpeechSynthesizer: NSObject {
         }
         if wasInterrupted() { throw CancellationError() }
 
-        // 1b) publik speech
+        // 1b) publik realtime voice: audio starts streaming ~0.5 s after the text is sent.
+        if RealtimeVoice.shared.isAvailable {
+            switch await Self.speakWithRealtimeVoice(cleaned) {
+            case .played:
+                if speechGeneration == playbackGeneration { isPlaying = false }
+                return
+            case .interrupted:
+                throw CancellationError()
+            case .failed:
+                break
+            }
+        }
+        if wasInterrupted() { throw CancellationError() }
+
+        // 1c) publik speech (slower, about 2 s per sentence)
         if let audioData = await Self.fetchCloudTTSAudio(text: cleaned) {
             if wasInterrupted() { throw CancellationError() }
             do {
@@ -125,7 +140,17 @@ final class LocalSpeechSynthesizer: NSObject {
 
     private struct QueuedSentence {
         let text: String
-        let audioFetch: Task<Data?, Never>
+        /// Nil when the realtime voice will read it (no download needed up front).
+        let audioFetch: Task<Data?, Never>?
+    }
+
+    /// Reads text through the realtime voice, stopping it if the calling task is cancelled.
+    private static func speakWithRealtimeVoice(_ text: String) async -> RealtimeVoice.SpeakResult {
+        await withTaskCancellationHandler {
+            await RealtimeVoice.shared.speak(text)
+        } onCancel: {
+            Task { @MainActor in RealtimeVoice.shared.stop() }
+        }
     }
     private var streamQueue: [QueuedSentence] = []
     private var streamGeneration = -1
@@ -144,6 +169,8 @@ final class LocalSpeechSynthesizer: NSObject {
         playbackGeneration += 1
         streamGeneration = playbackGeneration
         streamInputEnded = false
+        // The model needs about a second before its first sentence; connect the voice now.
+        RealtimeVoice.shared.prewarm()
         return streamGeneration
     }
 
@@ -153,7 +180,9 @@ final class LocalSpeechSynthesizer: NSObject {
         guard streamToken == streamGeneration, streamGeneration == playbackGeneration, !streamInputEnded else { return }
         let cleaned = Self.prepareForSpeech(sentence)
         guard !cleaned.isEmpty else { return }
-        let audioFetch = Task { await Self.fetchCloudTTSAudio(text: cleaned) }
+        let audioFetch: Task<Data?, Never>? = RealtimeVoice.shared.isAvailable
+            ? nil
+            : Task { await Self.fetchCloudTTSAudio(text: cleaned) }
         streamQueue.append(QueuedSentence(text: cleaned, audioFetch: audioFetch))
         isStreamSpeaking = true
         if streamDrainTask == nil {
@@ -186,7 +215,20 @@ final class LocalSpeechSynthesizer: NSObject {
                 continue
             }
             let next = streamQueue.removeFirst()
-            let audioData = await next.audioFetch.value
+            var audioData: Data?
+            if let audioFetch = next.audioFetch {
+                audioData = await audioFetch.value
+            } else {
+                isPlaying = true
+                let realtimeResult = await Self.speakWithRealtimeVoice(next.text)
+                guard generation == playbackGeneration, !Task.isCancelled else { return }
+                isPlaying = false
+                switch realtimeResult {
+                case .played: continue
+                case .interrupted: return
+                case .failed: audioData = await Self.fetchCloudTTSAudio(text: next.text)
+                }
+            }
             guard generation == playbackGeneration, !Task.isCancelled else { return }
             if let audioData {
                 do {
@@ -207,7 +249,8 @@ final class LocalSpeechSynthesizer: NSObject {
         // Invalidate any in-flight speakText turn FIRST so its post-await
         // checks see the interruption before any audio object is touched.
         playbackGeneration += 1
-        for queued in streamQueue { queued.audioFetch.cancel() }
+        for queued in streamQueue { queued.audioFetch?.cancel() }
+        RealtimeVoice.shared.stop()
         streamQueue.removeAll()
         streamInputEnded = true
         streamDrainTask = nil
