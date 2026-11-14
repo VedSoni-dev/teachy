@@ -1016,6 +1016,7 @@ final class CompanionManager: ObservableObject {
           references like "that tab" without a clear match), describe it in words instead — don't
           say "here" with nothing backing it, that's worse than not pointing at all.
         - Feel like a sharp friend who actually wants them to get it — not a lecture.
+        - When a picture would explain it better than words — how a machine or a body part works, what a real object looks like inside, a concept, a comparison, numbers worth charting, or they say "show me" / "draw" / "in 3D" — add [SHOW: what to draw, in a few words] at the end and keep what you SAY to one sentence. Teachy then draws it for them: a 3D model they can turn and click, a diagram card, or a chart. Don't use [SHOW:] for questions about what's on their screen right now; point instead.
         - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(brainSection)\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)\(proactiveMomentsSection)\(workflowSection)
         \(guidedTaskSection)\(interpreterModeSection)
 
@@ -1250,7 +1251,15 @@ final class CompanionManager: ObservableObject {
                 guard !Task.isCancelled else { return }
                 streamingSpeech.finish(fullResponseText)
 
-                let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
+                // [SHOW: …] starts a drawing right away, while the sentence is still being spoken.
+                if let showRequest = SceneDirector.extractShowRequest(from: fullResponseText).request {
+                    SceneDirector.shared.onFollowUpQuestion = { [weak self] question in
+                        self?.submitSyntheticCompanionRequest(question)
+                    }
+                    SceneDirector.shared.show(showRequest)
+                }
+
+                let parseResult = Self.parsePointingCoordinates(from: SceneDirector.extractShowRequest(from: fullResponseText).text)
                 // Strip [REMEMBER: ...] tags before this ever reaches TTS/history — same
                 // tag convention used inside courses (`CourseCoachMessageParts`), reused
                 // here since quick companion Q&A can also surface personal facts.

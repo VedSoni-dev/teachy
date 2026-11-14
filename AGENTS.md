@@ -310,3 +310,14 @@ Do NOT update this file for minor edits, bug fixes, or changes that don't affect
 - The older stores (engine-state.json facts and projects, UserDefaults learner profiles) are imported once by `BrainMigration` and left in place; `TeachyEngine` mirrors new personal facts into the Brain.
 - Never log memory contents. Screen memory is text only.
 - Tests: `./scripts/tests/run_brain_tests.sh` (standalone, temp directory, never touches the real `~/.teachy`).
+
+## Rebuild status (14 Nov 2026) — read this before the older sections above
+Direction: Teachy is a full HeyClicky competitor (not teaching-only). Plan: `docs/PARITY-PLAN.md`. Competitor inventory: `docs/research/`.
+- **Voice turn** (`CompanionManager.sendCompanionChatResponse`): one streamed call on job `.voice`; `Core/StreamingSpeechFeeder` + `Core/StreamingSpeechSegmenter` speak each sentence as it completes through `LocalSpeechSynthesizer`'s stream queue (publik speech, local voice fallback). `Core/StreamIdleGuard` ends streams that never close. Actions are still bracket tags ([POINT:], [DO:], [GUIDE:], [CLIPBOARD:], [REMEMBER:], [SHOW:]); structured actions are not built yet.
+- **Routing** (`TeachyAIRouter`): jobs voice/coach/agent/scene/plan → smart first; quickCheck/cleanup → fast; write → balanced. `reasoningEffort(for:)` sets minimal/low per job (this is what makes voice fast). `PublikAudio` does transcription and speech.
+- **Drawing engine** (`Scene/`, spec `docs/SCENE-SCRIPT.md`): the model streams a line-based scene script; `SceneSession` renders overlay shapes, cards and SceneKit 3D with simulations. `Core/SceneDirector` starts one when a reply carries [SHOW: …]. Demo without AI: `TEACHY_SCENE_DEMO=<sample>`.
+- **Dictation** (`Dictation/`): hold Fn+Control, double-tap for hands-free. `DictationController.shared.startWhenReady()` from the app delegate.
+- **Memory** (`Brain/`): see "Memory (the Brain)". Injected into the voice prompt; conversation persisted.
+- **Tests** (no Xcode test target needed): `scripts/tests/run_segmenter_tests.sh`, `run_brain_tests.sh`, `run_dictation_tests.sh`, `run_scene_tests.sh`. Model eval: `scripts/eval/run_scene_eval.sh`.
+- **Builds**: use `SKIP_DEV_INSTALL=1` with xcodebuild unless you mean to replace `~/Applications/Teachy.app`.
+- **Not built yet**: agent jobs + permission gate, Drive (computer control), MCP connectors, routines, walkthrough rewrite + skill files, Chrome extension, realtime voice, settings UI, new onboarding, MP4 export.
