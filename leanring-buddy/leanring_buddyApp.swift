@@ -41,6 +41,9 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Debug: TEACHY_SCENE_DEMO=<sample> shows only a drawing-engine demo, then quits.
+        if SceneDemo.runFromEnvironmentIfRequested() { return }
+
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
         print("🎯 Teachy: Starting…")
         print("🎯 Teachy: Version \(version)")
