@@ -211,7 +211,26 @@ final class CompanionManager: ObservableObject {
     }
 
     /// Conversation history so companion chat remembers prior exchanges within a session.
-    private var conversationHistory: [(userTranscript: String, assistantResponse: String)] = []
+    /// Starts from the last few exchanges saved on disk, so a relaunch doesn't wipe the thread.
+    private var conversationHistory: [(userTranscript: String, assistantResponse: String)] =
+        CompanionManager.restoredConversationHistory()
+
+    private static func restoredConversationHistory() -> [(userTranscript: String, assistantResponse: String)] {
+        let messages = BrainStore.shared.recentMessages(limit: 20)
+        var exchanges: [(userTranscript: String, assistantResponse: String)] = []
+        var pendingUserText: String?
+        for message in messages {
+            switch message.role {
+            case .user: pendingUserText = message.text
+            case .assistant:
+                if let userText = pendingUserText {
+                    exchanges.append((userTranscript: userText, assistantResponse: message.text))
+                    pendingUserText = nil
+                }
+            }
+        }
+        return Array(exchanges.suffix(6))
+    }
 
     /// An in-progress, fully ephemeral step-by-step walkthrough happening inside
     /// normal companion chat (no Course UI, no HUD, no persistence). Started/continued/
@@ -951,6 +970,16 @@ final class CompanionManager: ObservableObject {
 
         let guidedTaskSection = guidedTaskPromptSection()
 
+        // What Teachy remembers about this person (PROFILE.md / VOLATILE.md, editable by
+        // them). Without this the model "remembered" facts that never came back to it.
+        let rememberedContext = BrainStore.shared.promptContext()
+        let brainSection = rememberedContext.isEmpty ? "" : """
+
+
+        WHAT YOU REMEMBER ABOUT THEM (use it naturally; follow "How I like answers" exactly):
+        \(rememberedContext)
+        """
+
         // Present only when a coding tool (Cursor, VS Code, Xcode, a terminal running Claude Code,
         // etc.) is the frontmost app — this is the interpreter-mode wedge for non-technical users.
         let interpreterModeSection: String
@@ -987,7 +1016,7 @@ final class CompanionManager: ObservableObject {
           references like "that tab" without a clear match), describe it in words instead — don't
           say "here" with nothing backing it, that's worse than not pointing at all.
         - Feel like a sharp friend who actually wants them to get it — not a lecture.
-        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)\(proactiveMomentsSection)\(workflowSection)
+        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(brainSection)\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)\(proactiveMomentsSection)\(workflowSection)
         \(guidedTaskSection)\(interpreterModeSection)
 
         You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
@@ -1358,6 +1387,9 @@ final class CompanionManager: ObservableObject {
                     userTranscript: transcript,
                     assistantResponse: finalSpokenText
                 ))
+                // Kept on disk too, so tomorrow's conversation remembers today's.
+                BrainStore.shared.appendMessage(role: .user, text: transcript)
+                BrainStore.shared.appendMessage(role: .assistant, text: finalSpokenText)
                 if conversationHistory.count > 10 {
                     conversationHistory.removeFirst(conversationHistory.count - 10)
                 }
