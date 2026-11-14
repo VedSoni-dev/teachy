@@ -266,6 +266,7 @@ final class TeachyEngine: ObservableObject {
 
         case .personalFactShared(let factText):
             state.learnerModel.appendPersonalFact(factText)
+            BrainStore.shared.remember(factText, kind: .aboutMe)
 
         case .courseCompleted(let courseID):
             state.learnerModel.totalCoursesCompleted += 1
@@ -436,6 +437,8 @@ final class TeachyEngine: ObservableObject {
     /// (see the guard at the top of `processEvent`), so that path calls this instead.
     func recordPersonalFact(_ fact: String) {
         state.learnerModel.appendPersonalFact(fact)
+        // Mirror into the Brain files so the fact also reaches the main voice prompt.
+        BrainStore.shared.remember(fact, kind: .aboutMe)
         saveState()
     }
 

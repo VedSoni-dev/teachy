@@ -42,6 +42,8 @@ struct NotchHomeTabView: View {
 
             PublikAccountSection()
 
+            BrainMemorySection()
+
             voiceSection
 
             cursorColorSection
