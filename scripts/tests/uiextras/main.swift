@@ -224,11 +224,11 @@ func freshDefaults() -> (UserDefaults, String) {
     return (UserDefaults(suiteName: name)!, name)
 }
 
-equal("unknown voice falls back to alloy", TeachyVoiceCatalog.resolved("robot"), "alloy")
-equal("nil voice falls back to alloy", TeachyVoiceCatalog.resolved(nil), "alloy")
-equal("voice names are case-insensitive", TeachyVoiceCatalog.resolved("Nova"), "nova")
-equal("nine voices", TeachyVoiceCatalog.voices.map(\.name),
-      ["alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"])
+equal("unknown voice falls back to Puck", TeachyVoiceCatalog.resolved("robot"), "Puck")
+equal("nil voice falls back to Puck", TeachyVoiceCatalog.resolved(nil), "Puck")
+equal("voice names are case-insensitive", TeachyVoiceCatalog.resolved("kore"), "Kore")
+equal("eight voices", TeachyVoiceCatalog.voices.map(\.name),
+      ["Puck", "Aoede", "Kore", "Leda", "Zephyr", "Charon", "Fenrir", "Orus"])
 near("speed clamps low", TeachySpeechSpeed.normalized(0.1), 0.5)
 near("speed clamps high", TeachySpeechSpeed.normalized(9), 1.5)
 near("speed snaps to the step", TeachySpeechSpeed.normalized(1.0300001), 1.05)
@@ -267,7 +267,7 @@ MainActor.assumeIsolated {
     defer { defaults.removePersistentDomain(forName: suiteName) }
 
     let first = TeachySettings(defaults: defaults)
-    equal("default voice", first.voiceName, "alloy")
+    equal("default voice", first.voiceName, "Puck")
     near("default speed", first.speechSpeed, 1.0)
     equal("captions default off", first.captionsEnabled, false)
     equal("default cursor colour", first.cursorColorName, "blue")
@@ -278,7 +278,7 @@ MainActor.assumeIsolated {
     equal("default shortcuts", first.shortcuts, .standard)
     check("nothing is written until something changes", defaults.object(forKey: TeachySettingsKey.voiceName) == nil)
 
-    first.voiceName = "nova"
+    first.voiceName = "Kore"
     first.speechSpeed = 1.234
     first.captionsEnabled = true
     first.cursorColorName = "green"
@@ -292,12 +292,12 @@ MainActor.assumeIsolated {
 
     near("speed is snapped when set", first.speechSpeed, 1.25)
     equal("language is normalised when set", first.dictationLanguage, "fr")
-    equal("voice is saved under the key the synthesizer reads", defaults.string(forKey: "teachyPublikVoiceName"), "nova")
+    equal("voice is saved under the key the synthesizer reads", defaults.string(forKey: "teachyPublikVoiceName"), "Kore")
     equal("cursor colour is saved under the existing key", defaults.string(forKey: "selectedCursorColor"), "green")
     near("speed is saved under teachySpeechSpeed", defaults.double(forKey: "teachySpeechSpeed"), 1.25)
 
     let second = TeachySettings(defaults: defaults)
-    equal("voice round-trips", second.voiceName, "nova")
+    equal("voice round-trips", second.voiceName, "Kore")
     near("speed round-trips", second.speechSpeed, 1.25)
     equal("captions round-trip", second.captionsEnabled, true)
     equal("cursor colour round-trips", second.cursorColorName, "green")
@@ -307,14 +307,14 @@ MainActor.assumeIsolated {
     equal("browser sign-ins round-trip", second.allowBrowserCookieTools, true)
     equal("shortcuts round-trip", second.shortcuts, shortcuts)
 
-    equal("storage reader agrees: voice", TeachySettingsStorage.voiceName(defaults), "nova")
+    equal("storage reader agrees: voice", TeachySettingsStorage.voiceName(defaults), "Kore")
     near("storage reader agrees: speed", TeachySettingsStorage.speechSpeed(defaults), 1.25)
     equal("storage reader agrees: language code", TeachySettingsStorage.dictationLanguageCode(defaults), "fr")
     equal("storage reader agrees: cookies", TeachySettingsStorage.allowBrowserCookieTools(defaults), true)
 
     second.voiceName = "not-a-voice"
-    equal("an unknown voice is refused", second.voiceName, "alloy")
-    equal("and the default is what gets saved", defaults.string(forKey: "teachyPublikVoiceName"), "alloy")
+    equal("an unknown voice is refused", second.voiceName, "Puck")
+    equal("and the default is what gets saved", defaults.string(forKey: "teachyPublikVoiceName"), "Puck")
     second.speechSpeed = 7
     near("an out-of-range speed is clamped", second.speechSpeed, 1.5)
     second.dictationLanguage = "auto"
@@ -326,7 +326,7 @@ MainActor.assumeIsolated {
     let third = TeachySettings(defaults: defaults)
     equal("corrupt shortcuts load as the defaults", third.shortcuts, .standard)
     near("a corrupt speed loads clamped", third.speechSpeed, 1.5)
-    equal("a corrupt voice loads as alloy", third.voiceName, "alloy")
+    equal("a corrupt voice loads as Puck", third.voiceName, "Puck")
 }
 
 print("\(passes) passed, \(failures) failed")

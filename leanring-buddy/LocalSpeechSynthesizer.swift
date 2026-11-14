@@ -310,7 +310,9 @@ final class LocalSpeechSynthesizer: NSObject {
 
     /// The voice used for publik speech. Changeable later from settings.
     static var publikVoiceName: String {
-        UserDefaults.standard.string(forKey: "teachyPublikVoiceName") ?? "alloy"
+        // The picker now chooses a realtime voice (see RealtimeVoice.voiceName). This slower
+        // endpoint is only the fallback and keeps one fixed voice.
+        "alloy"
     }
 
     /// Neural speech from publik (`POST /audio/speech`). Nil when not signed in or on any error,

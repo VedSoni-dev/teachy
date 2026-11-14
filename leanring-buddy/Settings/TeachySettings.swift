@@ -39,19 +39,19 @@ nonisolated struct TeachyVoice: Equatable, Identifiable, Sendable {
 }
 
 nonisolated enum TeachyVoiceCatalog {
-    static let defaultVoiceName = "alloy"
+    static let defaultVoiceName = "Puck"
 
-    /// The voices publik's `tts-1` speaks with.
+    /// The voices of publik's realtime voice socket (Gemini Live), which is what Teachy
+    /// speaks with. The slower fallback endpoint has its own fixed voice.
     static let voices: [TeachyVoice] = [
-        TeachyVoice(name: "alloy", character: "Even, neutral"),
-        TeachyVoice(name: "ash", character: "Calm, low"),
-        TeachyVoice(name: "coral", character: "Warm, friendly"),
-        TeachyVoice(name: "echo", character: "Steady, clear"),
-        TeachyVoice(name: "fable", character: "Storyteller"),
-        TeachyVoice(name: "nova", character: "Bright, upbeat"),
-        TeachyVoice(name: "onyx", character: "Deep, slow"),
-        TeachyVoice(name: "sage", character: "Soft, gentle"),
-        TeachyVoice(name: "shimmer", character: "Light, quick"),
+        TeachyVoice(name: "Puck", character: "Upbeat, friendly"),
+        TeachyVoice(name: "Aoede", character: "Breezy, warm"),
+        TeachyVoice(name: "Kore", character: "Firm, clear"),
+        TeachyVoice(name: "Leda", character: "Young, bright"),
+        TeachyVoice(name: "Zephyr", character: "Light, quick"),
+        TeachyVoice(name: "Charon", character: "Deep, informative"),
+        TeachyVoice(name: "Fenrir", character: "Lively, excitable"),
+        TeachyVoice(name: "Orus", character: "Steady, calm"),
     ]
 
     static func isKnown(_ name: String) -> Bool {
@@ -60,8 +60,10 @@ nonisolated enum TeachyVoiceCatalog {
 
     /// The stored name if publik has that voice, else the default.
     static func resolved(_ name: String?) -> String {
-        guard let name = name?.lowercased(), isKnown(name) else { return defaultVoiceName }
-        return name
+        guard let name, let match = voices.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+            return defaultVoiceName
+        }
+        return match.name
     }
 
     /// What the preview button says.
