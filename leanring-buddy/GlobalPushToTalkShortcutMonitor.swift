@@ -39,6 +39,12 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     /// this, because keyDown events for arrows/F-keys carry a synthetic fn flag.
     private var latestModifierFlags: NSEvent.ModifierFlags = []
     private var shortcutDidChangeObserver: NSObjectProtocol?
+    /// While the shortcut is held and includes a regular key, this timer re-checks the
+    /// real keyboard state. macOS can withhold the keyUp from the event tap (secure
+    /// input in a password field, or the tap being disabled for a timeout), and without
+    /// this check push-to-talk would stay on after the person let go.
+    private var stuckRegularKeyWatchdogTimer: Timer?
+    private static let stuckRegularKeyWatchdogInterval: TimeInterval = 0.15
 
     init() {
         shortcutDidChangeObserver = NotificationCenter.default.addObserver(
@@ -98,7 +104,65 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     private func releaseShortcutIfPressed() {
         if isShortcutCurrentlyPressed {
             isShortcutCurrentlyPressed = false
+            stopStuckRegularKeyWatchdog()
             shortcutTransitionPublisher.send(.released)
+        }
+    }
+
+    // MARK: - Missed keyUp protection
+
+    /// Asks the keyboard hardware whether a key is down right now, independent of
+    /// which events reached our tap.
+    private func isRegularKeyPhysicallyHeld(_ keyCode: UInt16) -> Bool {
+        CGEventSource.keyState(.hidSystemState, key: CGKeyCode(keyCode))
+    }
+
+    /// Drops any regular key we think is held but the hardware says is up — i.e. its
+    /// keyUp never reached the event tap.
+    /// `keyCodeJustPressed` is always kept: inside its own keyDown callback the hardware
+    /// state may not have caught up yet.
+    private func forgetRegularKeysWhoseKeyUpWasMissed(keepingKeyCodeJustPressed keyCodeJustPressed: UInt16? = nil) {
+        heldRegularKeyCodes = heldRegularKeyCodes.filter { heldKeyCode in
+            heldKeyCode == keyCodeJustPressed || isRegularKeyPhysicallyHeld(heldKeyCode)
+        }
+    }
+
+    private var activeShortcutIncludesRegularKey: Bool {
+        activeShortcutKeyCodes.contains { !PushToTalkShortcutKeys.isModifierKey($0) }
+    }
+
+    private func startStuckRegularKeyWatchdogIfNeeded() {
+        guard activeShortcutIncludesRegularKey, stuckRegularKeyWatchdogTimer == nil else { return }
+        let watchdogTimer = Timer(timeInterval: Self.stuckRegularKeyWatchdogInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.forgetRegularKeysWhoseKeyUpWasMissed()
+            self.updateShortcutPressedState()
+        }
+        // .common so the check keeps running while menus or tracking loops are active.
+        RunLoop.main.add(watchdogTimer, forMode: .common)
+        stuckRegularKeyWatchdogTimer = watchdogTimer
+    }
+
+    private func stopStuckRegularKeyWatchdog() {
+        stuckRegularKeyWatchdogTimer?.invalidate()
+        stuckRegularKeyWatchdogTimer = nil
+    }
+
+    /// Sends .pressed / .released when the "both shortcut keys held" state changes.
+    private func updateShortcutPressedState() {
+        let areAllShortcutKeysHeld = activeShortcutKeyCodes.allSatisfy { shortcutKeyCode in
+            if let shortcutModifierFlag = PushToTalkShortcutKeys.modifierFlag(forKeyCode: shortcutKeyCode) {
+                return latestModifierFlags.contains(shortcutModifierFlag)
+            }
+            return heldRegularKeyCodes.contains(shortcutKeyCode)
+        }
+
+        if areAllShortcutKeysHeld && !isShortcutCurrentlyPressed {
+            isShortcutCurrentlyPressed = true
+            startStuckRegularKeyWatchdogIfNeeded()
+            shortcutTransitionPublisher.send(.pressed)
+        } else if !areAllShortcutKeysHeld && isShortcutCurrentlyPressed {
+            releaseShortcutIfPressed()
         }
     }
 
@@ -165,6 +229,7 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
     }
 
     func stop() {
+        stopStuckRegularKeyWatchdog()
         isShortcutCurrentlyPressed = false
         heldRegularKeyCodes = []
         latestModifierFlags = []
@@ -212,6 +277,11 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
             if let globalEventTap {
                 CGEvent.tapEnable(tap: globalEventTap, enable: true)
             }
+            // keyUps sent while the tap was off are gone; re-sync with the hardware.
+            if !isRecordingNewShortcut {
+                forgetRegularKeysWhoseKeyUpWasMissed()
+                updateShortcutPressedState()
+            }
             return Unmanaged.passUnretained(event)
         }
 
@@ -245,20 +315,12 @@ final class GlobalPushToTalkShortcutMonitor: ObservableObject {
             return Unmanaged.passUnretained(event)
         }
 
-        let areAllShortcutKeysHeld = activeShortcutKeyCodes.allSatisfy { shortcutKeyCode in
-            if let shortcutModifierFlag = PushToTalkShortcutKeys.modifierFlag(forKeyCode: shortcutKeyCode) {
-                return latestModifierFlags.contains(shortcutModifierFlag)
-            }
-            return heldRegularKeyCodes.contains(shortcutKeyCode)
-        }
-
-        if areAllShortcutKeysHeld && !isShortcutCurrentlyPressed {
-            isShortcutCurrentlyPressed = true
-            shortcutTransitionPublisher.send(.pressed)
-        } else if !areAllShortcutKeysHeld && isShortcutCurrentlyPressed {
-            isShortcutCurrentlyPressed = false
-            shortcutTransitionPublisher.send(.released)
-        }
+        // A keyUp missed earlier would otherwise leave a stale key "held" and let the
+        // next press of just the other key start push-to-talk.
+        forgetRegularKeysWhoseKeyUpWasMissed(
+            keepingKeyCodeJustPressed: eventType == .keyDown ? eventKeyCode : nil
+        )
+        updateShortcutPressedState()
 
         return Unmanaged.passUnretained(event)
     }

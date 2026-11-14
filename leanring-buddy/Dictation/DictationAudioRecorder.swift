@@ -76,6 +76,8 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
         cancel()
 
         let engine = AVAudioEngine()
+        // Use the microphone chosen in Settings (or the Mac's input when following the system).
+        MicrophoneCenter.apply(to: engine)
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {

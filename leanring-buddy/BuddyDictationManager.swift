@@ -379,6 +379,9 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         self.activeTranscriptionSession = activeTranscriptionSession
         print("🎙️ BuddyDictationManager: provider ready, starting audio engine")
 
+        // Use the microphone chosen in Settings (or the Mac's input when following the system).
+        let activeMicrophone = MicrophoneCenter.apply(to: audioEngine)
+        print("🎙️ Listening with: \(activeMicrophone?.name ?? "no microphone")")
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
 

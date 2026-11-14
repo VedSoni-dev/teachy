@@ -38,6 +38,8 @@ struct NotchHomeTabView: View {
             VStack(alignment: .leading, spacing: 8) {
                 VoiceSettingsSection()
 
+                MicrophoneSettingsSection()
+
                 DictationSettingsSection()
 
                 ShortcutsSettingsSection()
