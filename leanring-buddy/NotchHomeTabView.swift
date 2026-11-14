@@ -44,7 +44,7 @@ struct NotchHomeTabView: View {
 
                 cursorColorSection
 
-                // MOUNT: ConnectorsSection()
+                ConnectorsSection()
 
                 // MOUNT: AgentJobsSection()
 
