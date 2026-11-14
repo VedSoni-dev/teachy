@@ -172,7 +172,7 @@ struct NotchSetupOnboardingView: View {
         let pages = TeachyOnboardingPage.allCases
         let page = pages[teachyOnboardingPageIndex]
         let isLastPage = teachyOnboardingPageIndex == pages.count - 1
-        let isProofPage = page == .seeYourScreen
+        let isWatchItPointPage = page == .watchItPoint
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 8) {
@@ -213,6 +213,26 @@ struct NotchSetupOnboardingView: View {
                 .id("onboarding-body-\(page.rawValue)")
                 .transition(.opacity)
 
+            // The two pages about a held shortcut show the real keys, so the
+            // tour matches whatever the person set (push-to-talk is customisable).
+            if let shortcutKeyLabels = shortcutKeyLabels(for: page) {
+                HStack(spacing: 6) {
+                    Text("hold")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                    ForEach(Array(shortcutKeyLabels.enumerated()), id: \.offset) { keyIndex, keyLabel in
+                        if keyIndex > 0 {
+                            Text("+")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(DS.Colors.textSecondary)
+                        }
+                        KeyboardKeyLabel(text: keyLabel)
+                    }
+                }
+                .id("onboarding-keys-\(page.rawValue)")
+                .transition(.opacity)
+            }
+
             if !page.bullets.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(page.bullets, id: \.self) { bullet in
@@ -230,6 +250,10 @@ struct NotchSetupOnboardingView: View {
                 }
                 .id("onboarding-bullets-\(page.rawValue)")
                 .transition(.opacity)
+            }
+
+            if page == .sayHi {
+                sayHiOutLoudButton
             }
 
             Spacer(minLength: 4)
@@ -258,7 +282,7 @@ struct NotchSetupOnboardingView: View {
                             teachyOnboardingPageIndex -= 1
                         }
                     } label: {
-                        Text("Back")
+                        Text("back")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(DS.Colors.textSecondary)
                             .padding(.horizontal, 10)
@@ -271,67 +295,46 @@ struct NotchSetupOnboardingView: View {
                     .pointerCursor()
                 }
 
-                if isProofPage {
-                    if companionManager.teachyScreenProofDidPlay {
-                        Button {
-                            companionManager.playTeachyUISound(.pageAdvance)
-                            withAnimation(.smooth(duration: 0.22)) {
-                                teachyOnboardingPageIndex = TeachyOnboardingPage.ready.rawValue
-                            }
-                        } label: {
-                            Text("Continue")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 7)
-                                .background(
-                                    Capsule().fill(DS.Colors.learnAccent)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .pointerCursor()
-                    } else {
-                        Button {
-                            companionManager.beginTeachyScreenProofDemo()
-                            notchManager.collapse()
-                        } label: {
-                            Text("Show me")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 7)
-                                .background(
-                                    Capsule().fill(DS.Colors.accent)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .pointerCursor()
-
-                        Button {
-                            companionManager.playTeachyUISound(.pageAdvance)
-                            withAnimation(.smooth(duration: 0.22)) {
-                                teachyOnboardingPageIndex = TeachyOnboardingPage.ready.rawValue
-                            }
-                        } label: {
-                            Text("Skip")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(DS.Colors.textTertiary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                        }
-                        .buttonStyle(.plain)
-                        .pointerCursor()
-                    }
-                } else if isLastPage {
-                    // Quiet secondary — browse the full catalog without a guided seed.
+                if isWatchItPointPage && !companionManager.teachyScreenProofDidPlay {
                     Button {
-                        finishTeachyProductOnboarding(startFirstWin: false)
+                        companionManager.beginTeachyScreenProofDemo()
+                        notchManager.collapse()
                     } label: {
-                        Text("Browse paths")
+                        Text("show me")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(DS.Colors.textSecondary)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule().fill(DS.Colors.accent)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+
+                    Button {
+                        advanceToPageAfterWatchItPoint()
+                    } label: {
+                        Text("skip")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(DS.Colors.textTertiary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 7)
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                } else if isLastPage {
+                    Button {
+                        finishTeachyProductOnboardingOnHome()
+                    } label: {
+                        Text("let's go")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(
+                                Capsule().fill(DS.Colors.learnAccent)
+                            )
                     }
                     .buttonStyle(.plain)
                     .pointerCursor()
@@ -342,7 +345,7 @@ struct NotchSetupOnboardingView: View {
                             teachyOnboardingPageIndex += 1
                         }
                     } label: {
-                        Text("Next")
+                        Text("next")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 14)
@@ -357,24 +360,6 @@ struct NotchSetupOnboardingView: View {
             }
 
             if isLastPage {
-                // Three tappable seeds — each completes onboarding, collapses the
-                // panel, and hands a build-shaped request to the companion so the
-                // [GUIDE:]/[PROJECT:] machinery takes over immediately.
-                VStack(spacing: 6) {
-                    firstShipSeedButton(
-                        label: "A page for someone I love",
-                        seedRequest: "I want to build my first ever website — a little page for someone I love — and actually put it online today. Walk me through the whole thing like I've never done this before."
-                    )
-                    firstShipSeedButton(
-                        label: "A site for my work or side thing",
-                        seedRequest: "I want to build my first website for my work or side project and get it live online today. Walk me through everything from scratch — I've never built a site before."
-                    )
-                    firstShipSeedButton(
-                        label: "Surprise me",
-                        seedRequest: "Pick something small and fun for my very first website and walk me through building it and putting it online today — I've never done this before, make it something I'll want to show people."
-                    )
-                }
-
                 Button {
                     companionManager.triggerOnboarding()
                     notchManager.collapse()
@@ -382,7 +367,7 @@ struct NotchSetupOnboardingView: View {
                     HStack(spacing: 6) {
                         Image(systemName: "play.rectangle.fill")
                             .font(.system(size: 10))
-                        Text("Or watch the full intro")
+                        Text("or watch the demo")
                             .font(.system(size: 10, weight: .medium))
                     }
                     .foregroundColor(DS.Colors.textTertiary)
@@ -396,62 +381,72 @@ struct NotchSetupOnboardingView: View {
             companionManager.startOnboardingMusic()
         }
         .onChange(of: companionManager.teachyScreenProofDidPlay) { _, didPlay in
-            guard didPlay, page == .seeYourScreen else { return }
-            // When they reopen after the live proof, land them on the ready page.
+            guard didPlay, page == .watchItPoint else { return }
+            // When they reopen after the live proof, carry on to the next beat.
             if notchManager.isExpanded {
-                withAnimation(.smooth(duration: 0.22)) {
-                    teachyOnboardingPageIndex = TeachyOnboardingPage.ready.rawValue
-                }
+                advanceToPageAfterWatchItPoint()
             }
         }
         .onChange(of: notchManager.isExpanded) { _, isExpanded in
             guard isExpanded,
                   companionManager.teachyScreenProofDidPlay,
-                  teachyOnboardingPageIndex == TeachyOnboardingPage.seeYourScreen.rawValue
+                  teachyOnboardingPageIndex == TeachyOnboardingPage.watchItPoint.rawValue
             else { return }
-            companionManager.playTeachyUISound(.pageAdvance)
-            withAnimation(.smooth(duration: 0.22)) {
-                teachyOnboardingPageIndex = TeachyOnboardingPage.ready.rawValue
-            }
+            advanceToPageAfterWatchItPoint()
         }
     }
 
-    private func finishTeachyProductOnboarding(startFirstWin: Bool) {
-        companionManager.completeTeachyProductOnboarding()
-        notchManager.selectedTab = .home
-        if startFirstWin {
-            notchManager.collapse()
-        }
-    }
-
-    /// A full-width tappable seed button for the "What should your first ship be?"
-    /// final onboarding page. Completes onboarding, collapses the panel, then
-    /// fires a synthesized companion request so the build arc starts immediately.
-    private func firstShipSeedButton(label: String, seedRequest: String) -> some View {
+    /// Asks Teachy to greet the person out loud through the normal voice turn,
+    /// so the very first thing they hear is the real voice, not a recording.
+    private var sayHiOutLoudButton: some View {
         Button {
-            companionManager.playTeachyUISound(.celebration)
-            companionManager.completeTeachyProductOnboarding()
-            notchManager.collapse()
-            companionManager.submitSyntheticCompanionRequest(seedRequest)
+            companionManager.playTeachyUISound(.pageAdvance)
+            companionManager.submitSyntheticCompanionRequest(
+                "hi teachy! say hi back out loud in one short, warm sentence, and tell me one thing you can see on my screen right now."
+            )
         } label: {
-            HStack {
-                Text(label)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white)
-                Spacer(minLength: 0)
-                Image(systemName: "arrow.right")
+            HStack(spacing: 6) {
+                Image(systemName: "speaker.wave.2.fill")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.7))
+                Text("say hi")
+                    .font(.system(size: 11, weight: .semibold))
             }
+            .foregroundColor(.white)
             .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(DS.Colors.learnAccent)
+                Capsule().fill(DS.Colors.learnAccent)
             )
         }
         .buttonStyle(.plain)
         .pointerCursor()
+    }
+
+    /// Key labels to show under a page's body, or nil when the page isn't about a
+    /// held shortcut. Push-to-talk reads the saved shortcut; dictation is fixed.
+    private func shortcutKeyLabels(for page: TeachyOnboardingPage) -> [String]? {
+        switch page {
+        case .circleAndAsk:
+            return PushToTalkShortcutKeys.currentKeyCapsuleLabels
+        case .dictate:
+            return ["fn", "control"]
+        case .sayHi, .watchItPoint, .handItAJob:
+            return nil
+        }
+    }
+
+    private func advanceToPageAfterWatchItPoint() {
+        companionManager.playTeachyUISound(.pageAdvance)
+        withAnimation(.smooth(duration: 0.22)) {
+            teachyOnboardingPageIndex = TeachyOnboardingPage.watchItPoint.rawValue + 1
+        }
+    }
+
+    /// Ends the tour on Home, where the shortcut, memory and settings live.
+    private func finishTeachyProductOnboardingOnHome() {
+        companionManager.playTeachyUISound(.celebration)
+        companionManager.completeTeachyProductOnboarding()
+        notchManager.selectedTab = .home
     }
 
     /// One-time heads-up about macOS Automation (Apple Events) prompts. Shown
@@ -554,89 +549,89 @@ private struct AutomationPromptMockView: View {
     }
 }
 
-/// In-panel Teachy product tour shown once after permissions are granted.
+/// In-panel Teachy tour shown once after permissions are granted. Each page is
+/// one thing Teachy does, in the order someone would try them.
 private enum TeachyOnboardingPage: Int, CaseIterable {
-    case welcome
-    case howItWorks
-    case howToLearn
-    case seeYourScreen
-    case ready
+    case sayHi
+    case watchItPoint
+    case circleAndAsk
+    case dictate
+    case handItAJob
 
     var eyebrow: String {
         switch self {
-        case .welcome: return "Welcome"
-        case .howItWorks: return "How it works"
-        case .howToLearn: return "How to learn"
-        case .seeYourScreen: return "The magic beat"
-        case .ready: return "You’re ready"
+        case .sayHi: return "hi"
+        case .watchItPoint: return "it sees your screen"
+        case .circleAndAsk: return "ask anything"
+        case .dictate: return "dictation"
+        case .handItAJob: return "do it for me"
         }
     }
 
     var title: String {
         switch self {
-        case .welcome:
-            return "A free 1:1 tutor on your Mac"
-        case .howItWorks:
-            return "Learn by doing — on the real screen"
-        case .howToLearn:
-            return "Talk, watch it point, then do the step"
-        case .seeYourScreen:
-            return "I can see your screen"
-        case .ready:
-            return "What should your first ship be?"
+        case .sayHi:
+            return "finally do the thing"
+        case .watchItPoint:
+            return "watch it point"
+        case .circleAndAsk:
+            return "circle it, then ask"
+        case .dictate:
+            return "talk into any text box"
+        case .handItAJob:
+            return "or just hand it the job"
         }
     }
 
     var body: String {
         switch self {
-        case .welcome:
-            return "Teachy lives in your menu bar notch. It’s not another playlist of tutorials — it’s a tutor that sits with you while you work."
-        case .howItWorks:
-            return "You pick a learning path. Teachy looks at your screen, points at the next real UI, coaches the move, and checks when you’re actually done."
-        case .howToLearn:
-            return "During a path, a lesson HUD shows the coach line plus Hint / Do it for me / I did it. Voice always works too."
-        case .seeYourScreen:
-            return "Same vibe as the intro — collapse Teachy, and your blue buddy will fly to something real on your desk."
-        case .ready:
-            return "Let's make something real that goes live today. Pick what you want to build and Teachy will walk you through the whole thing — code, deploy, live URL."
+        case .sayHi:
+            return "from fl studio to claude code, jump into any tool and ask. teachy talks back, draws on your screen, and helps you through it, or does it for you."
+        case .watchItPoint:
+            return "teachy sees what you see. tap show me, the panel tucks away, and your cursor buddy flies to something real on your screen."
+        case .circleAndAsk:
+            return "while you hold the keys, circle the thing you mean with your mouse and ask. teachy answers out loud and points or draws right on top of it."
+        case .dictate:
+            return "click into a message, a prompt or a doc, hold the keys and talk. let go and the words land where your cursor is, cleaned up."
+        case .handItAJob:
+            return "say “do it for me” and teachy takes over: research, files, clicking through an app. it shows its plan and checks with you first."
         }
     }
 
     var bullets: [String] {
         switch self {
-        case .welcome:
+        case .sayHi:
             return [
-                "Free by design — no subscription funnel",
-                "Built to get you a real outcome, not watch-time"
+                "works in any app on your mac",
+                "it remembers you, and you can see and edit what it knows on home"
             ]
-        case .howItWorks:
-            return [
-                "Points at real buttons and windows on your Mac",
-                "Advances only when the goal’s doneWhen looks true"
-            ]
-        case .howToLearn:
-            return [
-                "Hold Control + Option to talk anytime",
-                "Ask for a hint, or say “do it for me” when stuck",
-                "Say “I did it” when you’ve finished the step"
-            ]
-        case .seeYourScreen:
-            return [
-                "Hit Show me — music stays under, cursor does the proof",
-                "Skip if you already felt the intro"
-            ]
-        case .ready:
+        case .watchItPoint:
             return []
+        case .circleAndAsk:
+            return [
+                "“what's this knob do?” “why is this red?”",
+                "ask it to draw it out when words aren't enough",
+                "double-tap control to type instead"
+            ]
+        case .dictate:
+            return [
+                "double-tap to keep going hands-free"
+            ]
+        case .handItAJob:
+            return [
+                "it asks before anything risky",
+                "press esc or grab the mouse to stop it anytime"
+            ]
         }
     }
 
     var symbolName: String {
         switch self {
-        case .welcome: return "sparkles"
-        case .howItWorks: return "hand.point.up.left.fill"
-        case .howToLearn: return "waveform"
-        case .seeYourScreen: return "eye.fill"
-        case .ready: return "flag.checkered"
+        case .sayHi: return "hand.wave.fill"
+        case .watchItPoint: return "eye.fill"
+        case .circleAndAsk: return "scribble.variable"
+        case .dictate: return "mic.fill"
+        case .handItAJob: return "wand.and.stars"
         }
     }
 }

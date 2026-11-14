@@ -70,12 +70,17 @@ struct NotchHomeTabView: View {
                 shortcutMonitor: companionManager.globalPushToTalkShortcutMonitor
             )
 
-            Text("Ask anything about your screen, or ask Teachy to do it for you.")
+            Text("Ask anything about what's on your screen. Teachy answers out loud, and points or draws right on it.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Text("While you hold the keys, move the pointer to circle the thing you mean.")
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Say \u{201C}do it for me\u{201D} and it takes the job. It asks before anything risky.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
