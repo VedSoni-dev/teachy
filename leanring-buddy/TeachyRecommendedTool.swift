@@ -24,9 +24,9 @@ struct TeachyRecommendedTool {
     /// not the model happens to name the tool explicitly in the title.
     let triggerKeywords: [String]
     /// Conceptual grounding for the model — what the tool is, the rough shape of
-    /// getting started. Vision-verification (`CourseVerifier`) is what actually keeps
+    /// getting started. The screen check (`GuidedStepScreenChecker`) is what actually keeps
     /// generated steps honest against the real screen; this just needs to be directionally
-    /// right, not a pixel-exact script (same spirit as a Course goal's `doneWhen`).
+    /// right, not a pixel-exact script (same spirit as a guided step's `doneWhen`).
     let knowledgeBrief: String
 }
 

@@ -418,9 +418,8 @@ struct NotchSetupOnboardingView: View {
 
     private func finishTeachyProductOnboarding(startFirstWin: Bool) {
         companionManager.completeTeachyProductOnboarding()
-        notchManager.selectedTab = .courses
+        notchManager.selectedTab = .home
         if startFirstWin {
-            companionManager.startClickyCourse(courseID: "build-a-website")
             notchManager.collapse()
         }
     }

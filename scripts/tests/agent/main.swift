@@ -288,9 +288,9 @@ expect(tool("notion__search_pages", [:]).risk == .needsConsent, "unknown tool ne
 expect(tool("gmail__send_email", [:]).risk == .alwaysAsk, "send in a tool name always asks")
 expect(tool("notion__delete_page", [:]).risk == .alwaysAsk, "delete in a tool name always asks")
 expect(tool("github__get_issue", [:], context: ToolPolicyContext(connectorHTTPMethod: "DELETE")).risk == .alwaysAsk, "HTTP DELETE always asks")
-expect(ToolPolicy.courseToolNames.isDisjoint(with: ["bash", "run_applescript", "authenticated_fetch", "write_file", "list_browser_sessions", "control_app"]), "course tools exclude shell, AppleScript and cookies")
-for name in ToolPolicy.courseToolNames where !name.hasPrefix("drive_") {
-    expect(tool(name, ["url": "https://example.com", "path": "~/Documents/a.txt", "query": "q"]).risk == .safe, "course tool \(name) is safe for an ordinary argument")
+expect(ToolPolicy.guidedStepToolNames.isDisjoint(with: ["bash", "run_applescript", "authenticated_fetch", "write_file", "list_browser_sessions", "control_app"]), "guided-step tools exclude shell, AppleScript and cookies")
+for name in ToolPolicy.guidedStepToolNames where !name.hasPrefix("drive_") {
+    expect(tool(name, ["url": "https://example.com", "path": "~/Documents/a.txt", "query": "q"]).risk == .safe, "guided-step tool \(name) is safe for an ordinary argument")
 }
 
 // MARK: Consent ledger

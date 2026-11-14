@@ -95,29 +95,17 @@ final class CompanionManager: ObservableObject {
     /// Chalk draw instruction from a [DRAW:...] model tag — rendered on the overlay.
     @Published var activeScreenDrawInstruction: ScreenGridDrawInstruction?
 
-    /// Soft chalk flash when a course goal verifies successfully.
-    @Published var courseSuccessCelebration: CourseSuccessCelebration?
-
-    /// Soft presence line while Teachy waits on your turn (not a full coach beat).
-    @Published var coursePresenceBubbleText: String?
-
     let mouseOutlineTracker = MouseOutlineTracker()
 
-    // MARK: - Beside-cursor video (onboarding + curriculum parts)
+    // MARK: - Beside-cursor video (onboarding intro)
 
-    /// Same overlay player used for the intro and per-goal course clips.
     @Published var onboardingVideoPlayer: AVPlayer?
     @Published var showOnboardingVideo: Bool = false
     @Published var onboardingVideoOpacity: Double = 0.0
-    /// True while a course part/intro clip is playing (HUD shows Skip).
-    @Published private(set) var isCurriculumVideoPlaying: Bool = false
-    /// Credit shown on the beside-cursor player (teacher name / “teacher clip”).
-    @Published private(set) var besideCursorVideoCredit: String? = nil
     private var onboardingVideoEndObserver: NSObjectProtocol?
     private var onboardingDemoTimeObserver: Any?
-    /// When true, push-to-talk is ignored (onboarding). Curriculum clips stay skippable by voice.
+    /// When true, push-to-talk is ignored while the onboarding intro video plays.
     private var besideCursorVideoBlocksPushToTalk = false
-    private var curriculumVideoContinuation: CheckedContinuation<Void, Never>?
     private var besideCursorVideoFadeOutTask: Task<Void, Never>?
 
     // MARK: - Onboarding Prompt Bubble
@@ -126,13 +114,6 @@ final class CompanionManager: ObservableObject {
     @Published var onboardingPromptText: String = ""
     @Published var onboardingPromptOpacity: Double = 0.0
     @Published var showOnboardingPrompt: Bool = false
-
-    /// When true, shows the custom course builder input sheet.
-    @Published var showCustomCourseBuilder: Bool = false
-    /// Description entered by the user for custom course generation.
-    @Published var customCourseDescription: String = ""
-    /// Loading state for custom course generation.
-    @Published var isGeneratingCustomCourse: Bool = false
 
     // MARK: - Onboarding Music
 
@@ -149,11 +130,7 @@ final class CompanionManager: ObservableObject {
     let globalPushToTalkShortcutMonitor = GlobalPushToTalkShortcutMonitor()
     let overlayWindowManager = OverlayWindowManager()
     let backgroundAgentSideDockManager = BackgroundAgentSideDockManager()
-    let courseModeNotchDockManager = CourseModeNotchDockManager()
-    let courseLessonHUDManager = CourseLessonHUDManager()
     let composioConnectionManager = ComposioConnectionManager()
-    let coursesManager = CoursesManager()
-    let teachyEngine = TeachyEngine()
     // Response text is now displayed inline on the cursor overlay via
     // streamingResponseText, so no separate response overlay manager is needed.
 
@@ -166,10 +143,6 @@ final class CompanionManager: ObservableObject {
 
     lazy var speechSynthesizer: LocalSpeechSynthesizer = {
         return LocalSpeechSynthesizer()
-    }()
-
-    lazy var lessonPlayer: LessonPlayer = {
-        LessonPlayer(coursesManager: coursesManager, host: self)
     }()
 
     lazy var backgroundAgentManager: BackgroundAgentManager = {
@@ -185,10 +158,6 @@ final class CompanionManager: ObservableObject {
     /// model references elements by their `ax:ID`; `applyPointingFromResponse` looks them
     /// up here to resolve the true global AppKit coordinate, bypassing screenshot-pixel math.
     private var currentAXElementRegistry: [DetectedAXElement] = []
-
-    /// Set when GET /health fails — shown on the Courses tab so users know why a course won't start.
-    @Published private(set) var isBackendReachable: Bool = true
-    @Published private(set) var backendConnectionHint: String?
 
     /// OpenRouter model for voice agent. Persisted to UserDefaults.
     @Published var selectedModel: String = companionManagerInitialModelID()
@@ -233,7 +202,7 @@ final class CompanionManager: ObservableObject {
     }
 
     /// An in-progress, fully ephemeral step-by-step walkthrough happening inside
-    /// normal companion chat (no Course UI, no HUD, no persistence). Started/continued/
+    /// a normal voice turn (no tab, no HUD, no persistence). Started/continued/
     /// ended entirely by the model tagging `[GUIDE: short title]` on its own replies —
     /// see `sendCompanionChatResponse` and `guidedTaskPromptSection()`.
     @Published private(set) var activeGuidedTask: CompanionGuidedTask?
@@ -241,19 +210,12 @@ final class CompanionManager: ObservableObject {
     /// Set for the duration of a single companion turn when a guided-task step was just
     /// vision-verified, so `guidedTaskPromptSection()` can weave the result into that
     /// turn's answer. Cleared once the prompt for that turn has been built.
-    private var pendingGuidedTaskVerificationResult: CourseVerificationResult?
+    private var pendingGuidedTaskVerificationResult: GuidedStepCheckResult?
 
     /// The frontmost browser's active tab (URL + title) captured for this turn —
     /// refreshed in `buildLabeledAnnotatedImages` at capture time, consumed by
     /// `buildCompanionVoiceResponseSystemPrompt`, cleared after the prompt is built.
     private var currentBrowserTabContext: String?
-
-    /// Engine-computed moments (celebrations, skill level-ups, retention nudges)
-    /// waiting to be surfaced. The engine has always produced these but every call
-    /// site discarded them — captured here instead, shown in the Home tab, and woven
-    /// into the next companion turn's prompt (then consumed — deliver-once). Capped
-    /// small: these are garnishes, not a feed.
-    @Published private(set) var pendingProactiveMoments: [String] = []
 
     /// The currently running AI response task, if any. Cancelled when the user
     /// speaks again so a new response can begin immediately.
@@ -264,8 +226,6 @@ final class CompanionManager: ObservableObject {
     private var dictationErrorCancellable: AnyCancellable?
     private var audioPowerCancellable: AnyCancellable?
     private var composioConnectionCancellable: AnyCancellable?
-    private var coursesManagerCancellable: AnyCancellable?
-    private var lessonPlayerCancellable: AnyCancellable?
     private var accessibilityCheckTimer: Timer?
     private var lastLoggedUntrustedAccessibilityBundlePath: String?
     private var pendingKeyboardShortcutStartTask: Task<Void, Never>?
@@ -330,7 +290,7 @@ final class CompanionManager: ObservableObject {
     }
 
     /// Whether the user has finished the Teachy product tour at least once.
-    /// Persisted so Learn unlocks on later launches.
+    /// Persisted so the Home tab shows on later launches.
     var hasCompletedOnboarding: Bool {
         get { UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") }
         set { UserDefaults.standard.set(newValue, forKey: "hasCompletedOnboarding") }
@@ -352,21 +312,14 @@ final class CompanionManager: ObservableObject {
     func start() {
         refreshAllPermissions()
         print("🔑 Teachy start — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), speech: \(hasSpeechRecognitionPermission), screenContent: \(hasScreenContentPermission), onboarded: \(hasCompletedOnboarding)")
-        applyVoiceKeytermsForActiveCourse()
+        buddyDictationManager.updateContextualKeyterms(Self.defaultVoiceKeyterms)
         startPermissionPolling()
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
-        coursesManager.syncToEngineLearnerModel(teachyEngine)
         // Eagerly touch the Claude API so its TLS warmup handshake completes
         // well before the onboarding demo fires at ~40s into the video.
         _ = claudeAPI
-
-        // Continuous course updates: every launch, silently refresh installed
-        // courses from their source URLs (publish upstream → users current).
-        Task {
-            await coursesManager.autoUpdateInstalledCoursesFromSources()
-        }
 
         // If the user already completed onboarding AND all permissions are
         // still granted, show the cursor overlay immediately. If permissions
@@ -383,32 +336,18 @@ final class CompanionManager: ObservableObject {
                 self?.objectWillChange.send()
             }
 
-        coursesManagerCancellable = coursesManager.objectWillChange
-            .sink { [weak self] _ in
-                self?.objectWillChange.send()
-            }
-
-        // Eagerly create the lesson player and forward its phase updates into the panel.
-        _ = lessonPlayer
-        lessonPlayerCancellable = lessonPlayer.objectWillChange
-            .sink { [weak self] _ in
-                self?.objectWillChange.send()
-            }
-
         composioConnectionManager.startMonitoring(companionManager: self)
     }
 
     /// Called by BlueCursorView after the buddy finishes its pointing
     /// animation and returns to cursor-following mode.
-    /// Marks the in-panel Teachy product tour as done so Learn unlocked
+    /// Marks the in-panel Teachy product tour as done so the Home tab shows
     /// without requiring the beside-cursor intro video.
     func completeTeachyProductOnboarding() {
         hasCompletedOnboarding = true
         teachyScreenProofTask?.cancel()
         teachyScreenProofTask = nil
         ClickyAnalytics.trackOnboardingStarted()
-        // Stamp the onboarding-complete date for the north-star metric (first-time only).
-        teachyEngine.recordOnboardingCompleted()
         fadeOutOnboardingMusic()
 
         if isClickyCursorEnabled {
@@ -803,7 +742,6 @@ final class CompanionManager: ObservableObject {
         case .pressed:
             guard !buddyDictationManager.isDictationInProgress else { return }
             // Don't register push-to-talk while the onboarding video is playing.
-            // Curriculum part clips stay skippable via voice / HUD.
             guard !(showOnboardingVideo && besideCursorVideoBlocksPushToTalk) else { return }
 
             // Cancel any pending transient hide so the overlay stays visible
@@ -844,7 +782,6 @@ final class CompanionManager: ObservableObject {
             ClickyAnalytics.trackPushToTalkStarted()
 
             pendingKeyboardShortcutStartTask?.cancel()
-            let submitWhenTranscriptEmpty = coursesManager.isCourseActive
             pendingKeyboardShortcutStartTask = Task {
                 await buddyDictationManager.startPushToTalkFromKeyboardShortcut(
                     currentDraftText: "",
@@ -857,7 +794,7 @@ final class CompanionManager: ObservableObject {
                         ClickyAnalytics.trackUserMessageSent(transcript: finalTranscript)
                         self?.routeVoiceTranscript(finalTranscript)
                     },
-                    submitWhenTranscriptEmpty: submitWhenTranscriptEmpty
+                    submitWhenTranscriptEmpty: false
                 )
             }
         case .released:
@@ -921,17 +858,12 @@ final class CompanionManager: ObservableObject {
         return nil
     }
 
-    /// Builds the companion system prompt, optionally injecting a temporal continuity
-    /// line when the learner is returning after a gap (e.g. "last chat was 3 days ago —
-    /// be warm, don't reintroduce yourself"). The continuity line is sourced from
-    /// `LearnerTemporalContext` using `teachyEngine.daysSinceLastSession` which is
-    /// captured at session-start before `recordActivity` overwrites `lastActiveDate`.
+    /// Builds the system prompt for one voice turn: a general assistant that answers
+    /// what they asked about their screen, points and draws when that helps, and does
+    /// the task (or offers to) when they want it done. The bracket-tag contracts below
+    /// ([POINT:], [SHOW:], [JOB:], [DO:], [GUIDE:], [CLIPBOARD:], [REMEMBER:]) are what
+    /// `sendCompanionChatResponse` parses — keep their wording in sync with that code.
     private func buildCompanionVoiceResponseSystemPrompt() -> String {
-        let continuityLine = LearnerTemporalContext.companionContinuityLine(
-            daysSinceLastSession: teachyEngine.daysSinceLastSession
-        )
-        let continuitySection = continuityLine.map { "\n\n\($0)" } ?? ""
-
         // Situational awareness: tell the model the frontmost app/window by name,
         // not just from screenshot pixels — this is what lets "I have Claude open,
         // what's cowork?" work without the user having to say what app they're in.
@@ -949,27 +881,6 @@ final class CompanionManager: ObservableObject {
         let browserTabSection = currentBrowserTabContext
             .map { "\n\nThe browser tab they're on right now: \($0)." } ?? ""
 
-        // Engine moments (level-ups, retention nudges, celebrations) queued since the
-        // last turn — offered to the model as optional garnish, consumed after this
-        // prompt is built so each moment is only ever offered once.
-        let proactiveMomentsSection = pendingProactiveMoments.isEmpty ? "" : """
-
-
-        Good news you could mention if there's a natural beat this turn (one short line max, \
-        skip entirely if it doesn't fit the conversation): \(pendingProactiveMoments.joined(separator: " | "))
-        """
-
-        // What they actually do day-to-day (from conversation-moment app sightings) —
-        // grounds AI-fluency recommendations in their real work, not generic advice.
-        let workflowSection = LearnerTemporalContext.recurringWorkflowSummary(from: teachyEngine.getLearnerModel())
-            .map { """
-
-
-            \($0). When there's a natural beat — not every turn — connect an answer to ONE specific \
-            AI workflow that would save time in what they really do, and offer to walk them through \
-            it (that becomes a [GUIDE:] task if they say yes).
-            """ } ?? ""
-
         let guidedTaskSection = guidedTaskPromptSection()
 
         // What Teachy remembers about this person (PROFILE.md / VOLATILE.md, editable by
@@ -983,89 +894,71 @@ final class CompanionManager: ObservableObject {
         """
 
         // Present only when a coding tool (Cursor, VS Code, Xcode, a terminal running Claude Code,
-        // etc.) is the frontmost app — this is the interpreter-mode wedge for non-technical users.
+        // etc.) is the frontmost app — they are likely driving an AI coding agent.
         let interpreterModeSection: String
         if let codingToolName = frontmostCodingToolName() {
             interpreterModeSection = """
 
 
             INTERPRETER MODE — they're in \(codingToolName), likely working with an AI coding agent:
-            - When they say what they want changed ("make the header blue", "add a contact form"), do NOT explain how to code it. Craft the instruction the coding agent needs — name the file or feature area if visible on screen, state the acceptance criteria (what should be true when done), say what not to touch — and hand it over with [CLIPBOARD: the instruction]. Tell them it's ready to paste into the agent.
-            - After the agent runs and they ask what happened (or you can see the result on screen), explain WHAT CHANGED in one or two plain sentences — no code speak — then the ONE thing they should check.
-            - Each handoff, teach one short thing about why the instruction was shaped that way ("I named the file because agents guess wrong otherwise"). That's the fluency lesson.
-            - If an error is visible on screen, read its first line in plain words and craft the paste-back instruction for the agent via [CLIPBOARD:].
+            - When they say what they want changed ("make the header blue", "add a contact form"), don't explain how to code it. Write the instruction the coding agent needs — name the file or feature area if visible on screen, state what should be true when it's done, say what not to touch — and hand it over with [CLIPBOARD: the instruction]. Tell them it's ready to paste into the agent.
+            - After the agent runs and they ask what happened (or you can see the result on screen), say WHAT CHANGED in one or two plain sentences — no code speak — then the ONE thing they should check.
+            - If an error is visible on screen, read its first line in plain words and write the paste-back instruction for the agent via [CLIPBOARD:].
             """
         } else {
             interpreterModeSection = ""
         }
 
         return """
-        You are Teachy — a real person sitting next to them at their Mac, looking at the same screen.
-        They just talked to you. Your reply is spoken out loud, so talk like a human coach in the room —
-        warm, clear, a little playful, never like Siri, never like a help article, never like a corporate bot.
+        You are Teachy — a sharp, friendly assistant sitting next to them at their Mac, looking at the same screen.
+        They just asked you something out loud. Your reply is spoken, so talk like a capable friend in the room —
+        warm, direct, a little playful, never like Siri, never like a help article, never like a corporate bot.
 
-        How you sound (spoken aloud):
-        - Natural sentences. Contractions. Short pauses implied with commas, not stage directions.
-        - Usually 1–2 short sentences. Three only if they asked for detail.
-        - Specific to WHAT YOU SEE on screen — name the real button, tab, or window.
-        - No emojis, no markdown, no bullet lists, no "as an AI".
-        - Never say "simply", "certainly", "I'd be happy to help", or "great question".
-        - Don't read code aloud — say what it does in plain words.
-        - If something's confusing, empathize in half a breath, then give the next move.
+        Your job is to get them unstuck and get the thing done:
+        - Answer what they actually asked, directly, in the first sentence. Usually 1–2 short sentences in total; three only if they asked for detail.
+        - Be specific to WHAT YOU SEE on screen — name the real button, tab, menu, or window.
         - When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there —
           and say "here" / "right here" / "this one" ONLY when you're including that [POINT:...] tag
           in the same reply. If you can't confidently identify a specific, pointable target (vague
           references like "that tab" without a clear match), describe it in words instead — don't
           say "here" with nothing backing it, that's worse than not pointing at all.
-        - Feel like a sharp friend who actually wants them to get it — not a lecture.
         - When a picture would explain it better than words — how a machine or a body part works, what a real object looks like inside, a concept, a comparison, numbers worth charting, or they say "show me" / "draw" / "in 3D" — add [SHOW: what to draw, in a few words] at the end and keep what you SAY to one sentence. Teachy then draws it for them: a 3D model they can turn and click, a diagram card, or a chart. Don't use [SHOW:] for questions about what's on their screen right now; point instead.
-        - When they want real multi-step work DONE for them — research something on the web, sort or rename files, build or change something, anything across several apps or their connected services — add [JOB: the whole task in one clear sentence, with every detail they gave] and SAY one short line that you're on it. A job runs in the background, shows its plan, and asks them before anything risky. Don't use [JOB:] for a single native command (that's [DO:]) or when they want to learn to do it themselves (that's [GUIDE:]).
-        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(brainSection)\(continuitySection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)\(proactiveMomentsSection)\(workflowSection)
+        - When they want it DONE, do it rather than explain it: [DO:] for a single native command, [JOB:] for real multi-step work, [GUIDE:] when they'd rather click through it themselves with you walking them through each step. If it's unclear whether they want you to do it, answer, then offer in one short line ("want me to just do it?").
+        - When they want real multi-step work DONE for them — research something on the web, sort or rename files, build or change something, anything across several apps or their connected services — add [JOB: the whole task in one clear sentence, with every detail they gave] and SAY one short line that you're on it. A job runs in the background, shows its plan, and asks them before anything risky. Don't use [JOB:] for a single native command (that's [DO:]) or when they'd rather do it themselves with you guiding (that's [GUIDE:]).
+        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.
+
+        How you sound (spoken aloud):
+        - Natural sentences. Contractions. Short pauses implied with commas, not stage directions.
+        - No emojis, no markdown, no bullet lists, no "as an AI".
+        - Never say "simply", "certainly", "I'd be happy to help", or "great question".
+        - Don't read code aloud — say what it does in plain words.
+        - If something's confusing, empathize in half a breath, then give the next move.\(brainSection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)
         \(guidedTaskSection)\(interpreterModeSection)
 
         You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
         - Compound direct commands are fine ("close all my tabs and open Figma") — emit one [DO:] tag per action, in order. They execute as one sequence.
         - Use [DO:] only for direct, reversible native commands (app open/quit/activate/hide, tab/window open/close/switch — including "close all tabs" / "close the other tabs").
-        - For tasks that require planning, teaching, or working WITH the user step by step, use [GUIDE:] instead — not [DO:].
+        - For tasks they want to do themselves step by step with you, use [GUIDE:]; for multi-step work they want done for them, use [JOB:] — not [DO:].
         - NEVER tag [DO:] for anything that deletes user data, spends money, sends an email or message on their behalf, or cannot be easily undone. For those, explain and let them act.
         - Examples of safe [DO:] use: "Opening Spotify for you. [DO: open app Spotify]" — "Sure, closing this tab. [DO: close active browser tab]" — "Switching over to Arc. [DO: activate app Arc]".
 
-        PROMPT CONCIERGE — this is how they build real AI fluency:
-        When they want to use an AI tool (ChatGPT, Claude, Midjourney, anything) for a task, don't just point them at it — most people type a bland two-word prompt and get bland results. If the goal is vague, ask 1–2 quick questions first (what's it for, who's it for, what style or constraints). Then CRAFT the strong prompt FOR them — specific, contextual, with the details a pro would include — and hand it over with [CLIPBOARD: the full prompt]. The tag is stripped from speech and its contents land on their clipboard. Tell them it's on the clipboard ready to paste, and teach the ONE thing that made this prompt better than what they'd have typed (one sentence — that's the lesson). Pair with [DO: open ...] when the tool isn't already open. Don't use ] inside the clipboard text, and never put secrets in it.
+        PROMPT CONCIERGE:
+        When they want to use an AI tool (ChatGPT, Claude, Midjourney, anything) for a task, don't just point them at it — a bland two-word prompt gets bland results. If the goal is vague, ask 1–2 quick questions first (what's it for, who's it for, what style or constraints). Then WRITE the strong prompt FOR them — specific, contextual, with the details a pro would include — and hand it over with [CLIPBOARD: the full prompt]. The tag is stripped from speech and its contents land on their clipboard. Tell them it's on the clipboard ready to paste, in one short sentence. Pair with [DO: open ...] when the tool isn't already open. Don't use ] inside the clipboard text, and never put secrets in it.
         \(ScreenGridAnnotationUtility.modelInstructions)
         """
     }
 
-    /// Routes voice input to an active course (unchanged teaching path) or quick screen Q&A.
-    /// Free-form background agent / automation triggers are demoted — Mac tools still run
-    /// inside courses via LessonPlayer (“Do it for me”) exactly as before.
-    /// Feeds a synthesized user request into the normal voice-routing flow — exactly
-    /// as if the user had spoken it (course routing, guided tasks, capture, TTS, all
-    /// of it). Used by UI affordances like the project Resume button, and by
-    /// onboarding seeds that start a first build.
+    /// Feeds a typed or synthesized request into the normal voice flow — exactly as if
+    /// the user had spoken it (guided tasks, capture, speech, all of it). Used by the
+    /// text box, scene follow-up questions, and onboarding seeds.
     func submitSyntheticCompanionRequest(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         routeVoiceTranscript(trimmed)
     }
 
+    /// Every transcript goes through the one general voice turn.
     private func routeVoiceTranscript(_ transcript: String) {
-        if coursesManager.isCourseActive {
-            // Defensive: a formal Course is active, so the ephemeral companion guided
-            // task (if any) must not linger — `startClickyCourse` already clears it at
-            // the moment a course starts, this is just a backstop against the two
-            // systems ever overlapping.
-            if activeGuidedTask != nil {
-                activeGuidedTask = nil
-            }
-            if ClickyCourseVoiceCommands.isExitRequest(transcript: transcript) {
-                exitClickyCourse(voiceInitiated: true)
-                return
-            }
-            sendCourseStepResponse(transcript: transcript)
-            return
-        }
-
         sendCompanionChatResponse(transcript: transcript)
     }
 
@@ -1109,11 +1002,6 @@ final class CompanionManager: ObservableObject {
             // much later — this is a backstop, not the primary exit mechanism (that's
             // the model simply not tagging [GUIDE:...] anymore, handled below).
             if let activeGuidedTask, Date().timeIntervalSince(activeGuidedTask.lastActivityAt) > 2700 {
-                // A linked project pauses instead of vanishing — the ephemeral task
-                // dies, the work waits.
-                if let staleProjectID = activeGuidedTask.projectID {
-                    teachyEngine.pauseProject(withID: staleProjectID)
-                }
                 self.activeGuidedTask = nil
             }
 
@@ -1125,19 +1013,8 @@ final class CompanionManager: ObservableObject {
             // We check for an existing task with steps (not newly-started — the plan-intro
             // turn already narrates step 1; the NEXT turn is when we act on `.act` steps)
             // and specifically for the `.act` execution mode on the current step.
-            //
-            // Anti-dependency mechanic: even when the planner emitted `.act`, a capable
-            // learner (autonomy >= .watchThem — proficient or expert overall) should DRIVE
-            // their own mechanical setup. We treat the step as `.coach` for them — skip the
-            // act path and fall through to coaching. This only TIGHTENS (Teachy acts less);
-            // it never forces an act the planner didn't ask for. novice/competent learners
-            // keep the existing `.act` behavior. An explicit spoken "do it for me" still
-            // reaches the direct-action path (`[DO:]`) unchanged, so help is never refused.
-            let learnerAutonomyLevel = CoachAutonomy.level(for: teachyEngine.getLearnerModel())
-            let capableLearnerDrivesOwnSetup = learnerAutonomyLevel >= .watchThem
             if let currentGuidedStepForActing = self.activeGuidedTask?.currentStep,
                currentGuidedStepForActing.executionMode == .act,
-               !capableLearnerDrivesOwnSetup,
                !self.activeGuidedTask!.steps.isEmpty {
 
                 let actingResult = await executeActStep(
@@ -1172,33 +1049,26 @@ final class CompanionManager: ObservableObject {
                 return
             }
 
-            // Coach path: verify the current step against the screenshot we already captured
+            // Coach path: check the current step against the screenshot we already captured
             // for this turn (no separate capture) BEFORE building this turn's answer, so the
-            // coach's reply can honestly reference what's actually on screen right now.
+            // reply can honestly reference what's actually on screen right now.
             pendingGuidedTaskVerificationResult = nil
             if let currentGuidedStep = self.activeGuidedTask?.currentStep,
                let cursorScreenCaptureForVerification = screenCaptures.first(where: { $0.isCursorScreen }) {
-                // `.goal` is the `CourseLearningGoal` nested inside `AgenticStep` —
-                // reach through it to get `doneWhen` and `goal` (the success description).
-                let verificationResult = await CourseVerifier.verifyStructured(
-                    criteria: CourseSuccessCriteria(
-                        visionDescription: currentGuidedStep.goal.doneWhen ?? currentGuidedStep.goal.goal,
-                        urlContains: nil,
-                        requireUserAdvance: false
-                    ),
-                    claudeAPI: claudeAPI,
-                    precapturedScreenCapture: cursorScreenCaptureForVerification
+                let verificationResult = await GuidedStepScreenChecker.checkStep(
+                    doneWhenDescription: currentGuidedStep.goal.doneWhen ?? currentGuidedStep.goal.goal,
+                    screenCapture: cursorScreenCaptureForVerification,
+                    claudeAPI: claudeAPI
                 )
                 pendingGuidedTaskVerificationResult = verificationResult
 
                 if verificationResult.status == .pass {
                     self.activeGuidedTask?.currentStepIndex += 1
-                    syncGuidedTaskProgressToProject(verifiedStepTitle: currentGuidedStep.goal.title)
                 } else {
                     // Layer 3: coach-path divergence. If the verification was off-track
                     // (user hit an obstacle, wrong screen, unexpected state), call the
-                    // reasoning model to reflect and revise the remaining plan — so Teachy
-                    // adapts instead of blindly repeating the same stuck step.
+                    // reasoning model to revise the remaining plan — so Teachy adapts
+                    // instead of blindly repeating the same stuck step.
                     // Skip reflection on `.partial` (still in progress — not diverged yet)
                     // and on clean `.pass` (cost control). Also respect the per-task cap.
                     if verificationResult.status == .offTrack,
@@ -1235,7 +1105,6 @@ final class CompanionManager: ObservableObject {
                 let systemPromptForThisTurn = buildCompanionVoiceResponseSystemPrompt()
                 pendingGuidedTaskVerificationResult = nil
                 currentBrowserTabContext = nil
-                pendingProactiveMoments = []
 
                 // Speech starts on the first complete sentence while the rest of the
                 // answer is still streaming, instead of after the whole reply.
@@ -1277,15 +1146,11 @@ final class CompanionManager: ObservableObject {
                 }
 
                 let parseResult = Self.parsePointingCoordinates(from: SceneDirector.extractShowRequest(from: replyWithoutJobTag).text)
-                // Strip [REMEMBER: ...] tags before this ever reaches TTS/history — same
-                // tag convention used inside courses (`CourseCoachMessageParts`), reused
-                // here since quick companion Q&A can also surface personal facts.
-                let (spokenTextWithoutMemoryTags, rememberedFacts) = CoachRememberTagParser.extractFactsAndStrip(from: parseResult.spokenText)
-                // Quick companion Q&A runs outside a course, so there's no active
-                // TeachyEngine `CoachingSession` — `processEvent` would silently no-op
-                // (see its session guard). Use the session-independent recorder instead.
+                // Strip [REMEMBER: ...] tags before this ever reaches speech/history; the
+                // facts go straight into the Brain (PROFILE.md "About me").
+                let (spokenTextWithoutMemoryTags, rememberedFacts) = CompanionRememberTagParser.extractFactsAndStrip(from: parseResult.spokenText)
                 for fact in rememberedFacts {
-                    self.teachyEngine.recordPersonalFact(fact)
+                    BrainStore.shared.remember(fact, kind: .aboutMe)
                 }
 
                 // Strip [GUIDE: short title] the same way REMEMBER is stripped above,
@@ -1303,44 +1168,14 @@ final class CompanionManager: ObservableObject {
                 // effect like REMEMBER, not a fourth exclusive lane. Set BEFORE any
                 // [DO:] executes so "open ChatGPT + prompt on clipboard" arrives ready
                 // to paste the moment the tool opens.
-                let (spokenTextAfterClipboard, clipboardTextThisTurn) = CompanionClipboardTagParser.extractClipboardTextAndStrip(from: spokenTextWithoutActionTags)
+                let (spokenText, clipboardTextThisTurn) = CompanionClipboardTagParser.extractClipboardTextAndStrip(from: spokenTextWithoutActionTags)
                 if let clipboardTextThisTurn, !clipboardTextThisTurn.isEmpty {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(clipboardTextThisTurn, forType: .string)
                     print("📋 Concierge prompt placed on clipboard (\(clipboardTextThisTurn.count) chars)")
                 }
 
-                // Durable-project tags (v2): [PROJECT: title] marks a build-shaped guided
-                // task; [SHIPPED: url] marks the artifact going live.
-                let (spokenTextAfterProject, projectTitleThisTurn) = CompanionProjectTagParser.extractTitleAndStrip(from: spokenTextAfterClipboard)
-                let (spokenText, shippedURLThisTurn) = CompanionShippedTagParser.extractURLAndStrip(from: spokenTextAfterProject)
-
-                // Shipping is handled BEFORE the lifecycle so the projectID isn't lost
-                // when the model (correctly) stops tagging [GUIDE:] on its wrap-up turn.
-                // A shipped turn also skips the lifecycle entirely — a stray [GUIDE:] on
-                // the same turn must not restart a task for a project that just finished.
-                let lifecycleOutcome: GuidedTaskLifecycleOutcome
-                if let shippedURLThisTurn,
-                   let taskBeingShipped = activeGuidedTask,
-                   let shippedProjectID = taskBeingShipped.projectID {
-                    if let shippedProject = teachyEngine.shipProject(
-                        withID: shippedProjectID,
-                        deployedURL: shippedURLThisTurn.isEmpty ? nil : shippedURLThisTurn
-                    ) {
-                        let liveSuffix = shippedProject.deployedURL.map { " — live at \($0)" } ?? ""
-                        captureEngineOutputs([.celebration(
-                            messageText: "They SHIPPED \(shippedProject.title)\(liveSuffix). A real thing they built is on the internet."
-                        )])
-                        print("🚀 Project shipped: \(shippedProject.title)\(liveSuffix)")
-                    }
-                    activeGuidedTask = nil
-                    lifecycleOutcome = .ended
-                } else {
-                    lifecycleOutcome = applyGuidedTaskLifecycle(
-                        guideTaskTitleThisTurn: guideTaskTitleThisTurn,
-                        projectTitleThisTurn: projectTitleThisTurn
-                    )
-                }
+                let lifecycleOutcome = applyGuidedTaskLifecycle(guideTaskTitleThisTurn: guideTaskTitleThisTurn)
 
                 // Phase L — one-shot native-action fast lane.
                 // Conditions for taking it: a [DO:] action was tagged AND no guided task is
@@ -1473,19 +1308,11 @@ final class CompanionManager: ObservableObject {
     /// coding agent" (explicit user direction) means the caller must synchronously generate
     /// and present the plan on `.newlyStarted` via `presentGuidedTaskPlan` before this turn's
     /// answer is finalized, rather than firing it off in the background after the fact.
-    private func applyGuidedTaskLifecycle(
-        guideTaskTitleThisTurn: String?,
-        projectTitleThisTurn: String? = nil
-    ) -> GuidedTaskLifecycleOutcome {
+    private func applyGuidedTaskLifecycle(guideTaskTitleThisTurn: String?) -> GuidedTaskLifecycleOutcome {
         guard let guideTaskTitleThisTurn, !guideTaskTitleThisTurn.isEmpty else {
             // Tag absent this turn — a task that was active has naturally concluded
-            // (wrapped up, or the conversation moved on). No lingering state — but a
-            // linked project isn't done just because today's session is: pause it so
-            // the work waits instead of vanishing.
+            // (wrapped up, or the conversation moved on). No lingering state.
             if let endingTask = activeGuidedTask {
-                if let projectID = endingTask.projectID {
-                    teachyEngine.pauseProject(withID: projectID)
-                }
                 print("🧭 Guided task ended: \(endingTask.title)")
                 activeGuidedTask = nil
                 return .ended
@@ -1498,11 +1325,6 @@ final class CompanionManager: ObservableObject {
             // (it's used as the race guard in `presentGuidedTaskPlan`) rather than
             // overwriting it with whatever the model tagged this turn.
             activeGuidedTask?.lastActivityAt = Date()
-            // Late [PROJECT:] tag on an ongoing task (the model realized mid-flow this
-            // is a durable build) — attach now rather than losing the signal.
-            if activeGuidedTask?.projectID == nil, let projectTitleThisTurn, !projectTitleThisTurn.isEmpty {
-                attachProjectToActiveGuidedTask(projectTitle: projectTitleThisTurn, goalDescription: guideTaskTitleThisTurn)
-            }
             return .continuing
         }
 
@@ -1513,70 +1335,37 @@ final class CompanionManager: ObservableObject {
         activeGuidedTask = CompanionGuidedTask(title: guideTaskTitleThisTurn)
         print("🧭 Guided task started: \(guideTaskTitleThisTurn)")
 
-        // Durable build? Create-or-resume the project. Resuming a project that already
-        // has steps seeds them straight into the task — `presentGuidedTaskPlan` then
-        // skips regeneration and picks up at the saved step instead of starting over.
-        if let projectTitleThisTurn, !projectTitleThisTurn.isEmpty {
-            attachProjectToActiveGuidedTask(projectTitle: projectTitleThisTurn, goalDescription: guideTaskTitleThisTurn)
-        }
-
         // Recommended-tool registry: if this task's title matches a known go-to tool
-        // (e.g. "set up a phone agent" → Vapi), remember it on the task so ongoing
-        // coaching stays grounded in real knowledge about that tool, and soft-open its
-        // site immediately — same soft-start pattern Course goals already use for
-        // `startURL`, reusing `CourseUIGrounder.openSetupURLIfNeeded` exactly as-is.
+        // (e.g. "set up a phone agent" → Vapi), remember it on the task so every later
+        // turn stays grounded in real knowledge about that tool, and open its site now.
         let matchedTool = TeachyRecommendedToolRegistry.match(forText: guideTaskTitleThisTurn)
         if let matchedTool {
             activeGuidedTask?.recommendedTool = matchedTool
-            Task { await CourseUIGrounder.openSetupURLIfNeeded(matchedTool.url) }
+            Self.openRecommendedToolSite(matchedTool.url)
         }
 
         return .newlyStarted
     }
 
-    /// Creates-or-resumes the durable project for a build-shaped guided task and
-    /// links it. A resumed project with saved steps seeds them into the task
-    /// (wrapped as `.coach` — execution modes aren't persisted) along with the
-    /// saved position, so multi-day builds pick up where they left off.
-    private func attachProjectToActiveGuidedTask(projectTitle: String, goalDescription: String) {
-        let project = teachyEngine.createOrResumeProject(title: projectTitle, goalDescription: goalDescription)
-        activeGuidedTask?.projectID = project.id
-        if !project.steps.isEmpty, activeGuidedTask?.steps.isEmpty == true {
-            activeGuidedTask?.steps = project.steps.map { AgenticStep(goal: $0, executionMode: .coach) }
-            activeGuidedTask?.currentStepIndex = min(project.currentStepIndex, max(project.steps.count - 1, 0))
-            print("🧱 Resumed project '\(project.title)' at step \(project.currentStepIndex + 1)/\(project.steps.count)")
-        } else {
-            print("🧱 Project linked: \(project.title)")
-        }
-    }
-
-    /// Writes the guided task's progress through to its linked project (if any) —
-    /// step position, journal entry for the just-verified step, and reactivation.
-    private func syncGuidedTaskProgressToProject(verifiedStepTitle: String?) {
-        guard let task = activeGuidedTask,
-              let projectID = task.projectID,
-              var project = teachyEngine.project(withID: projectID) else { return }
-        project.currentStepIndex = task.currentStepIndex
-        project.status = .active
-        if let verifiedStepTitle, !verifiedStepTitle.isEmpty {
-            project.appendJournalEntry("Done: \(verifiedStepTitle)")
-        } else {
-            project.lastWorkedAt = Date()
-        }
-        teachyEngine.upsertProject(project)
+    /// Opens a recommended tool's site in the default browser ("vapi.ai" → https://vapi.ai).
+    private static func openRecommendedToolSite(_ urlString: String) {
+        let trimmedURLString = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedURLString.isEmpty else { return }
+        let lowercasedURLString = trimmedURLString.lowercased()
+        let normalizedURLString = (lowercasedURLString.hasPrefix("http://") || lowercasedURLString.hasPrefix("https://"))
+            ? trimmedURLString
+            : "https://\(trimmedURLString)"
+        guard let siteURL = URL(string: normalizedURLString) else { return }
+        NSWorkspace.shared.open(siteURL)
     }
 
     /// Generates the guided-task's step plan SYNCHRONOUSLY — accepting added latency
     /// for this turn — then makes a second model call so the spoken answer actually
     /// enumerates the plan in Teachy's own natural voice, instead of the quick first-call
-    /// guess (discarded) that couldn't reference steps that didn't exist yet. "Plan first,
-    /// then execute, like a coding agent" — explicit user direction, this trades the
-    /// original zero-added-latency design for actually having something to say.
+    /// guess (discarded) that couldn't reference steps that didn't exist yet.
     ///
-    /// Layer 1: uses the reasoning planner (`generateAgenticPlan`) with a real screenshot
-    /// so the plan is grounded in what's actually on screen. Falls back to the fast blind
-    /// planner (`generateGuidedTaskSteps`) if the reasoning model call fails, so robustness
-    /// is preserved even when the heavier model is slow or unavailable.
+    /// Uses the screen-grounded reasoning planner first, and falls back to the fast
+    /// text-only planner if that call fails, so a guided task always gets steps.
     private func presentGuidedTaskPlan(
         images: [(data: Data, label: String)],
         historyForAPI: [(userPlaceholder: String, assistantResponse: String)],
@@ -1587,70 +1376,34 @@ final class CompanionManager: ObservableObject {
         guard let task = activeGuidedTask else { return (fallbackSpokenText, fallbackFullResponseText) }
 
         do {
-            // A resumed project seeds its saved steps into the task before this runs
-            // (see `attachProjectToActiveGuidedTask`) — skip regeneration entirely and
-            // present a "picking back up" intro at the saved position instead of
-            // planning the whole build from scratch again.
-            let isResumedProject = !task.steps.isEmpty
             let plannedSteps: [AgenticStep]
-
-            if isResumedProject {
-                plannedSteps = task.steps
-                print("🧭 Resuming with \(plannedSteps.count) saved project steps at step \(task.currentStepIndex + 1): \(task.title)")
-            } else {
-                // Try the screen-grounded reasoning planner first (Layer 1 upgrade).
-                // On any failure, fall through to the fast blind generator below so the
-                // guided task always gets steps rather than silently dying.
-                let generatedSteps: [AgenticStep]
-                do {
-                    generatedSteps = try await coursesManager.generateAgenticPlan(
-                        taskDescription: task.title,
-                        screenCapture: cursorScreenCapture,
-                        learnerContext: nil,
-                        groundingKnowledge: task.recommendedTool?.knowledgeBrief,
-                        apiClient: claudeAPI
-                    )
-                    print("🧭 Reasoning-planned agentic steps ready (\(generatedSteps.count)): \(task.title)")
-                } catch {
-                    // Reasoning model failed (slow, rate-limited, model unavailable, etc.) —
-                    // fall back to the fast blind generator, wrapping each `CourseLearningGoal`
-                    // in an `AgenticStep` with the default `.coach` mode.
-                    print("⚠️ Reasoning planner failed (\(error)), falling back to fast generator: \(task.title)")
-                    let fallbackCourseLearningGoals = try await coursesManager.generateGuidedTaskSteps(
-                        taskDescription: task.title,
-                        apiClient: claudeAPI,
-                        groundingKnowledge: task.recommendedTool?.knowledgeBrief
-                    )
-                    generatedSteps = fallbackCourseLearningGoals.map { courseLearningGoal in
-                        AgenticStep(goal: courseLearningGoal, executionMode: .coach)
-                    }
-                    print("🧭 Fast-fallback steps ready (\(generatedSteps.count)): \(task.title)")
-                }
-                plannedSteps = generatedSteps
+            do {
+                plannedSteps = try await GuidedTaskPlanner.planSteps(
+                    taskDescription: task.title,
+                    screenCapture: cursorScreenCapture,
+                    groundingKnowledge: task.recommendedTool?.knowledgeBrief,
+                    apiClient: claudeAPI
+                )
+                print("🧭 Screen-grounded plan ready (\(plannedSteps.count)): \(task.title)")
+            } catch {
+                print("⚠️ Reasoning planner failed (\(error)), falling back to fast planner: \(task.title)")
+                plannedSteps = try await GuidedTaskPlanner.planStepsWithoutScreen(
+                    taskDescription: task.title,
+                    groundingKnowledge: task.recommendedTool?.knowledgeBrief,
+                    apiClient: claudeAPI
+                )
+                print("🧭 Fast-fallback plan ready (\(plannedSteps.count)): \(task.title)")
             }
 
-            // Race guard: task may have ended / been superseded / a Course may have
-            // started while generation was in flight.
+            // Race guard: the task may have ended or been superseded while planning was in flight.
             guard activeGuidedTask?.title == task.title else { return (fallbackSpokenText, fallbackFullResponseText) }
-            if !isResumedProject {
-                activeGuidedTask?.steps = plannedSteps
-                // Fresh plan for a durable project — persist the steps so the build
-                // survives relaunches and can resume at the right position later.
-                if let projectID = task.projectID,
-                   var linkedProject = teachyEngine.project(withID: projectID) {
-                    linkedProject.steps = plannedSteps.map(\.goal)
-                    linkedProject.currentStepIndex = 0
-                    teachyEngine.upsertProject(linkedProject)
-                }
-            }
-            print("🧭 Guided task steps ready (\(plannedSteps.count)): \(task.title)")
+            activeGuidedTask?.steps = plannedSteps
 
             // The tool's site was just auto-opened — the images captured at turn start
-            // predate it, so the coach literally couldn't see the page it opened (the
-            // "opened Vapi and just stood there" bug). Give the page a beat to load,
-            // then re-capture so the plan intro coaches step 1 against what's ACTUALLY
-            // on screen now. The re-capture also refreshes the AX element registry and
-            // browser tab context for the new page, so pointing resolves against it.
+            // predate it, so the reply couldn't see the page it opened. Give the page a
+            // beat to load, then re-capture so the plan intro guides step 1 against what's
+            // ACTUALLY on screen now. The re-capture also refreshes the AX element registry
+            // and browser tab context for the new page, so pointing resolves against it.
             var planIntroImages = images
             if task.recommendedTool != nil {
                 try? await Task.sleep(for: .milliseconds(2500))
@@ -1662,45 +1415,29 @@ final class CompanionManager: ObservableObject {
                 }
             }
 
-            // Reach through `.goal` (the nested `CourseLearningGoal`) to build the
-            // plan-intro summary — each `AgenticStep` wraps a `CourseLearningGoal`.
             let stepSummary = plannedSteps.enumerated()
                 .map { "\($0.offset + 1). \($0.element.goal.title) — \($0.element.goal.goal)" }
                 .joined(separator: "; ")
 
-            let toolOpenCoachingAddendum = task.recommendedTool == nil ? "" : """
+            let toolOpenAddendum = task.recommendedTool == nil ? "" : """
 
 
-            The tool's site was just opened for them — their screen shows it right now. Coach step 1 \
-            against what's ACTUALLY on that page, pointing at the first real thing to look at or click. \
-            Gauge their familiarity from memory and what they've said: brand-new to this tool means \
-            walking them into signup/onboarding first — don't assume an account or prior knowledge. \
-            Keep guiding turn after turn until this is done; never open a door and just stand there.
+            The tool's site was just opened for them — their screen shows it right now. Walk them \
+            through step 1 against what's ACTUALLY on that page, pointing at the first real thing to \
+            look at or click. If what you remember says they're new to this tool, start with signup \
+            or onboarding — don't assume an account. Keep guiding turn after turn until this is done; \
+            never open a door and just stand there.
             """
 
-            let planIntroPrompt: String
-            if isResumedProject {
-                let resumeStepNumber = min(task.currentStepIndex + 1, plannedSteps.count)
-                planIntroPrompt = """
-                You're picking the project "\(task.title)" back up with them — the saved plan: \(stepSummary). \
-                They're at step \(resumeStepNumber) of \(plannedSteps.count).
+            let planIntroPrompt = """
+            You just figured out the plan for "\(task.title)": \(stepSummary).
 
-                Give a short, warm SPOKEN welcome-back in your own voice — remind them in one breath where
-                you both left off, then coach the current step against what's actually on screen right now.
-                Only say "here"/"right here" if you're including a [POINT:...] tag with it. Tag
-                [GUIDE: \(task.title)] to keep guidance going.\(toolOpenCoachingAddendum)
-                """
-            } else {
-                planIntroPrompt = """
-                You just figured out the plan for "\(task.title)": \(stepSummary).
-
-                Give a short, warm, SPOKEN introduction of this plan in your own natural voice — not a
-                bullet list, just talk through it like you would out loud ("first we'll..., then...").
-                Then transition straight into coaching them on step 1. Only say "here"/"right here" if
-                you're including a [POINT:...] tag with it — if you can't confidently point at something
-                specific yet, describe it in words instead. Tag [GUIDE: \(task.title)] to keep guidance going.\(toolOpenCoachingAddendum)
-                """
-            }
+            Give a short, warm, SPOKEN run-through of this plan in your own natural voice — not a
+            bullet list, just talk through it like you would out loud ("first we'll..., then...").
+            Then go straight into step 1. Only say "here"/"right here" if you're including a
+            [POINT:...] tag with it — if you can't confidently point at something specific yet,
+            describe it in words instead. Tag [GUIDE: \(task.title)] to keep guidance going.\(toolOpenAddendum)
+            """
 
             let (planResponseText, _) = try await claudeAPI.analyzeImageStreaming(
                 images: planIntroImages,
@@ -1711,9 +1448,9 @@ final class CompanionManager: ObservableObject {
             )
 
             let planParseResult = Self.parsePointingCoordinates(from: planResponseText)
-            let (planTextWithoutMemoryTags, planRememberedFacts) = CoachRememberTagParser.extractFactsAndStrip(from: planParseResult.spokenText)
+            let (planTextWithoutMemoryTags, planRememberedFacts) = CompanionRememberTagParser.extractFactsAndStrip(from: planParseResult.spokenText)
             for fact in planRememberedFacts {
-                teachyEngine.recordPersonalFact(fact)
+                BrainStore.shared.remember(fact, kind: .aboutMe)
             }
             let (planSpokenText, _) = CompanionGuideTagParser.extractTitleAndStrip(from: planTextWithoutMemoryTags)
             activeGuidedTask?.lastActivityAt = Date()
@@ -1728,51 +1465,36 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    /// Additive system-prompt block for the current guided-task state — mirrors how
-    /// `continuitySection` conditionally appears in `buildCompanionVoiceResponseSystemPrompt()`.
-    /// When no task is active, instructs the model on when it's appropriate to start one.
+    /// Additive system-prompt block for the current guided-task state.
+    /// When no task is active, tells the model when it's appropriate to start one.
     private func guidedTaskPromptSection() -> String {
         guard let activeGuidedTask else {
-            // Existing durable projects — tell the model to reattach by exact title
-            // instead of spawning duplicates when the user picks a build back up.
-            let existingProjects = teachyEngine.activeProjects
-            let projectReattachLine = existingProjects.isEmpty ? "" : """
-
-            Unfinished projects they can pick back up (reattach by tagging [PROJECT:] with the EXACT title, \
-            don't create near-duplicates): \(existingProjects.map { "\"\($0.title)\" (step \(min($0.currentStepIndex + 1, max($0.steps.count, 1))) of \(max($0.steps.count, 1)))" }.joined(separator: ", "))
-            """
-
             return """
 
-            If this question genuinely needs multiple concrete steps (not just an explanation), and you have
-            enough context to know what "done" looks like for the first step, tag your reply [GUIDE: short title].
-            Only do this when it actually helps — a quick factual question doesn't need it. If you don't have
-            enough context yet (e.g. what they need something FOR changes the right guidance), just ask — check
-            what you already remember about them first (personal facts, past context) so you're not asking
-            something you should already know.
-            When the task is a durable BUILD — a website, an agent, a real artifact that will take more than
-            one sitting — ALSO tag [PROJECT: short project title] alongside [GUIDE:]. Projects persist across
-            days; quick walkthroughs (an API key, a setting) don't need one.\(projectReattachLine)
+            If they want to do something themselves that genuinely needs several concrete steps (not just an
+            explanation, and not something you could simply do for them), and you know what "done" looks like
+            for the first step, tag your reply [GUIDE: short title] and you'll walk them through it step by step.
+            A quick factual question doesn't need it. If you don't have enough context yet (what they need it FOR
+            changes the right steps), just ask — but check what you already remember about them first.
             \(Self.recommendedToolRegistrySummaryLine())
             """
         }
 
         if activeGuidedTask.steps.isEmpty {
-            // Steps are still generating in the background from the turn that started this.
+            // Steps are still being planned from the turn that started this.
             return """
 
-            You're mid-way through guiding them on: "\(activeGuidedTask.title)" — you're still pulling together
-            the exact steps behind the scenes, so keep the conversation going naturally on this topic. Keep
-            tagging [GUIDE: \(activeGuidedTask.title)] while you're still actively helping with this.
+            You're mid-way through walking them through: "\(activeGuidedTask.title)" — you're still pulling
+            together the exact steps behind the scenes, so keep the conversation going naturally on this topic.
+            Keep tagging [GUIDE: \(activeGuidedTask.title)] while you're still actively helping with this.
             """
         }
 
         if activeGuidedTask.isComplete {
             return """
 
-            You just finished guiding them through the last step of "\(activeGuidedTask.title)". Wrap this up
-            warmly and naturally — no more step numbers, no more [GUIDE:...] tag, just a normal close to the
-            conversation.
+            You just finished walking them through the last step of "\(activeGuidedTask.title)". Wrap this up
+            warmly and naturally — no more step numbers, no more [GUIDE:...] tag, just a normal close.
             """
         }
 
@@ -1782,7 +1504,7 @@ final class CompanionManager: ObservableObject {
         let totalSteps = activeGuidedTask.steps.count
         var lines = [
             "",
-            "You're mid-way through guiding them on: \"\(activeGuidedTask.title)\" (step \(stepNumber) of \(totalSteps))."
+            "You're mid-way through walking them through: \"\(activeGuidedTask.title)\" (step \(stepNumber) of \(totalSteps))."
         ]
         if let verification = pendingGuidedTaskVerificationResult {
             var verificationLine = "Just checked their screen: \(verification.status.rawValue) — \(verification.whatsGood)."
@@ -1791,54 +1513,34 @@ final class CompanionManager: ObservableObject {
             }
             lines.append(verificationLine)
 
-            // Debugging-coach protocol: fires whenever a visible error is detected on
-            // screen during a verification turn. This is the moment people quit — make
-            // it the moment they learn. Record skill practice immediately so the engine
-            // tracks exposure across sessions regardless of what the model says next.
+            // An error on screen is where people give up — get them through it calmly.
             if let errorSummary = verification.visibleErrorSummary, !errorSummary.isEmpty {
-                teachyEngine.recordErrorReadingPractice()
                 lines.append("""
-                AN ERROR IS VISIBLE ON THEIR SCREEN: \(errorSummary). Debug-coach protocol — this is the moment \
-                people quit, make it the moment they learn: (1) one calm breath — errors are information, \
-                not failure, say so in half a sentence; (2) read the FIRST line of the error together, out \
-                loud, in plain words; (3) craft the paste-back message for their AI tool with [CLIPBOARD: ...] \
-                — the error verbatim plus one line of framing about what they were trying to do; (4) after \
-                they paste it, verify the fix on screen before moving on. Teach the protocol by doing it.
+                AN ERROR IS VISIBLE ON THEIR SCREEN: \(errorSummary). Get them through it: (1) half a sentence \
+                that errors are normal and fixable; (2) say what the FIRST line of the error means, in plain \
+                words; (3) if they're working with an AI tool, write the paste-back message for it with \
+                [CLIPBOARD: ...] — the error verbatim plus one line about what they were trying to do; \
+                (4) after the fix, check the screen before moving on.
                 """)
             }
         }
-        // `currentStep` is `AgenticStep` — reach through `.goal` (the nested
-        // `CourseLearningGoal`) for the human-readable success description.
         lines.append("Current step: \(currentStep.goal.goal)")
-        lines.append("Adapt depth to their familiarity — if memory says they're new to this tool, guide signup/onboarding as real steps, not assumed prerequisites.")
-        if activeGuidedTask.projectID != nil {
-            lines.append("This is durable project work — progress persists across days. The moment the thing actually goes LIVE at a real URL, tag [SHIPPED: the url] so it lands in their portfolio.")
+        lines.append("Match their familiarity — if memory says they're new to this tool, treat signup/onboarding as real steps, not assumed prerequisites.")
+
+        // An `.act` step is one Teachy does itself with tools; the reply should narrate it,
+        // not tell them to do it.
+        if currentStep.executionMode == .act {
+            lines.append("This step is MECHANICAL SETUP — Teachy is handling it automatically with tools. Acknowledge it, say briefly what's happening, then move on to the next point. Do NOT tell them to do this step themselves.")
         }
 
-        // Let the model know whether this is a coach step (user acts, Teachy guides)
-        // or an act step (Teachy will execute mechanically — the model's role is to
-        // narrate what's happening and transition, not to instruct the user to do it).
-        //
-        // Anti-dependency mechanic: for a capable learner (autonomy >= .watchThem) an
-        // authored `.act` step is DOWNGRADED to coaching in the gate above — Teachy no
-        // longer does it for them. Match the prompt to that so the model coaches the
-        // step rather than narrating an automatic action that won't happen.
-        let learnerDrivesOwnSetup = CoachAutonomy.level(for: teachyEngine.getLearnerModel()) >= .watchThem
-        if currentStep.executionMode == .act && !learnerDrivesOwnSetup {
-            lines.append("This step is MECHANICAL SETUP — Teachy is handling it automatically with tools. Your role: acknowledge it, narrate briefly what's happening, then transition naturally to the next coaching point. Do NOT instruct the user to do this step themselves.")
-        } else if currentStep.executionMode == .act && learnerDrivesOwnSetup {
-            lines.append("This learner drives their own setup now — they've leveled up, so coach them through this step instead of doing it for them. Point at the one next move and let them do it; only act if they explicitly ask you to.")
-        }
-
-        // If the plan was recently revised by the reflection model (Layer 3), let the
-        // coach model know so it can acknowledge the change naturally rather than
-        // referencing steps that no longer exist.
+        // If the plan was just revised, let the model know so it doesn't reference steps
+        // that no longer exist.
         if activeGuidedTask.reflectionRevisionCount > 0 {
             lines.append("Note: the plan was just updated based on what happened — go with the current step above, not any earlier version of the plan you may have referenced.")
         }
 
         if let recommendedTool = activeGuidedTask.recommendedTool {
-            lines.append("Real knowledge about \(recommendedTool.displayName), so your coaching stays grounded turn after turn: \(recommendedTool.knowledgeBrief)")
+            lines.append("Real knowledge about \(recommendedTool.displayName), so your guidance stays grounded turn after turn: \(recommendedTool.knowledgeBrief)")
         }
         lines.append("If they're still actively working through this, tag your reply [GUIDE: \(activeGuidedTask.title)] again so guidance continues; stop tagging it once this naturally wraps up.")
         return lines.joined(separator: "\n")
@@ -1882,7 +1584,7 @@ final class CompanionManager: ObservableObject {
     ///    a. Scopes the agent to this single step's goal only.
     ///    b. Explicitly forbids destructive, financial, irreversible, or account-deleting actions.
     ///    c. If such an action would be required, the model must STOP and explain instead of acting.
-    /// 3. Run `backgroundAgentManager.runCourseInteraction` (existing tool loop, up to 10 iterations).
+    /// 3. Run `backgroundAgentManager.runScopedToolTurn` (existing tool loop, up to 10 iterations).
     /// 4. Capture a fresh screenshot after tools so pointing reflects the new screen state.
     /// 5. Verify the post-action screen against the step's `doneWhen` criterion.
     /// 6. On `.pass`: advance `activeGuidedTask.currentStepIndex`, compose a brief "done, now..." reply.
@@ -1917,10 +1619,10 @@ final class CompanionManager: ObservableObject {
         // Safety rail: destructive/financial/irreversible actions must never be auto-executed.
         let actingSystemPrompt = """
         You are Teachy's action arm — an agent that executes a single, clearly mechanical step
-        on the user's Mac so they can focus on the parts that actually require learning.
+        on the user's Mac so they can focus on the parts that actually need them.
 
         Your current task: \(stepGoalDescription)
-        Coaching context for this step: \(stepCoachAsk)
+        What Teachy would tell them about this step: \(stepCoachAsk)
         You are done when: \(stepDoneWhen)
 
         STRICT SAFETY RULES — read these before acting:
@@ -1937,22 +1639,16 @@ final class CompanionManager: ObservableObject {
         - After finishing, report what you did in one short, natural sentence.
         """
 
-        // Step 3: Run the tool loop with the existing course-interaction entry point.
+        // Step 3: Run the tool loop, limited to the guided-step toolset.
         var toolLoopResultText: String? = nil
         var toolLoopError: Error? = nil
         do {
-            toolLoopResultText = try await backgroundAgentManager.runCourseInteraction(
+            toolLoopResultText = try await backgroundAgentManager.runScopedToolTurn(
                 userPrompt: "Please complete this step now: \(stepGoalDescription)",
                 systemPrompt: actingSystemPrompt,
                 conversationHistory: [],
                 screenCaptures: screenCaptures,
-                mouseOutlineContext: nil,
-                onToolStep: { [weak self] agentStep in
-                    // Log tool steps via the courses manager's existing recorder so the
-                    // background side-dock mascot's status stays current (it reads
-                    // backgroundAgentManager.status, which runCourseInteraction updates).
-                    self?.coursesManager.recordCourseToolStep(agentStep)
-                }
+                mouseOutlineContext: nil
             )
             print("🤖 Act step tool loop finished for: \(currentGuidedStep.goal.title)")
         } catch {
@@ -1978,16 +1674,12 @@ final class CompanionManager: ObservableObject {
 
         // Step 5: Verify the post-action screen against the step's doneWhen criterion.
         // If the tool loop itself errored, skip to the fallback-to-coach path directly.
-        var postActVerificationResult: CourseVerificationResult? = nil
+        var postActVerificationResult: GuidedStepCheckResult? = nil
         if toolLoopError == nil, let postActionCapture = postActionCursorCapture {
-            postActVerificationResult = await CourseVerifier.verifyStructured(
-                criteria: CourseSuccessCriteria(
-                    visionDescription: stepDoneWhen,
-                    urlContains: nil,
-                    requireUserAdvance: false
-                ),
-                claudeAPI: claudeAPI,
-                precapturedScreenCapture: postActionCapture
+            postActVerificationResult = await GuidedStepScreenChecker.checkStep(
+                doneWhenDescription: stepDoneWhen,
+                screenCapture: postActionCapture,
+                claudeAPI: claudeAPI
             )
         }
 
@@ -2001,7 +1693,6 @@ final class CompanionManager: ObservableObject {
             }
             self.activeGuidedTask?.currentStepIndex += 1
             self.activeGuidedTask?.lastActivityAt = Date()
-            syncGuidedTaskProgressToProject(verifiedStepTitle: taskSnapshot.currentStep?.goal.title)
 
             // Apply pointing to the post-action screen so the cursor flies to the
             // right place on the new screen state when the agent mentions a location.
@@ -2030,7 +1721,7 @@ final class CompanionManager: ObservableObject {
             return ActStepExecutionResult(spokenText: spokenResult, stepAdvanced: true)
 
         } else {
-            // Step 7: Fallback — tell the user what was attempted, guide them to do it.
+            // Step 7: Fallback — tell the user what was attempted, walk them through doing it.
             let whatWasAttempted = currentGuidedStep.goal.goal
             let verificationDetail = postActVerificationResult.map {
                 " The screen shows: \($0.whatsGood). Still missing: \($0.whatsMissing ?? "the expected state")."
@@ -2080,7 +1771,7 @@ final class CompanionManager: ObservableObject {
         print("🔄 Reflection triggered for '\(task.title)': \(whatWentWrong)")
 
         do {
-            let revisedRemainingSteps = try await coursesManager.reflectAndRevisePlan(
+            let revisedRemainingSteps = try await GuidedTaskPlanner.replanRemainingSteps(
                 taskTitle: task.title,
                 allSteps: task.steps,
                 currentStepIndex: task.currentStepIndex,
@@ -2108,7 +1799,7 @@ final class CompanionManager: ObservableObject {
 
             print("🔄 Plan revised for '\(task.title)': \(revisedRemainingSteps.count) new remaining steps (revision #\(self.activeGuidedTask?.reflectionRevisionCount ?? 0))")
         } catch {
-            // Reflection failed — continue coaching the existing step. The plan stays
+            // Replanning failed — keep guiding the existing step. The plan stays
             // frozen at the diverged step rather than breaking the task entirely.
             print("⚠️ Reflection failed for '\(task.title)': \(error.localizedDescription) — continuing with existing plan")
         }
@@ -2164,16 +1855,13 @@ final class CompanionManager: ObservableObject {
         """
 
         do {
-            let toolLoopResultText = try await backgroundAgentManager.runCourseInteraction(
+            let toolLoopResultText = try await backgroundAgentManager.runScopedToolTurn(
                 userPrompt: "Do this now: \(actionDescription)",
                 systemPrompt: nativeActionSystemPrompt,
                 conversationHistory: [],
                 screenCaptures: screenCaptures,
                 mouseOutlineContext: nil,
-                toolset: .nativeControl,
-                onToolStep: { [weak self] agentToolStep in
-                    self?.coursesManager.recordCourseToolStep(agentToolStep)
-                }
+                toolset: .nativeControl
             )
 
             guard !Task.isCancelled else { return }
@@ -2215,527 +1903,6 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    // MARK: - Teachy Courses
-
-    /// Starts a guided course session after verifying the proxy is reachable.
-    func refreshBackendReachability() {
-        // publik (or the own-key path) is the only backend; there is no local proxy.
-        if TeachyAIRouter.isReadyForAI {
-            isBackendReachable = true
-            backendConnectionHint = nil
-            return
-        }
-        Task {
-            let healthResult = await ClickyProxyHealthChecker.fetchHealth()
-            isBackendReachable = healthResult.isReachable && healthResult.isOpenRouterConfigured
-            backendConnectionHint = isBackendReachable ? nil : Self.localProxyStartHint
-        }
-    }
-
-    func refreshAcademyRegistry() {
-        Task {
-            await coursesManager.refreshAcademyRegistry()
-            // Piggyback the silent installed-course update check on every
-            // registry refresh — courses stay current without user action.
-            await coursesManager.autoUpdateInstalledCoursesFromSources()
-        }
-    }
-
-    func installCourseFromURL(_ urlString: String) {
-        Task {
-            do {
-                _ = try await coursesManager.installCourse(fromURLString: urlString)
-            } catch {
-                print("⚠️ Course install failed: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    func uninstallInstalledCourse(courseID: String) {
-        do {
-            try coursesManager.uninstallInstalledCourse(courseID: courseID)
-        } catch {
-            coursesManager.courseInstallStatusMessage = error.localizedDescription
-            print("⚠️ Course uninstall failed: \(error.localizedDescription)")
-        }
-    }
-
-    func openTeachyAcademyWebsite() {
-        guard let url = URL(string: ClickyAcademyConfiguration.websiteURLString) else { return }
-        NSWorkspace.shared.open(url)
-    }
-
-    /// Legacy name — prefer `openTeachyAcademyWebsite()`.
-    func openClickyAcademyWebsite() {
-        openTeachyAcademyWebsite()
-    }
-
-    func startClickyCourse(courseID: String) {
-        currentResponseTask?.cancel()
-        speechSynthesizer.stopPlayback()
-
-        currentResponseTask = Task {
-            // Courses need a signed-in publik session (or the own-key path) first.
-            if !TeachyAIRouter.isReadyForAI {
-                let healthResult = await ClickyProxyHealthChecker.fetchHealth()
-                guard healthResult.isReachable, healthResult.isOpenRouterConfigured else {
-                    isBackendReachable = false
-                    backendConnectionHint = Self.localProxyStartHint
-                    voiceState = .responding
-                    do {
-                        try await speechSynthesizer.speakText(
-                            "sign in with publik in the Teachy panel first, then hit start again."
-                        )
-                    } catch {
-                        print("⚠️ Course proxy hint TTS error: \(error)")
-                    }
-                    voiceState = .idle
-                    return
-                }
-            }
-
-            isBackendReachable = true
-            backendConnectionHint = nil
-
-            guard let session = coursesManager.startCourse(courseID: courseID) else { return }
-
-            // A formal Course is now active — the two systems must never overlap
-            // (Course has its own HUD/verify/progress machinery; the ephemeral
-            // guided task has none of that and would be redundant/confusing).
-            // A linked project pauses so the build waits for them after the course.
-            if let displacedProjectID = activeGuidedTask?.projectID {
-                teachyEngine.pauseProject(withID: displacedProjectID)
-            }
-            activeGuidedTask = nil
-
-            _ = teachyEngine.startSession(adapterID: "macos", courseID: courseID)
-
-            applyVoiceKeytermsForActiveCourse()
-            // Keep the notch panel open — the course lesson view lives inside it now.
-            // Switch to courses tab so the user sees the lesson immediately.
-            NotificationCenter.default.post(name: .clickySwitchToCoursesTab, object: nil)
-
-            ClickyAnalytics.trackCourseStarted(
-                courseID: session.course.id,
-                courseTitle: session.course.title
-            )
-
-            guard !Task.isCancelled else { return }
-
-            lessonPlayer.start()
-        }
-    }
-
-    /// Ends the active course early. Optionally speaks a short acknowledgment.
-    func exitClickyCourse(voiceInitiated: Bool) {
-        guard let session = coursesManager.activeSession else { return }
-
-        ClickyAnalytics.trackCourseExited(
-            courseID: session.course.id,
-            stepIndex: session.currentStepIndex,
-            voiceInitiated: voiceInitiated
-        )
-
-        lessonPlayer.stop()
-        skipCurriculumVideo()
-        coursesManager.exitCourse()
-        teachyEngine.endSession()
-        courseLessonHUDManager.hide()
-        courseModeNotchDockManager.hide()
-        clearCoursePresenceBubble()
-        courseSuccessCelebration = nil
-        applyVoiceKeytermsForActiveCourse()
-        currentResponseTask?.cancel()
-        speechSynthesizer.stopPlayback()
-        coursesManager.setCourseInteractionRunning(false)
-
-        if voiceInitiated {
-            currentResponseTask = Task {
-                voiceState = .responding
-                do {
-                    try await speechSynthesizer.speakText("okay, course exited. i'm back to normal mode.")
-                } catch {
-                    print("⚠️ Course exit TTS error: \(error)")
-                }
-                if !Task.isCancelled {
-                    voiceState = .idle
-                }
-            }
-        }
-    }
-
-    func confirmCourseBeat() {
-        lessonPlayer.confirmBeat()
-    }
-
-    func submitCoursePlacementAnswer(_ answer: String) {
-        lessonPlayer.submitPlacementAnswer(answer)
-    }
-
-    func submitCourseUnderstandingAnswer(_ answer: String) {
-        lessonPlayer.submitUnderstandingAnswer(answer)
-    }
-
-    func submitCourseInteractiveChoiceAnswer(_ index: Int) {
-        lessonPlayer.submitInteractiveChoiceAnswer(index)
-    }
-
-    func submitCourseInteractiveChecklistCompletion(_ completed: Bool) {
-        lessonPlayer.submitInteractiveChecklistCompletion(completed)
-    }
-
-    func submitCourseInteractiveFillInBlankAnswer(_ text: String) {
-        lessonPlayer.submitInteractiveFillInBlankAnswer(text)
-    }
-
-    func requestCourseHint() {
-        lessonPlayer.requestHint()
-    }
-
-    func submitCourseTextQuestion(_ question: String) {
-        Task { @MainActor in
-            await lessonPlayer.handleTextQuestion(question)
-        }
-    }
-
-    /// Lightweight placement model — chooses first goal they still need (skip-ahead).
-    func assessCoursePlacement(
-        course: ClickyCourse,
-        learnerAnswer: String
-    ) async throws -> CoursePlacementAssessment {
-        let goalsListing = course.goals.enumerated()
-            .map { "\($0.offset): \($0.element.id) — \($0.element.title) — \($0.element.goal)" }
-            .joined(separator: "\n")
-
-        let systemPrompt = """
-        you place learners into a Teachy course. reply with ONLY one JSON object, no markdown:
-        {"start_goal_index":0,"summary":"one short memory note"}
-        start_goal_index is the 0-based index of the FIRST goal they still need.
-        be conservative — only skip a goal if their answer clearly shows they already can do it.
-        brand new / explain everything → 0.
-        used ChatGPT or Claude casually → usually still 0 (they still need the on-Mac open step) \
-        unless they say they already have an AI open and use it for coding.
-        already build with AI / shipping projects → skip open (+ maybe prompt) if they sound fluent; \
-        rarely skip the final "see it run" goal.
-        never return an index past \(max(0, course.stepCount - 1)).
-        """
-
-        let userPrompt = """
-        Course: \(course.title)
-        Goals:
-        \(goalsListing)
-
-        Learner said: \(learnerAnswer)
-        """
-
-        let result = try await claudeAPI.analyzeImageStreaming(
-            images: [],
-            systemPrompt: systemPrompt,
-            conversationHistory: [],
-            userPrompt: userPrompt,
-            onTextChunk: { _ in }
-        )
-
-        return Self.parseCoursePlacementAssessment(
-            from: result.text,
-            courseStepCount: course.stepCount,
-            learnerAnswer: learnerAnswer
-        )
-    }
-
-    private static func parseCoursePlacementAssessment(
-        from rawText: String,
-        courseStepCount: Int,
-        learnerAnswer: String
-    ) -> CoursePlacementAssessment {
-        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let jsonCandidate: String
-        if let start = trimmed.firstIndex(of: "{"),
-           let end = trimmed.lastIndex(of: "}"),
-           start < end {
-            jsonCandidate = String(trimmed[start...end])
-        } else {
-            jsonCandidate = trimmed
-        }
-
-        if let data = jsonCandidate.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            let indexValue = object["start_goal_index"] as? Int
-                ?? (object["start_goal_index"] as? NSNumber)?.intValue
-                ?? 0
-            let summary = (object["summary"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let clamped = max(0, min(indexValue, max(0, courseStepCount - 1)))
-            return CoursePlacementAssessment(
-                startGoalIndex: clamped,
-                summaryForMemory: (summary?.isEmpty == false)
-                    ? summary!
-                    : "answered: \(learnerAnswer)"
-            )
-        }
-
-        // Heuristic fallback if the model didn't return JSON.
-        let lower = learnerAnswer.lowercased()
-        if lower.contains("already") || lower.contains("build") || lower.contains("i code") {
-            return CoursePlacementAssessment(
-                startGoalIndex: min(1, max(0, courseStepCount - 1)),
-                summaryForMemory: "sounds experienced; started later — \(learnerAnswer)"
-            )
-        }
-        return CoursePlacementAssessment(
-            startGoalIndex: 0,
-            summaryForMemory: "beginner path — \(learnerAnswer)"
-        )
-    }
-
-    func requestCourseDoItForMe() {
-        lessonPlayer.requestDoItForMe()
-    }
-
-    func skipCourseVideo() {
-        skipCurriculumVideo()
-    }
-
-    func setCourseVoiceStateProcessing() { voiceState = .processing }
-    func setCourseVoiceStateResponding() { voiceState = .responding }
-    func setCourseVoiceStateIdle() { voiceState = .idle }
-
-    func speakCourseError(_ error: Error) {
-        if isBackendConnectionError(error) {
-            isBackendReachable = false
-            // With a key configured a connection error means OpenRouter itself is
-            // unreachable (network trouble) — the proxy hint would mislead.
-            backendConnectionHint = TeachyAIRouter.isReadyForAI ? nil : Self.localProxyStartHint
-        }
-        speakErrorMessage(companionAPIErrorUtterance(for: error))
-    }
-
-    /// Distills engine outputs into short one-liners worth proactively mentioning.
-    /// Only celebration-shaped outputs qualify — coaching/verification outputs are
-    /// the engine's in-lesson machinery, not moments to bring up later.
-    func captureEngineOutputs(_ engineOutputs: [CoachingOutput]) {
-        for engineOutput in engineOutputs {
-            let momentText: String?
-            switch engineOutput {
-            case .celebration(let messageText):
-                momentText = messageText
-            case .nudge(let text, _):
-                momentText = text
-            case .skillLevelChanged(let skillID, let oldLevel, let newLevel):
-                let readableSkillName = skillID.replacingOccurrences(of: "-", with: " ")
-                momentText = "Their \(readableSkillName) skill just moved up: \(oldLevel) → \(newLevel)."
-            default:
-                momentText = nil
-            }
-            if let momentText, !momentText.isEmpty, !pendingProactiveMoments.contains(momentText) {
-                pendingProactiveMoments.append(momentText)
-            }
-        }
-        if pendingProactiveMoments.count > 3 {
-            pendingProactiveMoments.removeFirst(pendingProactiveMoments.count - 3)
-        }
-    }
-
-    func handleLessonPlayerCourseFinished() {
-        // Capture course data before the session is cleared by the hide/end flow below.
-        let finishedCourseID = coursesManager.activeSession?.course.id
-        let finishedCourseTitle = coursesManager.activeSession?.course.title
-        let finishedCourseDescription = coursesManager.activeSession?.course.description
-        let finishedCourseHasArtifact = coursesManager.activeSession?.course.artifact != nil
-
-        if let courseID = finishedCourseID {
-            Task {
-                let engineOutputs = await teachyEngine.processEvent(.courseCompleted(courseID: courseID))
-                captureEngineOutputs(engineOutputs)
-            }
-        }
-
-        // Courses that produce a built artifact (website, app, etc.) land in the
-        // Projects system — same portfolio arc as guided-task builds.
-        if finishedCourseHasArtifact,
-           let courseTitle = finishedCourseTitle,
-           let courseDescription = finishedCourseDescription {
-            let project = teachyEngine.createOrResumeProject(
-                title: courseTitle,
-                goalDescription: courseDescription
-            )
-            teachyEngine.shipProject(withID: project.id, deployedURL: nil)
-        }
-
-        courseLessonHUDManager.hide()
-        courseModeNotchDockManager.hide()
-        applyVoiceKeytermsForActiveCourse()
-        voiceState = .idle
-    }
-
-    /// Course-mode voice — routed through LessonPlayer (auto-prompter).
-    private func sendCourseStepResponse(transcript: String) {
-        guard coursesManager.activeSession != nil else { return }
-
-        currentResponseTask?.cancel()
-        speechSynthesizer.stopPlayback()
-
-        currentResponseTask = Task {
-            await lessonPlayer.handleVoiceTranscript(transcript)
-        }
-    }
-
-    /// One tutor turn: optional tools (navigate/click) + memory + POINT from live screen.
-    /// Does not speak or append conversation history — LessonPlayer owns those.
-    struct CourseCoachVisionTurn {
-        let fullResponseText: String
-        let spokenText: String
-        let screenCapture: CompanionScreenCapture?
-        let usedTools: Bool
-    }
-
-    func runCourseTutorTurn(
-        userPrompt: String,
-        systemPrompt: String,
-        conversationHistory: [(userTranscript: String, assistantResponse: String)],
-        allowActions: Bool
-    ) async throws -> CourseCoachVisionTurn {
-        let screenCaptures: [CompanionScreenCapture]
-        do {
-            screenCaptures = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG()
-        } catch {
-            print("⚠️ Course tutor screen capture failed: \(error.localizedDescription)")
-            if WindowPositionManager.handleScreenCaptureFailure(error) {
-                refreshAllPermissions()
-            }
-            throw error
-        }
-
-        let historyForAPI = conversationHistory.map {
-            (userPlaceholder: $0.userTranscript, assistantResponse: $0.assistantResponse)
-        }
-
-        if allowActions {
-            let fullResponseText = try await backgroundAgentManager.runCourseInteraction(
-                userPrompt: userPrompt,
-                systemPrompt: systemPrompt,
-                conversationHistory: conversationHistory,
-                screenCaptures: screenCaptures,
-                mouseOutlineContext: nil,
-                onToolStep: { [weak self] step in
-                    self?.coursesManager.recordCourseToolStep(step)
-                }
-            )
-
-            // Fresh capture after tools so pointing matches what the user sees now.
-            let pointingCapture: CompanionScreenCapture?
-            if let freshCaptures = try? await CompanionScreenCaptureUtility.captureAllScreensAsJPEG() {
-                pointingCapture = freshCaptures.first(where: { $0.isCursorScreen })
-                    ?? screenCaptures.first(where: { $0.isCursorScreen })
-            } else {
-                pointingCapture = screenCaptures.first(where: { $0.isCursorScreen })
-            }
-
-            let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
-            let spokenText = BackgroundAgentManager.formatFinalResponseForSpeech(parseResult.spokenText)
-
-            return CourseCoachVisionTurn(
-                fullResponseText: fullResponseText,
-                spokenText: spokenText,
-                screenCapture: pointingCapture,
-                usedTools: true
-            )
-        }
-
-        let labeledImages = await buildLabeledAnnotatedImages(
-            screenCaptures: screenCaptures,
-            mouseOutlineContext: nil
-        )
-
-        let (fullResponseText, _) = try await claudeAPI.analyzeImageStreaming(
-            images: labeledImages,
-            systemPrompt: systemPrompt,
-            conversationHistory: historyForAPI,
-            userPrompt: userPrompt,
-            onTextChunk: { _ in }
-        )
-
-        let parseResult = Self.parsePointingCoordinates(from: fullResponseText)
-        let cursorScreenCapture = screenCaptures.first(where: { $0.isCursorScreen })
-
-        return CourseCoachVisionTurn(
-            fullResponseText: fullResponseText,
-            spokenText: parseResult.spokenText,
-            screenCapture: cursorScreenCapture,
-            usedTools: false
-        )
-    }
-
-    /// Legacy alias — vision-only with empty history. Prefer `runCourseTutorTurn`.
-    func runCourseCoachVisionTurn(
-        userPrompt: String,
-        systemPrompt: String
-    ) async throws -> CourseCoachVisionTurn {
-        try await runCourseTutorTurn(
-            userPrompt: userPrompt,
-            systemPrompt: systemPrompt,
-            conversationHistory: [],
-            allowActions: false
-        )
-    }
-
-    /// Keeps the cursor overlay visible during course pointing, even in transient mode.
-    func ensureOverlayVisibleForCoursePointing() {
-        guard coursesManager.isCourseActive else { return }
-        transientHideTask?.cancel()
-        transientHideTask = nil
-
-        guard !isOverlayVisible else { return }
-        overlayWindowManager.hasShownOverlayBefore = true
-        overlayWindowManager.showOverlay(onScreens: NSScreen.screens, companionManager: self)
-        isOverlayVisible = true
-    }
-
-    /// Soft chalk pulse around the last pointed spot (or cursor) when a goal checks out.
-    func flashCourseSuccessCelebration() {
-        ensureOverlayVisibleForCoursePointing()
-        let celebration = CourseSuccessCelebration(
-            screenPoint: detectedElementScreenLocation ?? NSEvent.mouseLocation,
-            displayFrame: detectedElementDisplayFrame
-                ?? NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) })?.frame
-                ?? NSScreen.main?.frame
-        )
-        courseSuccessCelebration = nil
-        DispatchQueue.main.async { [weak self] in
-            self?.courseSuccessCelebration = celebration
-        }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(1100))
-            guard self?.courseSuccessCelebration == celebration else { return }
-            self?.courseSuccessCelebration = nil
-        }
-    }
-
-    /// Light “i’m with you” presence while waiting on your turn — no full tutor turn.
-    func showCoursePresenceBubble(_ text: String) {
-        ensureOverlayVisibleForCoursePointing()
-        coursePresenceBubbleText = text
-    }
-
-    func clearCoursePresenceBubble() {
-        coursePresenceBubbleText = nil
-    }
-
-    private func isBackendConnectionError(_ error: Error) -> Bool {
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet, .timedOut:
-                return true
-            default:
-                break
-            }
-        }
-        let errorDescription = error.localizedDescription.lowercased()
-        return errorDescription.contains("could not connect")
-            || errorDescription.contains("connection refused")
-            || errorDescription.contains("network")
-    }
-
     /// Builds the labeled image array for model requests, and also populates
     /// `currentAXElementRegistry` with actionable elements from the frontmost app.
     ///
@@ -2771,21 +1938,6 @@ final class CompanionManager: ObservableObject {
         // builder and cleared after the prompt is built (same transient-per-turn
         // hygiene as pendingGuidedTaskVerificationResult).
         currentBrowserTabContext = await BrowserActiveTabReader.activeTabContext()
-
-        // Workflow signal: note what app the user was in at this conversation moment
-        // (only ever captured when they're already talking to Teachy — no background
-        // observation). Feeds the "what do they actually do day-to-day" AI-fluency
-        // recommendations; when an app crosses the recurring-use threshold, queue a
-        // one-time proactive suggestion through the existing moments pipeline.
-        if let frontmostContext = AccessibilityElementDetector.frontmostApplicationContext() {
-            let workflowSignalText = String(frontmostContext.prefix(100))
-            if let thresholdCrossedAppName = teachyEngine.recordWorkflowSignal(workflowSignalText) {
-                captureEngineOutputs([.nudge(
-                    text: "You spend real time in \(thresholdCrossedAppName) — there are AI workflows that could genuinely speed that up. Ask me about it when you're curious.",
-                    reason: "recurring workflow app"
-                )])
-            }
-        }
 
         // Build a compact text block the model can reference to pick an element by ax:ID.
         // Only built when the list is non-empty.
@@ -2855,7 +2007,6 @@ final class CompanionManager: ObservableObject {
     /// fades out the overlay after a 1-second pause. Cancelled automatically
     /// if the user starts another push-to-talk interaction.
     private func scheduleTransientHideIfNeeded() {
-        guard !coursesManager.isCourseActive else { return }
         guard !isClickyCursorEnabled && isOverlayVisible else { return }
 
         transientHideTask?.cancel()
@@ -2885,8 +2036,6 @@ final class CompanionManager: ObservableObject {
             isOverlayVisible = false
         }
     }
-
-    private static let localProxyStartHint = "Open the Teachy panel and sign in with publik."
 
     private static func screenCaptureFailureUtterance() -> String {
         "i can't see your screen right now. open system settings, screen recording, remove teachy and add it back, then restart the app."
@@ -2959,15 +2108,6 @@ final class CompanionManager: ObservableObject {
                 voiceState = .idle
                 scheduleTransientHideIfNeeded()
             }
-        }
-    }
-
-    private func applyVoiceKeytermsForActiveCourse() {
-        if let activeCourseID = coursesManager.activeSession?.course.id {
-            let courseKeyterms = ClickyCourseCatalog.voiceKeyterms(forCourseID: activeCourseID)
-            buddyDictationManager.updateContextualKeyterms(Self.defaultVoiceKeyterms + courseKeyterms)
-        } else {
-            buddyDictationManager.updateContextualKeyterms(Self.defaultVoiceKeyterms)
         }
     }
 
@@ -3302,7 +2442,7 @@ final class CompanionManager: ObservableObject {
     private func applyBubbleText(from parseResult: PointingParseResult, fallbackResponseText: String) {
         detectedElementBubbleText = {
             let spokenText = parseResult.spokenText.isEmpty ? fallbackResponseText : parseResult.spokenText
-            let (spokenTextWithoutMemoryTags, _) = CoachRememberTagParser.extractFactsAndStrip(from: spokenText)
+            let (spokenTextWithoutMemoryTags, _) = CompanionRememberTagParser.extractFactsAndStrip(from: spokenText)
             // [GUIDE:...] is a structured lifecycle tag like [REMEMBER:...] — same leak
             // risk here (this bubble-text path re-parses the raw response independently
             // of the REMEMBER/GUIDE stripping already done in `sendCompanionChatResponse`),
@@ -3313,10 +2453,7 @@ final class CompanionManager: ObservableObject {
             let (spokenTextWithoutActionTags, _) = CompanionActionTagParser.extractActionAndStrip(from: spokenTextWithoutGuideTags)
             // [CLIPBOARD:...] carries the full crafted prompt — definitely not bubble text.
             let (spokenTextWithoutClipboardTags, _) = CompanionClipboardTagParser.extractClipboardTextAndStrip(from: spokenTextWithoutActionTags)
-            // [PROJECT:...] / [SHIPPED:...] — same defense-in-depth strip as the rest.
-            let (spokenTextWithoutProjectTags, _) = CompanionProjectTagParser.extractTitleAndStrip(from: spokenTextWithoutClipboardTags)
-            let (spokenTextWithoutShippedTags, _) = CompanionShippedTagParser.extractURLAndStrip(from: spokenTextWithoutProjectTags)
-            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenTextWithoutShippedTags)
+            let cleanedSpokenText = BackgroundAgentManager.formatFinalResponseForSpeech(spokenTextWithoutClipboardTags)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanedSpokenText.isEmpty else { return nil }
             return cleanedSpokenText
@@ -3472,14 +2609,13 @@ final class CompanionManager: ObservableObject {
         return parseResult.coordinate
     }
 
-    // MARK: - Beside-cursor video (onboarding + curriculum)
+    // MARK: - Beside-cursor video (onboarding intro)
 
     /// Onboarding clip — fades in beside Teachy, demos at 40s, then prompts to talk.
     func setupOnboardingVideo() {
         guard let videoURL = URL(string: "https://stream.mux.com/e5jB8UuSrtFABVnTHCR7k3sIsmcUHCyhtLu1tzqLlfs.m3u8") else { return }
 
         besideCursorVideoBlocksPushToTalk = true
-        isCurriculumVideoPlaying = false
 
         beginBesideCursorVideo(
             url: videoURL,
@@ -3491,7 +2627,6 @@ final class CompanionManager: ObservableObject {
                 }
             }
         )
-        besideCursorVideoCredit = "Teachy"
 
         // At 40 seconds into the video, trigger the onboarding demo where
         // Teachy flies to something interesting on screen and comments on it
@@ -3503,54 +2638,6 @@ final class CompanionManager: ObservableObject {
             ClickyAnalytics.trackOnboardingDemoTriggered()
             self?.performOnboardingDemoInteraction()
         }
-    }
-
-    /// Plays a curriculum part/intro clip beside Teachy.
-    /// Completes when the video ends or `skipCurriculumVideo()` is called.
-    /// `teacherCredit` is shown on the player (e.g. the course author's name).
-    func playCurriculumVideoBesideCursor(urlString: String, teacherCredit: String? = nil) async {
-        let trimmedURLString = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let videoURL = URL(string: trimmedURLString) else {
-            print("⚠️ Curriculum video URL invalid: \(urlString)")
-            return
-        }
-
-        ensureOverlayVisibleForCoursePointing()
-        besideCursorVideoBlocksPushToTalk = false
-        isCurriculumVideoPlaying = true
-        let trimmedCredit = teacherCredit?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        besideCursorVideoCredit = trimmedCredit.isEmpty ? "teacher clip" : trimmedCredit
-
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            // If a clip was already waiting, finish it first so we never leak continuations.
-            resumeCurriculumVideoContinuation()
-            curriculumVideoContinuation = continuation
-
-            beginBesideCursorVideo(
-                url: videoURL,
-                onFinished: { [weak self] in
-                    self?.isCurriculumVideoPlaying = false
-                    self?.besideCursorVideoCredit = nil
-                    self?.resumeCurriculumVideoContinuation()
-                }
-            )
-        }
-    }
-
-    /// Skips the current curriculum clip (HUD / voice "skip").
-    func skipCurriculumVideo() {
-        guard isCurriculumVideoPlaying || curriculumVideoContinuation != nil else { return }
-        finishBesideCursorVideo(animated: true) { [weak self] in
-            self?.isCurriculumVideoPlaying = false
-            self?.besideCursorVideoCredit = nil
-            self?.resumeCurriculumVideoContinuation()
-        }
-    }
-
-    private func resumeCurriculumVideoContinuation() {
-        let continuation = curriculumVideoContinuation
-        curriculumVideoContinuation = nil
-        continuation?.resume()
     }
 
     private func beginBesideCursorVideo(url: URL, onFinished: @escaping () -> Void) {
@@ -3606,7 +2693,6 @@ final class CompanionManager: ObservableObject {
 
     private func tearDownOnboardingVideo(resetOpacityImmediately: Bool) {
         showOnboardingVideo = false
-        besideCursorVideoCredit = nil
         if resetOpacityImmediately {
             onboardingVideoOpacity = 0.0
         }

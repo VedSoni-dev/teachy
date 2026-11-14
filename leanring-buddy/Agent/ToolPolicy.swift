@@ -92,15 +92,15 @@ struct ToolPolicyContext {
 // MARK: - Policy
 
 enum ToolPolicy {
-    /// Tools a plain coaching turn may see: read-only tools plus Drive (which asks first).
-    static let courseToolNames: Set<String> = [
+    /// Tools a guided-walkthrough step may see: read-only tools plus Drive (which asks first).
+    static let guidedStepToolNames: Set<String> = [
         "capture_screen", "web_search", "web_fetch", "read_file",
         "drive_snapshot", "drive_press", "drive_set_text", "drive_menu",
         "drive_key", "drive_scroll", "drive_click_point"
     ]
 
-    /// A direct "open Spotify" / "close this tab" request: the course set plus app and tab control.
-    static let nativeControlToolNames: Set<String> = courseToolNames.union([
+    /// A direct "open Spotify" / "close this tab" request: the guided-step set plus app and tab control.
+    static let nativeControlToolNames: Set<String> = guidedStepToolNames.union([
         "control_app", "control_browser", "open_browser_tab"
     ])
 

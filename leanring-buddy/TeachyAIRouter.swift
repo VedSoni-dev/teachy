@@ -7,7 +7,7 @@
 //
 //    quickCheck / cleanup   YES/NO checks, dictation cleanup      → publik-fast
 //    voice / coach / agent / scene / plan   anything waited on  → publik-smart
-//    write       background course and lesson text              → publik-balanced
+//    write       background text (walkthrough steps, notices)      → publik-balanced
 //
 //  Fallback: if a tier errors (provider down, rate limit, tier not allowed for
 //  this account) the call moves to the next tier. If a tier answers that it

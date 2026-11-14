@@ -621,7 +621,7 @@ struct PrivacySettingsSection: View {
             fact(
                 icon: "camera.viewfinder",
                 title: "Your screen",
-                text: "A screenshot is taken when you ask something (the talk key or the text box), and while Teachy is helping with steps you started: a course, a walkthrough or a task. It goes to publik to answer that moment. Teachy never watches when you haven't asked."
+                text: "A screenshot is taken when you ask something (the talk key or the text box), and while Teachy is helping with steps you started: a walkthrough or a task. It goes to publik to answer that moment. Teachy never watches when you haven't asked."
             )
             fact(
                 icon: "waveform",
@@ -664,7 +664,7 @@ struct PrivacySettingsSection: View {
 // MARK: - Advanced (own ElevenLabs key)
 
 /// The optional ElevenLabs key. `LocalSpeechSynthesizer.speakText` still tries it
-/// first for whole messages (course steps, notices), so it stays, tucked away here.
+/// first for whole messages (walkthrough steps, notices), so it stays, tucked away here.
 /// Streamed answers always use the publik voice from the Voice card.
 struct AdvancedSettingsSection: View {
     private let startsExpanded: Bool
@@ -689,7 +689,7 @@ struct AdvancedSettingsSection: View {
                 Text("Your own ElevenLabs key")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(DS.Colors.textPrimary)
-                SettingsCaption(text: "Optional. Used for course steps and short notices only, and billed by ElevenLabs. Spoken answers use the voice you picked above.")
+                SettingsCaption(text: "Optional. Used for walkthrough steps and short notices only, and billed by ElevenLabs. Spoken answers use the voice you picked above.")
             }
 
             if isConfigured {

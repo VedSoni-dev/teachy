@@ -206,20 +206,6 @@ struct BlueCursorView: View {
                 )
             }
 
-            // Soft chalk flash when a course goal verifies
-            if let celebration = companionManager.courseSuccessCelebration {
-                let celebrationDisplayFrame = celebration.displayFrame ?? screenFrame
-                if isDisplayFrameOnThisScreen(celebrationDisplayFrame) {
-                    CourseSuccessCelebrationOverlayView(
-                        screenPoint: convertScreenPointToSwiftUICoordinates(celebration.screenPoint),
-                        accentColor: cursorAccentColor,
-                        onFinished: {
-                            companionManager.courseSuccessCelebration = nil
-                        }
-                    )
-                }
-            }
-
             // Welcome speech bubble (first launch only)
             if isCursorOnThisScreen && showWelcome && !welcomeText.isEmpty {
                 Text(welcomeText)
@@ -248,27 +234,10 @@ struct BlueCursorView: View {
                     }
             }
 
-            // Beside-cursor video (intro + teacher part clips)
+            // Beside-cursor intro video (onboarding)
             OnboardingVideoPlayerView(player: companionManager.onboardingVideoPlayer)
                 .frame(width: onboardingVideoPlayerWidth, height: onboardingVideoPlayerHeight)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(alignment: .topLeading) {
-                    if let credit = companionManager.besideCursorVideoCredit,
-                       !credit.isEmpty,
-                       companionManager.onboardingVideoOpacity > 0.05 {
-                        Text(credit)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                Capsule()
-                                    .fill(Color.black.opacity(0.72))
-                            )
-                            .padding(8)
-                            .opacity(companionManager.onboardingVideoOpacity)
-                    }
-                }
                 .shadow(color: Color.black.opacity(0.4 * companionManager.onboardingVideoOpacity), radius: 12, x: 0, y: 6)
                 .opacity(isCursorOnThisScreen ? companionManager.onboardingVideoOpacity : 0)
                 .position(
@@ -305,30 +274,6 @@ struct BlueCursorView: View {
                     .onPreferenceChange(SizePreferenceKey.self) { newSize in
                         bubbleSize = newSize
                     }
-            }
-
-            // Soft presence while Teachy waits on your turn
-            if isCursorOnThisScreen,
-               let presenceText = companionManager.coursePresenceBubbleText,
-               !presenceText.isEmpty {
-                Text(presenceText)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white.opacity(0.95))
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(Color.black.opacity(0.72))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .stroke(cursorAccentColor.opacity(0.55), lineWidth: 1)
-                            )
-                    )
-                    .fixedSize()
-                    .position(x: cursorPosition.x + 10 + 70, y: cursorPosition.y + 22)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: cursorPosition)
-                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
-                    .allowsHitTesting(false)
             }
 
             // Navigation pointer bubble — shown when buddy arrives at a detected element.
@@ -1022,56 +967,6 @@ private struct ChalkRoundedRectOutlineShape: Shape {
 
     func path(in rect: CGRect) -> Path {
         Path(roundedRect: outlineRect, cornerRadius: cornerRadius, style: .continuous)
-    }
-}
-
-/// Soft expanding chalk ring — brief celebrate when a goal checks out.
-private struct CourseSuccessCelebrationOverlayView: View {
-    let screenPoint: CGPoint
-    let accentColor: Color
-    let onFinished: () -> Void
-
-    @State private var ringScale: CGFloat = 0.35
-    @State private var ringOpacity: Double = 0.95
-    @State private var fillOpacity: Double = 0.28
-
-    private let chalkColor = Color(red: 1.0, green: 0.92, blue: 0.35)
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(chalkColor.opacity(fillOpacity))
-                .frame(width: 88, height: 88)
-                .scaleEffect(ringScale)
-
-            Circle()
-                .stroke(chalkColor.opacity(0.9), lineWidth: 3.5)
-                .frame(width: 88, height: 88)
-                .scaleEffect(ringScale)
-                .shadow(color: chalkColor.opacity(0.55), radius: 10, x: 0, y: 0)
-
-            Circle()
-                .stroke(accentColor.opacity(0.55), lineWidth: 1.5)
-                .frame(width: 62, height: 62)
-                .scaleEffect(ringScale * 0.92)
-        }
-        .position(screenPoint)
-        .opacity(ringOpacity)
-        .allowsHitTesting(false)
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.55)) {
-                ringScale = 1.55
-                fillOpacity = 0.06
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
-                withAnimation(.easeOut(duration: 0.4)) {
-                    ringOpacity = 0
-                }
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                onFinished()
-            }
-        }
     }
 }
 

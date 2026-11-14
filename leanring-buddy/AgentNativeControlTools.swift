@@ -3,8 +3,8 @@
 //  Dedicated native Mac-control agent tools: open/quit/switch apps and
 //  open/close/switch browser tabs and windows via NSWorkspace and AppleScript.
 //  Registered in BackgroundAgentToolRegistry so they are available everywhere
-//  the tool loop runs (Phase K .act steps, course "do it for me", and the new
-//  one-shot [DO:] path from Phase L).
+//  the tool loop runs (guided-walkthrough .act steps, agent jobs, and the
+//  one-shot [DO:] path).
 //
 
 import AppKit

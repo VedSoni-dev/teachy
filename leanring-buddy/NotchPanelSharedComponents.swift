@@ -3,7 +3,7 @@
 //  leanring-buddy
 //
 //  Small, dependency-free views/helpers shared across the notch panel tab
-//  files (Home, Setup/Onboarding, Courses, Portfolio, Skills).
+//  files (Home, Setup/Onboarding).
 //
 
 import SwiftUI

@@ -9,11 +9,6 @@
 import Foundation
 
 enum TeachyDataPaths {
-    /// Installed academy / custom course JSON.
-    static var coursesDirectoryURL: URL {
-        resolveDirectory(preferredRelativePath: ".teachy/courses", legacyRelativePath: ".clicky/courses")
-    }
-
     /// OpenAPI / HTTP connection manifests.
     static var connectorsDirectoryURL: URL {
         resolveDirectory(preferredRelativePath: ".teachy/connectors", legacyRelativePath: ".clicky/connectors")
@@ -26,8 +21,6 @@ enum TeachyDataPaths {
     }
 
     /// Human-facing path string for UI copy (always show the Teachy name).
-    static var coursesDirectoryDisplayPath: String { "~/.teachy/courses" }
-
     static var connectorsDirectoryDisplayPath: String { "~/.teachy/connectors" }
 
     private static func resolveDirectory(preferredRelativePath: String, legacyRelativePath: String) -> URL {

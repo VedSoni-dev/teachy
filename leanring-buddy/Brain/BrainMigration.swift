@@ -11,7 +11,7 @@
 //    3. UserDefaults `teachyCourseLearnerProfileByCourseID` — the same, per course
 //
 //  The import only reads them. The old stores are left exactly as they are, so
-//  the course coach keeps working and nothing is lost if the import is wrong.
+//  nothing is lost if the import is wrong.
 //  It reads the raw JSON with its own small lenient decoders (not the app's
 //  model types) so it stays pure, testable, and safe when a file is missing,
 //  half-written or from an older version.
@@ -22,7 +22,7 @@ import Foundation
 nonisolated enum BrainMigration {
     static let didMigrateDefaultsKey = "teachyBrainDidImportLegacyMemoryV1"
 
-    // These mirror the private keys in `CoursesManager`.
+    // These mirror the private keys the old (now removed) `CoursesManager` wrote.
     static let globalLearnerProfileDefaultsKey = "teachyGlobalLearnerProfile"
     static let courseLearnerProfilesDefaultsKey = "teachyCourseLearnerProfileByCourseID"
 

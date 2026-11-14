@@ -287,7 +287,7 @@ class ClaudeAPI {
         return try Self.assistantText(fromResponseData: data)
     }
 
-    /// Simple text-only completion (no images, no streaming). Used for course plan generation.
+    /// Simple text-only completion (no images, no streaming). Used for the fast walkthrough planner fallback.
     func generateText(
         systemPrompt: String,
         userPrompt: String,

@@ -146,36 +146,37 @@ final class BackgroundAgentManager: ObservableObject {
         status = .idle
     }
 
-    // MARK: - Course and one-shot turns (quiet jobs, restricted toolset)
+    // MARK: - Guided-step and one-shot turns (quiet jobs, restricted toolset)
 
     /// Which tools a turn may see. Every call still passes the permission gate, whatever the set.
     enum Toolset {
-        /// Ordinary coaching turns: read-only tools plus Drive (which asks first). No shell,
-        /// no AppleScript, no cookies.
-        case course
-        /// A direct "open Spotify" / "close this tab": the course set plus app and tab control.
+        /// A guided-walkthrough step Teachy does for the person: read-only tools plus Drive
+        /// (which asks first). No shell, no AppleScript, no cookies.
+        case guidedStep
+        /// A direct "open Spotify" / "close this tab": the guided-step set plus app and tab control.
         case nativeControl
         /// Everything registered. For explicit agent jobs.
         case full
 
         var toolNames: Set<String>? {
             switch self {
-            case .course: return ToolPolicy.courseToolNames
+            case .guidedStep: return ToolPolicy.guidedStepToolNames
             case .nativeControl: return ToolPolicy.nativeControlToolNames
             case .full: return nil
             }
         }
     }
 
-    /// Runs one course-mode turn that may use tools. The default toolset is `.course`:
-    /// safe tools plus Drive. Returns the model's final answer.
-    func runCourseInteraction(
+    /// Runs one short, quiet tool-using turn (a guided step Teachy does itself, or a direct
+    /// native command). The default toolset is `.guidedStep`: safe tools plus Drive.
+    /// Returns the model's final answer.
+    func runScopedToolTurn(
         userPrompt: String,
         systemPrompt: String,
         conversationHistory: [(userTranscript: String, assistantResponse: String)],
         screenCaptures: [CompanionScreenCapture],
         mouseOutlineContext: CompanionMouseOutlineContext?,
-        toolset: Toolset = .course,
+        toolset: Toolset = .guidedStep,
         onToolStep: ((AgentStep) -> Void)? = nil
     ) async throws -> String {
         var request = AgentJobRequest(transcript: userPrompt, systemPrompt: systemPrompt)
@@ -185,20 +186,6 @@ final class BackgroundAgentManager: ObservableObject {
         request.allowedToolNames = toolset.toolNames
         request.maxIterations = 10
         request.maxWallTime = 4 * 60
-        request.onToolStep = onToolStep
-        return try await AgentJobRunner.run(request, registry: toolRegistry)
-    }
-
-    /// Navigation-only phase for courses: open the right page or app, no vision in the first message.
-    func runCourseNavigationPhase(
-        userPrompt: String,
-        systemPrompt: String,
-        onToolStep: ((AgentStep) -> Void)? = nil
-    ) async throws -> String {
-        var request = AgentJobRequest(transcript: userPrompt, systemPrompt: systemPrompt)
-        request.allowedToolNames = ["open_browser_tab", "control_app", "control_browser"]
-        request.maxIterations = 5
-        request.maxWallTime = 2 * 60
         request.onToolStep = onToolStep
         return try await AgentJobRunner.run(request, registry: toolRegistry)
     }

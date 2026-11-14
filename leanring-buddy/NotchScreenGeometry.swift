@@ -98,20 +98,6 @@ struct NotchScreenGeometry {
         return CGRect(x: originX, y: originY, width: width, height: height)
     }
 
-    /// Course-mode dock: sits `gapFromNotch` points right of the camera housing.
-    func rightOfNotchFrame(width: CGFloat, height: CGFloat, gapFromNotch: CGFloat = 10) -> CGRect {
-        if hasNotch {
-            let notchRightEdgeX = notchLeftEdgeX + notchWidth
-            let originX = notchRightEdgeX + gapFromNotch
-            let originY = screenFrame.maxY - notchHeight + (notchHeight - height) / 2
-            return CGRect(x: originX, y: originY, width: width, height: height)
-        }
-
-        let originX = screenFrame.midX + 72
-        let originY = screenFrame.maxY - height
-        return CGRect(x: originX, y: originY, width: width, height: height)
-    }
-
     /// Expanded panel: centered on the notch, content starts below the camera band.
     func expandedFrame(width: CGFloat, height: CGFloat) -> CGRect {
         let anchorX = hasNotch ? notchCenterX : screenFrame.midX

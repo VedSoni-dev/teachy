@@ -119,44 +119,6 @@ enum ClickyAnalytics {
         ])
     }
 
-    // MARK: - Courses
-
-    static func trackCourseStarted(courseID: String, courseTitle: String) {
-        PostHogSDK.shared.capture("course_started", properties: [
-            "course_id": courseID,
-            "course_title": courseTitle,
-        ])
-    }
-
-    static func trackCourseStepCompleted(
-        courseID: String,
-        stepID: String,
-        stepIndex: Int,
-        voiceInitiated: Bool
-    ) {
-        PostHogSDK.shared.capture("course_step_completed", properties: [
-            "course_id": courseID,
-            "step_id": stepID,
-            "step_index": stepIndex,
-            "voice_initiated": voiceInitiated,
-        ])
-    }
-
-    static func trackCourseCompleted(courseID: String, courseTitle: String) {
-        PostHogSDK.shared.capture("course_completed", properties: [
-            "course_id": courseID,
-            "course_title": courseTitle,
-        ])
-    }
-
-    static func trackCourseExited(courseID: String, stepIndex: Int, voiceInitiated: Bool) {
-        PostHogSDK.shared.capture("course_exited", properties: [
-            "course_id": courseID,
-            "step_index": stepIndex,
-            "voice_initiated": voiceInitiated,
-        ])
-    }
-
     static func trackAgentTaskDispatched(taskPrompt: String, trigger: String) {
         PostHogSDK.shared.capture("agent_task_dispatched", properties: [
             "trigger": trigger,

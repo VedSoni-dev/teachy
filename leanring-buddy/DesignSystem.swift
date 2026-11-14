@@ -69,17 +69,9 @@ enum DS {
         static let accentText = blue400
         static let accentSubtle = blue500.opacity(0.12)
 
-        /// Learning / course accent (teal).
+        /// Teachy's teal accent (name kept from when it marked the old Learn tab).
         static let learnAccent = Color(hex: "#0F8A6A")
         static let learnAccentSoft = Color(hex: "#0F8A6A").opacity(0.14)
-
-        /// Portfolio tab accent (Apple dark-mode systemOrange).
-        static let portfolioAccent = Color(hex: "#FF9F0A")
-        static let portfolioAccentSoft = Color(hex: "#FF9F0A").opacity(0.14)
-
-        /// Skills tab accent (Apple dark-mode systemPurple).
-        static let skillsAccent = Color(hex: "#BF5AF2")
-        static let skillsAccentSoft = Color(hex: "#BF5AF2").opacity(0.14)
 
         // ── Semantic Colors ──────────────────────────────────────────
 

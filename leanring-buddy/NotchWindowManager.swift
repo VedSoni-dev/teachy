@@ -14,8 +14,8 @@ import SwiftUI
 final class NotchWindowManager: NSObject, ObservableObject {
     @Published private(set) var isExpanded = false
     @Published private(set) var isHoveringNotch = false
-    /// Teaching-first: open on the course catalog. Lesson flow is unchanged.
-    @Published var selectedTab: NotchPanelTab = .courses
+    /// Home is the only tab today; kept as state so more tabs can come back later.
+    @Published var selectedTab: NotchPanelTab = .home
 
     private var window: NSPanel?
     private let companionManager: CompanionManager

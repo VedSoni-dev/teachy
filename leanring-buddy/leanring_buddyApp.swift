@@ -89,32 +89,14 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// Handles `teachy://` deep links — the osu!-style install path from the
-    /// Teachy Academy website. `teachy://install?url=<https course JSON URL>`
-    /// installs the course into `~/.teachy/courses/` and opens the Courses tab
-    /// so the user watches it land.
+    /// `teachy://` links (the scheme stays registered in Info.plist) just open
+    /// the notch. The old `teachy://install?url=` course installer is gone along
+    /// with courses, so any link is treated as "show me Teachy".
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls {
-            handleTeachyDeepLink(url)
-        }
-    }
-
-    private func handleTeachyDeepLink(_ deepLinkURL: URL) {
-        guard deepLinkURL.scheme?.lowercased() == "teachy" else { return }
-        guard deepLinkURL.host?.lowercased() == "install",
-              let components = URLComponents(url: deepLinkURL, resolvingAgainstBaseURL: false),
-              let courseURLString = components.queryItems?.first(where: { $0.name == "url" })?.value,
-              let courseURL = URL(string: courseURLString),
-              courseURL.scheme?.lowercased() == "https"
-        else {
-            print("⚠️ Teachy: Ignored malformed deep link: \(deepLinkURL)")
-            return
-        }
-
-        notchManager?.selectedTab = .courses
+        guard urls.contains(where: { $0.scheme?.lowercased() == "teachy" }) else { return }
+        notchManager?.selectedTab = .home
         notchManager?.show()
         notchManager?.expand()
-        companionManager.installCourseFromURL(courseURLString)
     }
 
     /// Registers the app as a login item so it launches automatically on

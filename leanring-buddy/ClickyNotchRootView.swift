@@ -39,7 +39,6 @@ struct ClickyNotchRootView: View {
     private var isLiveActivityActive: Bool {
         companionManager.voiceState != .idle
             || companionManager.backgroundAgentManager.status.isActivelyRunning
-            || companionManager.coursesManager.isCourseActive
     }
 
     private var topCornerRadius: CGFloat {
@@ -179,11 +178,6 @@ struct ClickyNotchRootView: View {
         )
         .animation(.smooth, value: gestureProgress)
         .preferredColorScheme(.dark)
-        .onChange(of: companionManager.coursesManager.isCourseActive) { isActive in
-            if isActive {
-                notchManager.selectedTab = .courses
-            }
-        }
     }
 
     private var gestureScale: CGFloat {
@@ -279,7 +273,7 @@ struct ClickyNotchRootView: View {
         }
     }
 
-    // MARK: - Closed: live activity (listening / course / processing)
+    // MARK: - Closed: live activity (listening / thinking / speaking / agent job)
 
     private var liveActivityRow: some View {
         HStack(spacing: 0) {
@@ -338,9 +332,7 @@ struct ClickyNotchRootView: View {
         case .listening: return "Listening"
         case .processing: return "Thinking"
         case .responding: return "Speaking"
-        case .idle:
-            if companionManager.coursesManager.isCourseActive { return "Course" }
-            return "Ready"
+        case .idle: return "Ready"
         }
     }
 
@@ -348,17 +340,9 @@ struct ClickyNotchRootView: View {
 
     private var clickyNotchHeader: some View {
         HStack(spacing: 0) {
-            HStack(spacing: 4) {
-                if companionManager.allPermissionsGranted && companionManager.hasCompletedOnboarding {
-                    headerTab(.courses, title: "Learn", systemImage: "book.fill")
-                    headerTab(.portfolio, title: "Portfolio", systemImage: "folder.fill")
-                    headerTab(.skills, title: "Skills", systemImage: "chart.bar.xaxis")
-                    headerTab(.home, title: "Settings", systemImage: "slider.horizontal.3")
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .opacity(notchManager.isExpanded ? 1 : 0)
-            .blur(radius: notchManager.isExpanded ? 0 : 20)
+            // Home is the only tab, so the left side of the header has no tab buttons.
+            Color.clear
+                .frame(maxWidth: .infinity)
 
             // Physical camera bay — black mask matching closed notch width.
             Rectangle()
@@ -386,32 +370,6 @@ struct ClickyNotchRootView: View {
             .blur(radius: notchManager.isExpanded ? 0 : 20)
         }
         .foregroundStyle(.gray)
-    }
-
-    private func headerTab(_ tab: NotchPanelTab, title: String, systemImage: String) -> some View {
-        let isSelected = notchManager.selectedTab == tab
-        let tint = tabAccent(tab)
-        return Button {
-            withAnimation(.smooth(duration: 0.28)) { notchManager.selectedTab = tab }
-        } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(isSelected ? tint : Color.gray)
-                .frame(width: 28, height: 22)
-                .background(Capsule().fill(isSelected ? tint.opacity(0.16) : Color.clear))
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .nativeTooltip(title)
-    }
-
-    private func tabAccent(_ tab: NotchPanelTab) -> Color {
-        switch tab {
-        case .courses: return DS.Colors.learnAccent       // teal
-        case .portfolio: return DS.Colors.portfolioAccent // orange
-        case .skills: return DS.Colors.skillsAccent       // purple
-        default: return .white                             // Settings/home stays neutral
-        }
     }
 }
 
