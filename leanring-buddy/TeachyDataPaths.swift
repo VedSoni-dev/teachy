@@ -19,6 +19,12 @@ enum TeachyDataPaths {
         resolveDirectory(preferredRelativePath: ".teachy/connectors", legacyRelativePath: ".clicky/connectors")
     }
 
+    /// Teachy's memory: PROFILE.md, VOLATILE.md and the saved conversation window.
+    /// New with the Brain, so there is no legacy ~/.clicky location to fall back to.
+    nonisolated static var brainDirectoryURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".teachy/brain", isDirectory: true)
+    }
+
     /// Human-facing path string for UI copy (always show the Teachy name).
     static var coursesDirectoryDisplayPath: String { "~/.teachy/courses" }
 

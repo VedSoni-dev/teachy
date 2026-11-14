@@ -301,3 +301,12 @@ Do NOT update this file for minor edits, bug fixes, or changes that don't affect
 - The "Use my own key" button on publik's gate is kept (publik requires it); that path uses the person's OpenRouter key with fixed open-weight models, still chosen per job.
 - `worker/` and the Windows port still speak OpenRouter; the macOS app no longer uses the worker for AI.
 - Self-test: `PUBLIK_SELF_TEST=1 ~/Applications/Teachy.app/Contents/MacOS/Teachy` → `publik self-test: ok deckhand 1.0`.
+
+## Memory (the Brain)
+- Source of truth: two plain Markdown files the person can edit, `~/.teachy/brain/PROFILE.md` (durable) and `~/.teachy/brain/VOLATILE.md` (current), plus `conversation.jsonl` (last 40 messages). Code: `leanring-buddy/Brain/`.
+- `BrainStore.shared` is the only way in. It re-reads the files on every call (hand edits are picked up), writes atomically, and is safe from any thread.
+- Every model call should include `BrainStore.shared.promptContext()`; the system prompt should include `BrainStore.shared.actionSchemaDescription`, and the model's memory actions go to `apply(actions:)`.
+- Rules live in `BrainMemory.swift` (pure): de-dupe, "(xN)" counts for repeated mistakes, "Subject: value" replaces the older bullet, Recently/Screen memory are trimmed, prompt context never cuts a section.
+- The older stores (engine-state.json facts and projects, UserDefaults learner profiles) are imported once by `BrainMigration` and left in place; `TeachyEngine` mirrors new personal facts into the Brain.
+- Never log memory contents. Screen memory is text only.
+- Tests: `./scripts/tests/run_brain_tests.sh` (standalone, temp directory, never touches the real `~/.teachy`).
