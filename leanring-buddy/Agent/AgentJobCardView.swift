@@ -64,8 +64,12 @@ struct AgentJobCard: View {
     var didCopy = false
     var actions = AgentJobCardActions()
 
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: DS.CornerRadius.tile, style: .continuous)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.sm) {
+        VStack(alignment: .leading, spacing: 11) {
             header
 
             if !isCollapsed {
@@ -76,29 +80,30 @@ struct AgentJobCard: View {
                 }
             }
         }
-        .padding(DS.Spacing.md)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 13)
         .frame(width: AgentJobCardMetrics.width, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(DS.Colors.background))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(DS.Colors.borderSubtle, lineWidth: 1))
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        // An orange edge while the job waits on the person, so the card that needs them stands out in a stack.
+        .teachyTile(edgeColor: model.status == .waitingForConsent ? DS.Colors.warning : .clear)
+        .contentShape(cardShape)
         .onTapGesture { if isCollapsed { actions.expand() } }
     }
 
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: DS.Spacing.sm) {
-            Circle().fill(statusColor).frame(width: 8, height: 8)
+        HStack(alignment: .center, spacing: 9) {
+            TeachyStatusMark(kind: statusKind, sideLength: 15)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(model.title)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(DS.Fonts.itemTitle)
                     .foregroundColor(DS.Colors.textPrimary)
                     .lineLimit(1)
                 if let agentName = model.agentName, !agentName.isEmpty {
                     Text(agentName)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(DS.Colors.textTertiary)
+                        .font(DS.Fonts.data)
+                        .foregroundColor(DS.Colors.textSecondary)
                         .lineLimit(1)
                 }
             }
@@ -111,31 +116,24 @@ struct AgentJobCard: View {
 
             if model.status.isFinished {
                 Text(model.status.label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.Colors.textTertiary)
+                    .font(DS.Fonts.data)
+                    .foregroundColor(DS.Colors.textSecondary)
                     .fixedSize()
                 iconButton("xmark", help: "Close", action: actions.dismiss)
             } else {
-                Button(action: actions.stop) {
-                    Text("Stop")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(DS.Colors.destructiveText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(DS.Colors.destructive.opacity(0.16)))
-                }
-                .buttonStyle(.plain)
-                .pointerCursor()
+                Button("Stop", action: actions.stop)
+                    .teachyButton(.danger, size: .compact)
             }
         }
     }
 
     private func pager(_ position: (index: Int, count: Int)) -> some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 0) {
             iconButton("chevron.left", help: "Previous job (←)", action: actions.previous)
             Text("\(position.index) of \(position.count)")
-                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .font(DS.Fonts.data)
                 .foregroundColor(DS.Colors.textSecondary)
+                .contentTransition(.numericText())
                 .fixedSize()
             iconButton("chevron.right", help: "Next job (→)", action: actions.next)
         }
@@ -144,13 +142,8 @@ struct AgentJobCard: View {
     private func iconButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(DS.Colors.textSecondary)
-                .frame(width: 18, height: 18)
-                .background(Circle().fill(Color.white.opacity(0.08)))
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
+        .teachyIconButton(sideLength: 20)
         .help(help)
     }
 
@@ -160,17 +153,19 @@ struct AgentJobCard: View {
     private var runningBody: some View {
         if model.plan.steps.isEmpty {
             Text(runningSubtitle)
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textSecondary)
+                .font(DS.Fonts.caption)
+                .foregroundColor(model.status == .waitingForConsent ? DS.Colors.warningText : DS.Colors.textSecondary)
                 .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         } else {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 7) {
                 ForEach(model.plan.steps) { step in
                     planRow(step)
                 }
             }
+
             Text(model.status == .waitingForConsent ? "Waiting for your answer" : model.activity)
-                .font(.system(size: 10))
+                .font(DS.Fonts.data)
                 .foregroundColor(model.status == .waitingForConsent ? DS.Colors.warningText : DS.Colors.textTertiary)
                 .lineLimit(1)
         }
@@ -191,41 +186,36 @@ struct AgentJobCard: View {
     private var finishedBody: some View {
         if case .failed(let why) = model.status {
             Text(why)
-                .font(.system(size: 11))
+                .font(DS.Fonts.caption)
                 .foregroundColor(DS.Colors.destructiveText)
                 .lineLimit(4)
                 .fixedSize(horizontal: false, vertical: true)
         } else if !model.answer.isEmpty {
             Text(model.answer)
-                .font(.system(size: 12))
+                .font(DS.Fonts.voice)
                 .foregroundColor(DS.Colors.textPrimary)
                 .lineLimit(9)
-                .lineSpacing(2)
+                .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
 
         HStack(spacing: DS.Spacing.sm) {
             Text(finishedFootnote)
-                .font(.system(size: 10))
+                .font(DS.Fonts.data)
                 .foregroundColor(DS.Colors.textTertiary)
                 .lineLimit(1)
             Spacer(minLength: DS.Spacing.sm)
             if !model.answer.isEmpty, model.status == .done {
                 Button(action: actions.copyAnswer) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(DS.Fonts.sans(10, weight: .semibold))
+                            .contentTransition(.symbolEffect(.replace))
                         Text(didCopy ? "Copied" : "Copy")
-                            .font(.system(size: 11, weight: .semibold))
                     }
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(Color.white.opacity(0.1)))
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
+                .teachyButton(.secondary, size: .compact)
             }
         }
     }
@@ -244,43 +234,61 @@ struct AgentJobCard: View {
 
     // MARK: Pieces
 
-    private var statusColor: Color {
+    private var statusKind: TeachyStatusKind {
         switch model.status {
-        case .planning, .running: return DS.Colors.learnAccent
-        case .queued: return DS.Colors.textTertiary
-        case .waitingForConsent: return DS.Colors.warning
-        case .done: return DS.Colors.success
-        case .failed: return DS.Colors.destructive
-        case .stopped: return DS.Colors.textTertiary
+        case .planning, .running: return .live
+        case .queued: return .waiting
+        case .waitingForConsent: return .needsYou
+        case .done: return .done
+        case .failed: return .failed
+        case .stopped: return .stopped
         }
     }
 
+    /// One line of the plan, as a checklist: a tick when it is done, a filled ring
+    /// in the tint on the step in progress, an empty circle on the ones to come.
     private func planRow(_ step: AgentPlanStep) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Image(systemName: icon(for: step.state))
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(step.state == .pending ? DS.Colors.textTertiary : DS.Colors.learnAccent)
-                .frame(width: 12)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            planStepMark(for: step.state)
+                .alignmentGuide(.firstTextBaseline) { dimensions in dimensions[.bottom] - 2 }
+
             Text(step.text)
-                .font(.system(size: 12, weight: step.state == .current ? .semibold : .regular))
-                .foregroundColor(step.state == .current ? DS.Colors.textPrimary : (step.state == .done ? DS.Colors.textTertiary : DS.Colors.textSecondary))
-                .strikethrough(step.state == .done, color: DS.Colors.textTertiary)
+                .font(step.state == .current ? DS.Fonts.sans(12.5, weight: .medium) : DS.Fonts.sans(12.5))
+                .foregroundColor(stepTextColor(for: step.state))
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.vertical, step.state == .current ? 3 : 0)
-        .padding(.horizontal, step.state == .current ? 6 : 0)
-        .background(
-            RoundedRectangle(cornerRadius: DS.CornerRadius.small)
-                .fill(step.state == .current ? DS.Colors.learnAccentSoft : Color.clear)
-        )
     }
 
-    private func icon(for state: AgentPlanStep.State) -> String {
+    @ViewBuilder
+    private func planStepMark(for state: AgentPlanStep.State) -> some View {
         switch state {
-        case .done: return "checkmark"
-        case .current: return "arrow.right"
-        case .pending: return "circle"
+        case .done:
+            Image(systemName: "checkmark.circle.fill")
+                .font(DS.Fonts.sans(12, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(DS.Colors.textSecondary)
+                .frame(width: 14, height: 14)
+        case .current:
+            // A filled ring in the tint: "you are here". (The pointer itself is
+            // already in the header, marking the whole job as live.)
+            Image(systemName: "circle.inset.filled")
+                .font(DS.Fonts.sans(12, weight: .medium))
+                .foregroundStyle(DS.Colors.pointer)
+                .frame(width: 14, height: 14)
+        case .pending:
+            Image(systemName: "circle")
+                .font(DS.Fonts.sans(12, weight: .medium))
+                .foregroundStyle(DS.Colors.textQuaternary)
+                .frame(width: 14, height: 14)
+        }
+    }
+
+    private func stepTextColor(for state: AgentPlanStep.State) -> Color {
+        switch state {
+        case .current: return DS.Colors.textPrimary
+        case .done: return DS.Colors.textTertiary
+        case .pending: return DS.Colors.textSecondary
         }
     }
 }
@@ -308,16 +316,14 @@ struct AgentJobCardStack: View {
             )
             .zIndex(10)
 
+            // The cards behind are plain translucent slivers, not more glass:
+            // glass stacked on glass turns to mud.
             ForEach(0..<peeks, id: \.self) { layer in
-                let inset = CGFloat(layer + 1) * 10
-                UnevenRoundedRectangle(bottomLeadingRadius: 12, bottomTrailingRadius: 12, style: .continuous)
-                    .fill(DS.Colors.surface1.opacity(1 - Double(layer) * 0.22))
-                    .overlay(
-                        UnevenRoundedRectangle(bottomLeadingRadius: 12, bottomTrailingRadius: 12, style: .continuous)
-                            .strokeBorder(DS.Colors.borderSubtle.opacity(0.7), lineWidth: 1)
-                    )
-                    .frame(width: AgentJobCardMetrics.width - inset * 2, height: AgentJobCardMetrics.peek + 12)
-                    .padding(.top, -12)
+                let inset = CGFloat(layer + 1) * 12
+                UnevenRoundedRectangle(bottomLeadingRadius: 14, bottomTrailingRadius: 14, style: .continuous)
+                    .fill(DS.Colors.surface2.opacity(0.78 - Double(layer) * 0.2))
+                    .frame(width: AgentJobCardMetrics.width - inset * 2, height: AgentJobCardMetrics.peek + 14)
+                    .padding(.top, -14)
                     .zIndex(Double(9 - layer))
             }
         }

@@ -22,7 +22,7 @@ final class CaptionBarModel: ObservableObject {
 }
 
 enum CaptionBarStyle {
-    static let fontSize: CGFloat = 24
+    static let fontSize: CGFloat = 17
     static let fontWeight: NSFont.Weight = .medium
     static let maximumTextWidth: CGFloat = 820
     static let horizontalPadding: CGFloat = 24
@@ -35,6 +35,8 @@ enum CaptionBarStyle {
     static let lingerSeconds: TimeInterval = 1.5
     static let fadeSeconds: TimeInterval = 0.35
 
+    /// The bar draws with this exact font and `measure` wraps with it, so the two
+    /// can never drift apart.
     static var font: NSFont { .systemFont(ofSize: fontSize, weight: fontWeight) }
 
     static func measure(_ text: String) -> Double {
@@ -65,23 +67,15 @@ struct CaptionBarView: View {
             Spacer(minLength: 0)
             if !model.lines.isEmpty {
                 Text(model.lines.joined(separator: "\n"))
-                    .font(.system(size: CaptionBarStyle.fontSize, weight: .medium))
-                    .foregroundColor(.white)
+                    .font(Font(CaptionBarStyle.font))
+                    .foregroundColor(DS.Colors.textPrimary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(CaptionBarStyle.lineSpacing)
                     .lineLimit(CaptionBarStyle.maximumLines)
                     .minimumScaleFactor(0.85)
                     .padding(.horizontal, CaptionBarStyle.horizontalPadding)
                     .padding(.vertical, CaptionBarStyle.verticalPadding)
-                    .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color.black.opacity(0.80))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.white.opacity(0.12), lineWidth: 0.75)
-                    )
-                    .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+                    .teachyTile()
                     .id(model.lines)
                     .transition(.opacity)
             }

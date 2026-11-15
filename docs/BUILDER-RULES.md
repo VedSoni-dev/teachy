@@ -17,7 +17,7 @@ You are building one piece of Teachy, a macOS Swift menu-bar AI companion compet
 
 ## Quality
 - Put pure logic in types with no AppKit side effects and unit-test it: `scripts/tests/<name>/main.swift` (top-level code must be in a file named `main.swift`) plus `scripts/tests/run_<name>_tests.sh` that compiles the pure files with `swiftc` and exits non-zero on failure. Pattern: `scripts/tests/run_segmenter_tests.sh`.
-- UI matches `DesignSystem.swift` (DS tokens) and the cards in `Settings/SettingsSections.swift`. Check visuals by rendering SwiftUI views to PNG in-process (see `scripts/tests/render_uiextras_shots.sh`), look at the PNGs, and fix what looks wrong.
+- UI follows `docs/DESIGN.md` (read it before drawing anything) and is built only from the tokens and components in `DesignSystem.swift`; the grouped rows in `Settings/SettingsSections.swift` and the glass tile in `Agent/AgentJobCardView.swift` are the exemplars. Check visuals by rendering SwiftUI views to PNG in-process (see `scripts/tests/render_uiextras_shots.sh`), look at the PNGs, and fix what looks wrong.
 - The project compiles with default MainActor isolation. Swift 6 concurrency warnings are known and non-blocking.
 
 ## Safety

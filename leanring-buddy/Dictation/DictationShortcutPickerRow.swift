@@ -2,7 +2,7 @@
 //  DictationShortcutPickerRow.swift
 //  leanring-buddy
 //
-//  "Hold [key] + [key] to dictate" with a Change button that records new keys.
+//  "Hold [key] [key] to dictate" with a Change button that records new keys.
 //  Recording runs through the dictation event tap, so it works even though the
 //  notch panel never becomes the key window.
 //
@@ -18,21 +18,22 @@ struct DictationShortcutPickerRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 if isRecording {
+                    // Teachy is listening for keys right now: the live mark.
+                    TeachyStatusMark(kind: .live)
                     Text("Hold the keys you want, then let go…")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(DS.Colors.learnAccent)
+                        .font(DS.Fonts.body)
+                        .foregroundColor(DS.Colors.textPrimary)
                 } else {
                     Text("Hold")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DS.Fonts.body)
                         .foregroundColor(DS.Colors.textPrimary)
-                    ForEach(Array(keyCodes.enumerated()), id: \.offset) { index, keyCode in
-                        if index > 0 {
-                            Text("+").font(.system(size: 12, weight: .medium)).foregroundColor(DS.Colors.textSecondary)
+                    HStack(spacing: 4) {
+                        ForEach(Array(keyCodes.enumerated()), id: \.offset) { _, keyCode in
+                            KeyboardKeyLabel(text: PushToTalkShortcutKeys.displayName(forKeyCode: keyCode))
                         }
-                        KeyboardKeyLabel(text: PushToTalkShortcutKeys.displayName(forKeyCode: keyCode))
                     }
                     Text("to dictate")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(DS.Fonts.body)
                         .foregroundColor(DS.Colors.textPrimary)
                 }
 
@@ -41,13 +42,7 @@ struct DictationShortcutPickerRow: View {
                 Button(isRecording ? "Cancel" : "Change keys") {
                     if isRecording { DictationController.shared.cancelShortcutRecording() } else { startRecording() }
                 }
-                .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(DS.Colors.textPrimary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(Color.white.opacity(0.1)))
-                .pointerCursor()
+                .teachyButton(.secondary, size: .compact)
 
                 if !isRecording, keyCodes != DictationShortcut.defaultKeyCodes {
                     Button("Reset") {
@@ -55,16 +50,14 @@ struct DictationShortcutPickerRow: View {
                         keyCodes = DictationShortcut.current()
                         problem = nil
                     }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
-                    .pointerCursor()
+                    .teachyButton(.quiet, size: .compact)
                 }
             }
 
             Text(problem ?? "Tap the same keys twice quickly for hands-free; twice again to stop. Escape cancels. If your keyboard has no fn key, pick your own keys here.")
-                .font(.system(size: 11))
-                .foregroundColor(problem == nil ? DS.Colors.textTertiary : DS.Colors.warning)
+                .font(DS.Fonts.caption)
+                .foregroundColor(problem == nil ? DS.Colors.textSecondary : DS.Colors.warningText)
+                .lineSpacing(1.5)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .onDisappear {

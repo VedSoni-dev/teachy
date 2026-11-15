@@ -18,27 +18,17 @@ import SwiftUI
 // MARK: - Shared look
 
 enum SceneStyle {
-    static let paper = Color(red: 0.984, green: 0.965, blue: 0.902)
-    static let paperLine = Color(red: 0.55, green: 0.66, blue: 0.80).opacity(0.28)
-    static let ink = Color(red: 0.149, green: 0.196, blue: 0.290)
-
     private static func firstAvailable(_ names: [String], size: CGFloat) -> NSFont {
         for name in names { if let font = NSFont(name: name, size: size) { return font } }
         return NSFont.systemFont(ofSize: size, weight: .medium)
     }
 
-    /// Marker-like handwriting for titles, pills and chips.
+    /// Marker-like handwriting for the marks drawn on the screen and on a model.
     static func markerNSFont(_ size: CGFloat) -> NSFont {
         firstAvailable(["BradleyHandITCTT-Bold", "Noteworthy-Bold", "ChalkboardSE-Bold", "MarkerFelt-Thin"], size: size)
     }
 
-    /// Easier-to-read handwriting for body text.
-    static func bodyNSFont(_ size: CGFloat) -> NSFont {
-        firstAvailable(["Noteworthy-Light", "ChalkboardSE-Regular", "BradleyHandITCTT-Bold"], size: size)
-    }
-
     static func marker(_ size: CGFloat) -> Font { Font(markerNSFont(size)) }
-    static func body(_ size: CGFloat) -> Font { Font(bodyNSFont(size)) }
 }
 
 extension SceneColor {

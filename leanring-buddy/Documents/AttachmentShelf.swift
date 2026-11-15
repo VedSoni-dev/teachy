@@ -258,7 +258,7 @@ struct AttachmentChipsView: View {
                 }
                 if let notice = shelf.notice {
                     Text(notice)
-                        .font(.system(size: compact ? 10.5 : 12))
+                        .font(DS.Fonts.caption)
                         .foregroundColor(DS.Colors.warningText)
                 }
             }
@@ -266,96 +266,101 @@ struct AttachmentChipsView: View {
     }
 }
 
+/// One attached file: a chip with a symbol for the kind of file, its name, and
+/// how much of it there is ("30 pages").
 struct AttachmentChip: View {
     let item: AttachmentItem
     var compact: Bool
     let onRemove: () -> Void
-    @State private var isHovering = false
 
-    private var iconName: String {
-        if item.isFailed { return "exclamationmark.triangle.fill" }
+    private var isReading: Bool {
+        if case .reading = item.state { return true }
+        return false
+    }
+
+    /// A plain symbol for the kind of file, drawn in the tint (never a coloured icon square).
+    private var kindSymbolName: String {
         switch item.kind {
-        case .pdf: return "doc.richtext.fill"
-        case .image: return "photo.fill"
-        case .csv: return "tablecells.fill"
+        case .pdf: return "doc.richtext"
+        case .image: return "photo"
+        case .csv: return "tablecells"
         case .code, .json: return "chevron.left.forwardslash.chevron.right"
         case .webPage, .html: return "globe"
-        case .markdown, .text, .richText, .none: return "doc.text.fill"
+        case .markdown, .text, .richText, .none: return "doc.text"
         }
     }
 
-    private var iconTint: Color {
-        if item.isFailed { return DS.Colors.warning }
-        switch item.kind {
-        case .pdf: return Color(hex: "#FF6B6B")
-        case .image: return Color(hex: "#C792EA")
-        case .csv: return DS.Colors.success
-        case .code, .json: return DS.Colors.codeText
-        case .webPage, .html: return DS.Colors.blue400
-        default: return DS.Colors.textSecondary
-        }
+    /// The picture itself, when the attachment is one that has been read.
+    private var thumbnailImage: NSImage? {
+        guard case .ready(let document) = item.state, let data = document.imageData else { return nil }
+        return NSImage(data: data)
     }
 
     var body: some View {
         HStack(spacing: compact ? 6 : 9) {
-            ZStack {
-                RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous)
-                    .fill(iconTint.opacity(0.16))
-                if case .reading = item.state {
-                    ProgressView().controlSize(.small).scaleEffect(compact ? 0.55 : 0.7)
-                } else if case .ready(let document) = item.state, let data = document.imageData, let image = NSImage(data: data) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: compact ? 22 : 32, height: compact ? 22 : 32)
-                } else {
-                    Image(systemName: iconName)
-                        .font(.system(size: compact ? 10 : 13, weight: .semibold))
-                        .foregroundColor(iconTint)
-                }
-            }
-            .frame(width: compact ? 22 : 32, height: compact ? 22 : 32)
-            .clipShape(RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous))
+            leadingMark
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: compact ? 1 : 2) {
                 Text(item.title)
-                    .font(.system(size: compact ? 11 : 13, weight: .medium))
+                    .font(compact ? DS.Fonts.sans(11.5, weight: .medium) : DS.Fonts.bodyEmphasized)
                     .foregroundColor(DS.Colors.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if !compact || item.isFailed {
-                    Text(item.shortDetail)
-                        .font(.system(size: compact ? 9.5 : 11))
-                        .foregroundColor(item.isFailed ? DS.Colors.warningText : DS.Colors.textTertiary)
-                        .lineLimit(1)
+                    detailLine
                 }
             }
             .frame(maxWidth: item.isFailed ? (compact ? 220 : 280) : (compact ? 130 : 180), alignment: .leading)
 
             Button(action: onRemove) {
                 Image(systemName: "xmark")
-                    .font(.system(size: compact ? 7.5 : 9, weight: .bold))
-                    .foregroundColor(isHovering ? DS.Colors.textPrimary : DS.Colors.textTertiary)
-                    .frame(width: compact ? 14 : 18, height: compact ? 14 : 18)
-                    .background(Circle().fill(Color.white.opacity(isHovering ? 0.14 : 0.07)))
             }
-            .buttonStyle(.plain)
-            .pointerCursor()
+            .teachyIconButton(sideLength: 18)
             .accessibilityLabel("Remove \(item.title)")
         }
-        .padding(.leading, compact ? 5 : 6)
-        .padding(.trailing, compact ? 6 : 9)
-        .padding(.vertical, compact ? 4 : 6)
-        .background(
-            RoundedRectangle(cornerRadius: compact ? 9 : 12, style: .continuous)
-                .fill(Color.white.opacity(0.055))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: compact ? 9 : 12, style: .continuous)
-                .stroke(item.isFailed ? DS.Colors.warning.opacity(0.45) : Color.white.opacity(0.09), lineWidth: 0.75)
-        )
-        .onHover { isHovering = $0 }
+        .padding(.leading, compact ? 7 : 8)
+        .padding(.trailing, compact ? 4 : 6)
+        .padding(.vertical, compact ? 3 : 6)
+        .teachyOption(isSelected: false)
         .help(item.isFailed ? item.detail : (item.url?.path ?? item.title))
+    }
+
+    /// What sits before the name: the picture itself, the state while the file
+    /// is being read or could not be, and otherwise a symbol for its kind.
+    @ViewBuilder
+    private var leadingMark: some View {
+        let leadingMarkSideLength: CGFloat = compact ? 16 : 28
+        if let thumbnailImage {
+            let thumbnailShape = RoundedRectangle(cornerRadius: compact ? 3 : DS.CornerRadius.key, style: .continuous)
+            Image(nsImage: thumbnailImage)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: leadingMarkSideLength, height: leadingMarkSideLength)
+                .clipShape(thumbnailShape)
+                .overlay(thumbnailShape.strokeBorder(DS.Colors.hairline, lineWidth: 1))
+        } else {
+            Group {
+                if isReading {
+                    TeachyStatusMark(kind: .live)
+                } else if item.isFailed {
+                    TeachyStatusMark(kind: .needsYou)
+                } else {
+                    Image(systemName: kindSymbolName)
+                        .font(DS.Fonts.sans(compact ? 11 : 15, weight: .medium))
+                        .foregroundColor(DS.Colors.pointer)
+                }
+            }
+            .frame(width: compact ? leadingMarkSideLength : 22, height: leadingMarkSideLength)
+        }
+    }
+
+    /// The line under the name. A file that could not be read says what to do
+    /// about it, in amber, because that needs the person.
+    private var detailLine: some View {
+        Text(item.shortDetail)
+            .font(item.isFailed ? DS.Fonts.caption : DS.Fonts.data)
+            .foregroundColor(item.isFailed ? DS.Colors.warningText : DS.Colors.textSecondary)
+            .lineLimit(1)
     }
 }
 
@@ -393,7 +398,7 @@ struct AttachmentDropModifier: ViewModifier {
                         .allowsHitTesting(false)
                 }
             }
-            .animation(.easeOut(duration: 0.15), value: isTargeted)
+            .animation(DS.Motion.hover, value: isTargeted)
             .onDrop(of: [.fileURL, .image], isTargeted: $isTargeted) { providers in
                 AttachmentDropHandler.handle(providers, shelf: shelf)
             }
@@ -401,28 +406,37 @@ struct AttachmentDropModifier: ViewModifier {
     }
 }
 
-/// What is shown over a drop target while a file is held above it.
+/// What is shown over a drop target while a file is held above it: what is
+/// underneath dims, and a dashed edge and a faint fill in the tint mark where
+/// the file will land.
 struct AttachmentDropHighlight: View {
     var cornerRadius: CGFloat = 14
 
+    /// How far the dashed edge sits inside the edge of the target.
+    private static let dashedEdgeInset: CGFloat = 6
+
+    private var dashedEdgeShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: max(cornerRadius - Self.dashedEdgeInset, 0), style: .continuous)
+    }
+
     var body: some View {
         ZStack {
+            // Dims what is underneath so the words can be read. Black, so the notch
+            // stays the hardware's black.
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color.black.opacity(0.62))
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(DS.Colors.blue500.opacity(0.14))
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(DS.Colors.blue400, style: StrokeStyle(lineWidth: 1.5, dash: [7, 5]))
-                .padding(6)
-            VStack(spacing: 8) {
-                Image(systemName: "arrow.down.doc.fill")
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundColor(DS.Colors.blue400)
-                Text("Drop to ask about it")
-                    .font(.system(size: 15, weight: .semibold))
+                .fill(DS.Colors.notchBlack.opacity(0.72))
+            dashedEdgeShape
+                .fill(DS.Colors.pointer.opacity(0.12))
+                .padding(Self.dashedEdgeInset)
+            dashedEdgeShape
+                .strokeBorder(DS.Colors.pointer, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [7, 5]))
+                .padding(Self.dashedEdgeInset)
+            VStack(spacing: 5) {
+                Text("Drop to attach")
+                    .font(DS.Fonts.title)
                     .foregroundColor(DS.Colors.textPrimary)
                 Text("PDF, text, code, tables, Word, images. Up to \(AttachmentRules.maximumCount).")
-                    .font(.system(size: 12))
+                    .font(DS.Fonts.caption)
                     .foregroundColor(DS.Colors.textSecondary)
                     .multilineTextAlignment(.center)
             }

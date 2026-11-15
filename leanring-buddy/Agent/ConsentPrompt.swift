@@ -43,64 +43,91 @@ private struct ConsentCardView: View {
     let onChoice: (ConsentChoice) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.md) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(request.headline)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if !request.detail.isEmpty {
-                    Text(request.detail)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(DS.Colors.textSecondary)
-                        .lineLimit(4)
-                        .truncationMode(.tail)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: DS.CornerRadius.small).fill(DS.Colors.surface2))
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 11) {
+                Group {
+                    if request.isHighStakes {
+                        // The system's caution sign: a dark mark on an orange triangle.
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(Color.black.opacity(0.8), DS.Colors.warning)
+                    } else {
+                        Image(systemName: "hand.raised.fill")
+                            .foregroundStyle(DS.Colors.pointer)
+                    }
                 }
+                .font(DS.Fonts.sans(17, weight: .medium))
+                .frame(width: 22)
+                .padding(.top, 1)
 
-                if !request.reason.isEmpty {
-                    Text(request.reason)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.Colors.warning)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(request.headline)
+                        .font(DS.Fonts.sans(14, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    // Which job is asking, for when several are running.
+                    if !request.jobTitle.isEmpty {
+                        Text(request.jobTitle)
+                            .font(DS.Fonts.data)
+                            .foregroundColor(DS.Colors.textSecondary)
+                            .lineLimit(1)
+                    }
+
+                    if !request.detail.isEmpty {
+                        // The exact command, path or control: this is the one place for mono.
+                        Text(request.detail)
+                            .font(DS.Fonts.mono(11))
+                            .foregroundColor(DS.Colors.textSecondary)
+                            .lineLimit(4)
+                            .truncationMode(.tail)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .teachyWell()
+                            .padding(.top, 2)
+                    }
+
+                    if !request.reason.isEmpty {
+                        Text(request.reason)
+                            .font(DS.Fonts.caption)
+                            .foregroundColor(DS.Colors.warningText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
 
             HStack(spacing: DS.Spacing.sm) {
-                button(request.isHighStakes ? "Go ahead" : "Go ahead  ⏎", isPrimary: true) { onChoice(.allowForJob) }
+                // Delete / send / pay need a click, so those do not advertise the Return key.
+                choiceButton("Go ahead", keyHint: request.isHighStakes ? nil : "⏎", kind: .primary) { onChoice(.allowForJob) }
                 if request.offersAlwaysAllow {
-                    button("Always allow", isPrimary: false) { onChoice(.alwaysAllow) }
+                    choiceButton("Always allow", keyHint: nil, kind: .secondary) { onChoice(.alwaysAllow) }
                 }
-                button("Not now  esc", isPrimary: false) { onChoice(.notNow) }
+                choiceButton("Not now", keyHint: "esc", kind: .secondary) { onChoice(.notNow) }
             }
         }
         .padding(DS.Spacing.lg)
         .frame(width: ConsentPrompter.cardWidth)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(DS.Colors.background))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(request.isHighStakes ? DS.Colors.warning.opacity(0.6) : DS.Colors.borderSubtle, lineWidth: 1)
-        )
+        .teachyTile(edgeColor: request.isHighStakes ? DS.Colors.warning : .clear)
     }
 
-    private func button(_ label: String, isPrimary: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 12, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: DS.CornerRadius.medium)
-                        .fill(isPrimary ? DS.Colors.learnAccent : Color.white.opacity(0.08))
-                )
-                .foregroundColor(isPrimary ? .white : DS.Colors.textPrimary)
+    /// A choice with the key that also triggers it, shown as a quiet hint inside the button.
+    private func choiceButton(_ label: String, keyHint: String?, kind: TeachyButtonKind, action: @escaping () -> Void) -> some View {
+        Button {
+            DS.Haptics.stateChanged()
+            action()
+        } label: {
+            HStack(spacing: 6) {
+                Text(label)
+                if let keyHint {
+                    Text(keyHint)
+                        .font(DS.Fonts.sans(11))
+                        .opacity(0.6)
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
+        .teachyButton(kind, isFullWidth: true)
     }
 }
 

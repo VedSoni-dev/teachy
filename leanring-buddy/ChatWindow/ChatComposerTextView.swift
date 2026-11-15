@@ -55,8 +55,9 @@ struct ChatComposerTextView: NSViewRepresentable {
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.font = .systemFont(ofSize: fontSize)
-        textView.textColor = NSColor(white: 0.96, alpha: 1)
-        textView.insertionPointColor = NSColor(red: 0.35, green: 0.78, blue: 0.98, alpha: 1)
+        textView.textColor = NSColor(DS.Colors.textPrimary)
+        // The caret takes the tint, as it does in every macOS text field.
+        textView.insertionPointColor = NSColor(DS.Colors.pointer)
         textView.textContainerInset = NSSize(width: 0, height: 2)
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true

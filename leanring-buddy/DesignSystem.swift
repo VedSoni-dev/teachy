@@ -2,7 +2,25 @@
 //  DesignSystem.swift
 //  leanring-buddy
 //
-//  Centralized design system — Teachy teal/blue accents on soft dark surfaces.
+//  Teachy looks like part of macOS.
+//
+//  - SF Pro, the system type, at the sizes macOS uses. Hierarchy comes from
+//    weight and from the label colours (primary, secondary, tertiary).
+//  - The notch is system glass, closed and open, and so is everything else that
+//    floats over the screen (Liquid Glass on macOS 26, a material before it,
+//    solid black with Reduce Transparency). Only the camera housing is black.
+//  - Lists are grouped: a heading, then rows in one rounded container with
+//    inset dividers, the way System Settings and iOS draw them.
+//  - Controls look and behave like the system's: capsule buttons, a switch,
+//    SF Symbols. They are drawn here rather than borrowed from AppKit because
+//    Teachy's panels never become the key window, and system controls go grey
+//    in a window that is not key.
+//  - One brand colour: the pointer colour the person picked. It is the tint,
+//    exactly where macOS would use the accent colour. Orange means Teachy needs
+//    you, red means something failed or will be removed, green means done.
+//  - Motion is springs; feedback starts on mouse-down.
+//
+//  The full write-up is docs/DESIGN.md.
 //
 
 import SwiftUI
@@ -11,145 +29,165 @@ import AppKit
 // MARK: - Design System Namespace
 
 /// The top-level namespace for all design system tokens.
-/// Usage: `DS.Colors.background`, `DS.Colors.accent`, etc.
+/// Usage: `DS.Colors.textPrimary`, `DS.Fonts.title`, `DS.Motion.standard`.
 enum DS {
 
     // MARK: - Color Tokens
 
     enum Colors {
 
-        // ── Backgrounds ──────────────────────────────────────────────
-        // Layered surfaces from deepest to most elevated.
-        // Higher surfaces are lighter, creating a sense of depth.
+        // ── Surfaces ─────────────────────────────────────────────────
+        // The Dark Mode system greys, written out so off-screen renders match.
 
-        /// The deepest background — main fills.
-        static let background = Color(hex: "#12151A")
+        /// The camera housing, and what the notch becomes with Reduce
+        /// Transparency. Pure black so it is one piece with the hardware.
+        static let notchBlack = Color.black
 
-        /// First elevation — cards, panels.
-        static let surface1 = Color(hex: "#1A1D24")
+        /// A window that is not part of the notch (the chat window). A step
+        /// darker than a group, so a grouped container reads on it.
+        static let background = Color(hex: "#141415")
 
-        /// Second elevation — inputs, elevated cards.
-        static let surface2 = Color(hex: "#22262F")
+        /// A grouped list's container (secondarySystemGroupedBackground).
+        static let surface1 = Color(hex: "#1C1C1E")
 
-        /// Third elevation — hover.
-        static let surface3 = Color(hex: "#2A2F3A")
+        /// Something raised on a group (tertiarySystemGroupedBackground).
+        static let surface2 = Color(hex: "#2C2C2E")
 
-        /// Fourth elevation — pressed.
-        static let surface4 = Color(hex: "#323845")
+        /// The off track of a switch, a hovered raised surface.
+        static let surface3 = Color(hex: "#3A3A3C")
 
-        // ── Borders ──────────────────────────────────────────────────
+        /// The face of a key cap, a pressed raised surface.
+        static let surface4 = Color(hex: "#48484A")
 
-        static let borderSubtle = Color(hex: "#3A404C")
-        static let borderStrong = Color(hex: "#4A5160")
+        // ── Fills ────────────────────────────────────────────────────
+        // Translucent, so the same control works on black, on a group and on glass.
 
-        // ── Text ─────────────────────────────────────────────────────
+        /// A pressed control.
+        static let fillPrimary = Color.white.opacity(0.20)
+        /// A resting control (a secondary button).
+        static let fillSecondary = Color.white.opacity(0.12)
+        /// A field, an unselected option.
+        static let fillTertiary = Color.white.opacity(0.07)
+        /// A hovered row.
+        static let fillQuaternary = Color.white.opacity(0.045)
+        /// A grouped list's container. Translucent so the glass of the notch
+        /// panel shows through it, the way a group sits on a system glass sheet.
+        static let groupFill = Color.white.opacity(0.075)
 
-        static let textPrimary = Color(hex: "#F5F5F7")
-        static let textSecondary = Color(hex: "#A1A1A6")
-        static let textTertiary = Color(hex: "#6E6E73")
-        static let textOnAccent: Color = .white
+        // ── Lines ────────────────────────────────────────────────────
 
-        // ── Accent scale (Teachy) ────────────────────────────────────
-        // Primary fill uses Apple-education blue; teal for learning/success moments.
+        /// The divider between rows of a group.
+        static let hairline = Color.white.opacity(0.11)
 
-        static let blue50  = Color(hex: "#eff6ff")
-        static let blue100 = Color(hex: "#dbeafe")
-        static let blue200 = Color(hex: "#bfdbfe")
-        static let blue300 = Color(hex: "#93c5fd")
-        static let blue400 = Color(hex: "#5AC8FA")
-        static let blue500 = Color(hex: "#0A84FF")
-        static let blue600 = Color(hex: "#0071E3")
-        static let blue700 = Color(hex: "#0077ED")
-        static let blue800 = Color(hex: "#0060BF")
-        static let blue900 = Color(hex: "#004A94")
-        static let blue950 = Color(hex: "#0A2744")
+        /// The edge of a field or a solid tile.
+        static let hairlineStrong = Color.white.opacity(0.20)
 
-        static let accent = blue600
-        static let accentHover = blue700
-        static let accentText = blue400
-        static let accentSubtle = blue500.opacity(0.12)
+        /// The edge of whichever option is selected: the tint.
+        static var hairlineSelected: Color { pointer }
 
-        /// Teachy's teal accent (name kept from when it marked the old Learn tab).
-        static let learnAccent = Color(hex: "#0F8A6A")
-        static let learnAccentSoft = Color(hex: "#0F8A6A").opacity(0.14)
+        // ── Labels ───────────────────────────────────────────────────
+        // Translucent whites, like the system label colours: they stay legible
+        // on black and pick up what is behind them on glass.
 
-        // ── Semantic Colors ──────────────────────────────────────────
+        static let textPrimary = Color.white
+        static let textSecondary = Color.white.opacity(0.66)
+        static let textTertiary = Color.white.opacity(0.48)
+        /// Placeholders, pending marks, disabled labels.
+        static let textQuaternary = Color.white.opacity(0.28)
 
-        /// Destructive/error actions — delete buttons, error messages, close button hover.
-        static let destructive = Color(hex: "#E5484D")        // Radix Red 9
+        // ── Tint (the pointer colour) ────────────────────────────────
 
-        /// Destructive hover state.
-        static let destructiveHover = Color(hex: "#F2555A")   // Radix Red 10
-
-        /// Destructive used for text on dark backgrounds (brighter for readability).
-        static let destructiveText = Color(hex: "#FF6369")    // Radix Red 11
-
-        /// Success — checkmarks, granted status, completion indicators.
-        /// Independent green so success states are visually distinct from the blue accent.
-        static let success = Color(hex: "#34D399")      // Tailwind Emerald 400
-
-        /// Warning — caution messages, manual verification failure explanations.
-        static let warning = Color(hex: "#FFB224")            // Radix Amber 9
-
-        /// Warning text — brighter variant for text on dark backgrounds.
-        static let warningText = Color(hex: "#F1A10D")        // Radix Amber 11
-
-        /// Info/feature highlight — used for prompt card headers, code highlights.
-        /// Lighter than accentText so informational elements are visually distinct
-        /// from interactive accent-colored elements.
-        static let info = Color(hex: "#70B8FF")               // Radix Blue 9
-
-        /// Inline code text color — slightly brighter blue for monospace code snippets.
-        static let codeText = Color(hex: "#9DC2FF")           // Radix Blue 11 variant
-
-        // ── Overlay Cursor ───────────────────────────────────────────
-
-        /// The blue cursor/bubble color used in OverlayWindow.
-        /// Kept distinct from the accent since it serves a different purpose
-        /// (screen overlay vs in-app UI).
-        static let overlayCursorBlue = Color(hex: "#3380FF")
-
-        // ── Floating Button Gradient ─────────────────────────────────
-
-        /// The floating session button gradient colors (unchanged from original —
-        /// this gradient is intentionally distinct from the rest of the palette
-        /// to make the floating button stand out as a "jewel" on the desktop).
-        static let floatingGradientPurple = Color(hex: "#8F46EB")
-        static let floatingGradientPink = Color(hex: "#E84D9E")
-        static let floatingGradientOrange = Color(hex: "#FF8C33")
-
-        // ── Help Chat ──────────────────────────────────────────────
-
-        /// User message bubble background in the help chat.
-        /// Blue 800 — deep blue that's clearly distinct from the dark surface
-        /// while keeping white text highly readable (~9:1 contrast).
-        static let helpChatUserBubble = blue800
-
-        /// Slightly lighter variant for hover/pressed states on user bubbles.
-        static let helpChatUserBubbleHover = blue700
-
-        /// Footer/backdrop behind the floating help chat.
-        /// Slightly lighter than the main window background so the chat zone reads
-        /// as a distinct docked surface even before the pill input is visible.
-        static let helpChatBackdrop = Color(hex: "#212121")
-
-        // ── Disabled State ───────────────────────────────────────────
-        // Following Material Design 3's disabled pattern:
-        // Container: onSurface at 12% opacity
-        // Content: onSurface at 38% opacity
-
-        /// Disabled button/container background.
-        static var disabledBackground: Color {
-            textPrimary.opacity(0.12)
+        /// The pointer colour the person picked on the Home tab. It is Teachy's
+        /// tint: the main button, a switch that is on, the chosen option, links,
+        /// row symbols, and whatever is live. Read on every use so a new choice
+        /// shows the next time a view is drawn.
+        static var pointer: Color {
+            pointerColor(named: UserDefaults.standard.string(forKey: "selectedCursorColor"))
         }
 
-        /// Disabled text/icon color.
-        static var disabledText: Color {
-            textPrimary.opacity(0.38)
+        /// Text or a symbol that sits on a pointer-colour fill.
+        static var onPointer: Color {
+            colorOnPointerColor(named: UserDefaults.standard.string(forKey: "selectedCursorColor"))
         }
+
+        /// The four pointer colours. `ClickyCursorColor.displayColor` reads these,
+        /// so the pointer on screen and the tint in the panel never drift apart.
+        static func pointerColor(named pointerColorName: String?) -> Color {
+            switch pointerColorName {
+            case "red": return Color(hex: "#FF4D4D")
+            case "yellow": return Color(hex: "#FFD60A")
+            case "green": return Color(hex: "#30D158")
+            default: return Color(hex: "#3380FF")
+            }
+        }
+
+        /// White reads on blue and red; yellow and green are too light for it.
+        static func colorOnPointerColor(named pointerColorName: String?) -> Color {
+            switch pointerColorName {
+            case "yellow", "green": return Color.black
+            default: return Color.white
+            }
+        }
+
+        // ── Meaning ──────────────────────────────────────────────────
+        // The Dark Mode system colours.
+
+        /// Teachy needs an answer or a look from you.
+        static let warning = Color(hex: "#FF9F0A")
+        static let warningText = Color(hex: "#FFB340")
+
+        /// Something failed, or this action removes something.
+        static let destructive = Color(hex: "#FF453A")
+        static let destructiveText = Color(hex: "#FF6961")
+
+        /// Done, granted, connected.
+        static let success = Color(hex: "#30D158")
+
+        // ── Disabled ─────────────────────────────────────────────────
+
+        static var disabledBackground: Color { fillTertiary }
+        static var disabledText: Color { textQuaternary }
     }
 
-    // MARK: - Spacing (for reference, not enforced)
+    // MARK: - Type
+
+    /// SF Pro at macOS sizes. Nothing under 11 pt.
+    enum Fonts {
+        static func sans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+            .system(size: size, weight: weight)
+        }
+
+        /// SF Mono, only for real code, commands and file paths.
+        static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+            .system(size: size, weight: weight, design: .monospaced)
+        }
+
+        /// One per surface: the line the whole surface is about.
+        static let display = sans(22, weight: .bold)
+        /// The heading of a section or of a floating tile.
+        static let title = sans(15, weight: .semibold)
+        /// A named thing in a list (an agent, a job, a routine).
+        static let itemTitle = sans(13, weight: .semibold)
+        /// What Teachy says, at reading length. Give it line spacing 3.
+        static let voice = sans(13)
+
+        /// The label of a row.
+        static let bodyEmphasized = sans(13, weight: .medium)
+        static let body = sans(13)
+        /// Buttons and small controls.
+        static let control = sans(13, weight: .medium)
+        static let controlCompact = sans(11.5, weight: .medium)
+        /// The line that explains a row.
+        static let caption = sans(11.5)
+
+        /// Times, counts, statuses: SF Pro with digits that do not jump.
+        static let data = sans(11).monospacedDigit()
+        static let dataEmphasized = sans(11, weight: .medium).monospacedDigit()
+        /// Key caps.
+        static let key = sans(11, weight: .medium)
+    }
+
+    // MARK: - Spacing
 
     enum Spacing {
         static let xs: CGFloat = 4
@@ -163,600 +201,743 @@ enum DS {
 
     // MARK: - Corner Radii
 
+    /// Continuous corners throughout. Buttons are capsules, as on macOS 26.
     enum CornerRadius {
-        /// Small elements like tags, badges.
+        /// Key caps and tags.
+        static let key: CGFloat = 5
         static let small: CGFloat = 6
-        /// Buttons, input fields, small cards.
-        static let medium: CGFloat = 8
-        /// Cards, dialogs, chat bubbles.
-        static let large: CGFloat = 10
-        /// Large panels, permission cards.
-        static let extraLarge: CGFloat = 12
-        /// Pill-shaped buttons (the continue button).
+        /// Fields and options.
+        static let control: CGFloat = 10
+        static let medium: CGFloat = 10
+        /// A recessed well.
+        static let well: CGFloat = 10
+        static let large: CGFloat = 12
+        /// A grouped list's container.
+        static let group: CGFloat = 14
+        /// Glass tiles that float over the screen.
+        static let tile: CGFloat = 20
+        static let extraLarge: CGFloat = 20
+        /// Pass to `teachyTile` for a glass capsule.
         static let pill: CGFloat = .infinity
     }
 
-    // MARK: - Animation Durations
+    // MARK: - Motion
 
+    /// Springs, critically damped unless a gesture threw the thing.
+    enum Motion {
+        /// Press feedback. Starts on mouse-down.
+        static let press = SwiftUI.Animation.spring(response: 0.2, dampingFraction: 1.0)
+        /// Everything that opens, closes, moves or swaps.
+        static let standard = SwiftUI.Animation.spring(response: 0.34, dampingFraction: 1.0)
+        /// Only after a flick or a drop: a little overshoot.
+        static let thrown = SwiftUI.Animation.spring(response: 0.38, dampingFraction: 0.82)
+        /// Hover colour changes.
+        static let hover = SwiftUI.Animation.easeOut(duration: 0.12)
+        /// What replaces a spring when Reduce Motion is on.
+        static let reduced = SwiftUI.Animation.easeInOut(duration: 0.2)
+    }
+
+    /// Durations kept for older call sites.
     enum Animation {
-        /// Quick state changes — hover in/out, press feedback.
-        static let fast: Double = 0.15
-        /// Standard transitions — content reveal, button state changes.
+        static let fast: Double = 0.12
         static let normal: Double = 0.25
-        /// Slower, more dramatic — fade-ins, celebration screen elements.
         static let slow: Double = 0.4
     }
 
-    // MARK: - State Layer Opacities
-    // Based on Material Design 3's state layer system.
-    // A "state layer" overlays the button's content color at these opacities.
+    // MARK: - Haptics
 
-    enum StateLayer {
-        /// Hover: subtle highlight to indicate interactivity.
-        static let hover: Double = 0.08
-        /// Focus: keyboard navigation indicator (slightly stronger than hover).
-        static let focus: Double = 0.12
-        /// Pressed: active press feedback (same strength as focus).
-        static let pressed: Double = 0.12
-        /// Dragged: strongest overlay (rarely used).
-        static let dragged: Double = 0.16
+    /// A tap on the trackpad for the moments that are a real change of state:
+    /// a switch flipping, a choice being made. Fires on the same frame as the
+    /// change. Nothing happens on a mouse or a trackpad without Force Touch.
+    enum Haptics {
+        static func stateChanged() {
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+        }
     }
 }
 
-// MARK: - Button Styles
+// MARK: - Buttons
 
-/// Primary button — the main call-to-action per screen.
-/// Accent-colored background with white text. One per view maximum.
-/// Used for: "start"/"resume", "let's go", "continue", "verify completion".
-struct DSPrimaryButtonStyle: ButtonStyle {
-    var isFullWidth: Bool = true
+/// How much a button asks for attention. One `.primary` per surface.
+enum TeachyButtonKind {
+    /// Filled with the pointer colour. The one thing to do here.
+    case primary
+    /// A grey capsule.
+    case secondary
+    /// No fill until hovered. For rows of small actions.
+    case quiet
+    /// Removes or stops something.
+    case danger
+}
 
-    @State private var isHovered = false
+enum TeachyButtonSize {
+    /// 28 pt tall.
+    case regular
+    /// 22 pt tall, for rows and tiles.
+    case compact
+}
 
-    // Separate state for the scale expansion so it animates on a slower,
-    // more gradual timeline (0.6s) than the background color snap (0.15s).
-    @State private var isHoverScaleExpanded = false
-
-    // Whether the hover glow shadow is active. Builds up gradually (0.6s)
-    // on hover entry, fades out faster (0.3s) on exit.
-    @State private var isHoverGlowActive = false
-
-    // Continuously toggles while hovered to drive a gentle breathing pulse
-    // in the glow shadow. Creates a living, organic feel — like the button
-    // is softly glowing, not just statically lit.
-    @State private var isGlowBreathingIn = false
+/// The Teachy button: a capsule, like the system's on macOS 26. Drawn here
+/// because a system button goes grey in a panel that is not the key window.
+/// Feedback starts on mouse-down; hover only changes tone.
+struct TeachyButtonStyle: ButtonStyle {
+    var kind: TeachyButtonKind = .secondary
+    var size: TeachyButtonSize = .regular
+    var isFullWidth: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 16, weight: .medium))
-            .foregroundColor(DS.Colors.textOnAccent)
+        TeachyButtonBody(
+            label: configuration.label,
+            isPressed: configuration.isPressed,
+            kind: kind,
+            size: size,
+            isFullWidth: isFullWidth
+        )
+    }
+}
+
+/// A view (not just a style) so it can read the environment and hold hover state.
+private struct TeachyButtonBody<Label: View>: View {
+    let label: Label
+    let isPressed: Bool
+    let kind: TeachyButtonKind
+    let size: TeachyButtonSize
+    let isFullWidth: Bool
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    var body: some View {
+        label
+            .font(labelFont)
+            .foregroundColor(labelColor)
+            .lineLimit(1)
+            .padding(.horizontal, size == .regular ? 14 : 10)
+            .frame(height: size == .regular ? 28 : 22)
             .frame(maxWidth: isFullWidth ? .infinity : nil)
-            .padding(.vertical, 14)
-            .padding(.horizontal, isFullWidth ? 0 : 20)
-            .background(
-                Capsule()
-                    .fill(buttonBackgroundColor(isPressed: configuration.isPressed))
-            )
-            // Hover glow — builds up gradually, then gently breathes while hovered.
-            // The breathing oscillates opacity and radius on a slow 2.5s loop,
-            // creating a candle-flame-like "alive" quality rather than a static highlight.
-            .shadow(
-                color: DS.Colors.accent.opacity(
-                    isHoverGlowActive ? (isGlowBreathingIn ? 0.32 : 0.18) : 0
-                ),
-                radius: isHoverGlowActive ? (isGlowBreathingIn ? 16 : 10) : 0
-            )
-            // Hover: gradually expand to 1.03. Press: snap down to 0.97.
-            .scaleEffect(configuration.isPressed ? 0.97 : (isHoverScaleExpanded ? 1.03 : 1.0))
-            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
-            .onHover { hovering in
-                // Background color — fast snap so the button feels responsive
-                withAnimation(.easeOut(duration: 0.15)) {
-                    isHovered = hovering
+            .background(Capsule().fill(fillColor))
+            .overlay {
+                // The main button is lit from above, like a system prominent button.
+                if kind == .primary {
+                    Capsule()
+                        .fill(LinearGradient(colors: [Color.white.opacity(0.18), Color.clear], startPoint: .top, endPoint: .center))
+                        .allowsHitTesting(false)
                 }
-
-                // Scale — slow, gradual expansion (like the button is swelling)
-                withAnimation(.easeInOut(duration: hovering ? 0.6 : 0.3)) {
-                    isHoverScaleExpanded = hovering
-                }
-
-                // Glow — builds up gradually on entry, fades faster on exit
-                withAnimation(.easeInOut(duration: hovering ? 0.6 : 0.3)) {
-                    isHoverGlowActive = hovering
-                }
-
-                // Breathing glow loop — gentle pulse while hovered.
-                // The 2.5s cycle keeps it feeling organic, not mechanical.
-                if hovering {
-                    withAnimation(
-                        .easeInOut(duration: 2.5)
-                        .repeatForever(autoreverses: true)
-                    ) {
-                        isGlowBreathingIn = true
-                    }
-                } else {
-                    // Override the repeating animation with a finite one to stop cleanly
-                    withAnimation(.easeOut(duration: 0.3)) {
-                        isGlowBreathingIn = false
-                    }
-                }
-
-                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
             }
+            .contentShape(Capsule())
+            .brightness(kind == .primary ? (isPressed ? -0.08 : (isHovered ? 0.05 : 0)) : 0)
+            .scaleEffect(isPressed ? 0.97 : 1)
+            .opacity(isEnabled ? 1 : 0.4)
+            .animation(DS.Motion.press, value: isPressed)
+            .animation(DS.Motion.hover, value: isHovered)
+            .onHover { hovering in isHovered = hovering }
+            .pointerCursor(isEnabled: isEnabled)
     }
 
-    private func buttonBackgroundColor(isPressed: Bool) -> Color {
-        if isPressed {
-            // Pressed: brighten slightly beyond hover
-            return DS.Colors.accentHover.blendedWithWhite(fraction: DS.StateLayer.pressed)
-        } else if isHovered {
-            return DS.Colors.accentHover
-        } else {
-            return DS.Colors.accent
+    private var labelFont: Font {
+        switch (size, kind) {
+        case (.regular, .primary): return DS.Fonts.sans(13, weight: .semibold)
+        case (.regular, _): return DS.Fonts.control
+        case (.compact, .primary): return DS.Fonts.sans(11.5, weight: .semibold)
+        case (.compact, _): return DS.Fonts.controlCompact
+        }
+    }
+
+    private var labelColor: Color {
+        switch kind {
+        case .primary: return DS.Colors.onPointer
+        case .secondary: return DS.Colors.textPrimary
+        case .quiet: return isHovered || isPressed ? DS.Colors.textPrimary : DS.Colors.textSecondary
+        case .danger: return DS.Colors.destructiveText
+        }
+    }
+
+    private var fillColor: Color {
+        switch kind {
+        case .primary:
+            return DS.Colors.pointer
+        case .secondary:
+            if isPressed { return DS.Colors.fillPrimary }
+            return isHovered ? Color.white.opacity(0.16) : DS.Colors.fillSecondary
+        case .quiet:
+            if isPressed { return DS.Colors.fillSecondary }
+            return isHovered ? DS.Colors.fillTertiary : Color.clear
+        case .danger:
+            if isPressed { return DS.Colors.destructive.opacity(0.34) }
+            return DS.Colors.destructive.opacity(isHovered ? 0.26 : 0.18)
         }
     }
 }
 
-/// Secondary button — supporting actions, less visual weight than primary.
-/// Surface-colored background with primary text. Used for: action buttons
-/// (download, open link), embedded element buttons.
-struct DSSecondaryButtonStyle: ButtonStyle {
-    var isFullWidth: Bool = true
-
-    @State private var isHovered = false
+/// A round button that holds one symbol (close, previous, copy).
+struct TeachyIconButtonStyle: ButtonStyle {
+    var sideLength: CGFloat = 24
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 16, weight: .medium))
-            .foregroundColor(DS.Colors.textPrimary)
-            .frame(maxWidth: isFullWidth ? .infinity : nil)
-            .padding(.vertical, 12)
-            .padding(.horizontal, isFullWidth ? 0 : 16)
+        TeachyIconButtonBody(label: configuration.label, isPressed: configuration.isPressed, sideLength: sideLength)
+    }
+}
+
+private struct TeachyIconButtonBody<Label: View>: View {
+    let label: Label
+    let isPressed: Bool
+    let sideLength: CGFloat
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    var body: some View {
+        label
+            .font(.system(size: sideLength * 0.44, weight: .semibold))
+            .foregroundColor(isHovered || isPressed ? DS.Colors.textPrimary : DS.Colors.textSecondary)
+            .frame(width: sideLength, height: sideLength)
             .background(
-                Capsule()
-                    .fill(buttonBackgroundColor(isPressed: configuration.isPressed))
+                Circle().fill(isPressed ? DS.Colors.fillPrimary : (isHovered ? DS.Colors.fillSecondary : Color.clear))
             )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
-            .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
-            .onHover { hovering in
-                isHovered = hovering
-                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-    }
-
-    private func buttonBackgroundColor(isPressed: Bool) -> Color {
-        if isPressed {
-            return DS.Colors.surface4
-        } else if isHovered {
-            return DS.Colors.surface3
-        } else {
-            return DS.Colors.surface2
-        }
-    }
-}
-
-/// Tertiary/ghost button — low-emphasis actions with subtle hover background.
-/// Transparent at rest, shows surface fill on hover. Used for: navigation
-/// links, sidebar items, medium-low emphasis actions.
-struct DSTertiaryButtonStyle: ButtonStyle {
-    @State private var isHovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 16, weight: .medium))
-            .foregroundColor(
-                configuration.isPressed
-                    ? DS.Colors.accentHover
-                    : isHovered
-                        ? DS.Colors.accentText
-                        : DS.Colors.textSecondary
-            )
-            .padding(.vertical, 8)
-            .padding(.horizontal, 12)
-            .background(
-                Capsule()
-                    .fill(buttonBackgroundColor(isPressed: configuration.isPressed))
-            )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
-            .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
-            .onHover { hovering in
-                isHovered = hovering
-                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-    }
-
-    private func buttonBackgroundColor(isPressed: Bool) -> Color {
-        if isPressed {
-            return DS.Colors.surface3
-        } else if isHovered {
-            return DS.Colors.surface2
-        } else {
-            return Color.clear
-        }
-    }
-}
-
-/// Text button — the lowest-emphasis button style. No background on any
-/// state, not even hover. Only the text color changes. Used for: "restart",
-/// "skip", "cancel", and other truly minimal inline actions where a
-/// background would add too much visual weight.
-struct DSTextButtonStyle: ButtonStyle {
-    var fontSize: CGFloat = 14
-
-    @State private var isHovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: fontSize, weight: .medium))
-            .foregroundColor(
-                configuration.isPressed
-                    ? DS.Colors.textPrimary
-                    : isHovered
-                        ? DS.Colors.textPrimary
-                        : DS.Colors.textTertiary
-            )
-            .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
-            .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
-            .onHover { hovering in
-                isHovered = hovering
-                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-    }
-}
-
-/// Outlined button — medium emphasis, used where a border helps define
-/// the button's bounds. Used for: display selector, copy prompt.
-struct DSOutlinedButtonStyle: ButtonStyle {
-    var isFullWidth: Bool = true
-
-    @State private var isHovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 16, weight: .medium))
-            .foregroundColor(DS.Colors.textPrimary)
-            .frame(maxWidth: isFullWidth ? .infinity : nil)
-            .padding(.vertical, 12)
-            .padding(.horizontal, isFullWidth ? 0 : 16)
-            .background(
-                Capsule()
-                    .fill(buttonBackgroundColor(isPressed: configuration.isPressed))
-            )
-            .overlay(
-                Capsule()
-                    .stroke(
-                        borderColor(isPressed: configuration.isPressed),
-                        lineWidth: 1
-                    )
-            )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
-            .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
-            .onHover { hovering in
-                isHovered = hovering
-                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-    }
-
-    private func buttonBackgroundColor(isPressed: Bool) -> Color {
-        if isPressed {
-            return DS.Colors.surface3
-        } else if isHovered {
-            return DS.Colors.surface2
-        } else {
-            return DS.Colors.surface1
-        }
-    }
-
-    private func borderColor(isPressed: Bool) -> Color {
-        if isPressed || isHovered {
-            return DS.Colors.borderStrong
-        } else {
-            return DS.Colors.borderSubtle
-        }
-    }
-}
-
-/// Destructive button — for dangerous/irreversible actions (close session, delete).
-/// Red-tinted background that intensifies on hover and press.
-struct DSDestructiveButtonStyle: ButtonStyle {
-    @State private var isHovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 16, weight: .medium))
-            .foregroundColor(
-                isHovered || configuration.isPressed
-                    ? .white
-                    : DS.Colors.destructiveText
-            )
-            .padding(.vertical, 10)
-            .padding(.horizontal, 16)
-            .background(
-                Capsule()
-                    .fill(buttonBackgroundColor(isPressed: configuration.isPressed))
-            )
-            .overlay(
-                Capsule()
-                    .stroke(
-                        borderColor(isPressed: configuration.isPressed),
-                        lineWidth: 1
-                    )
-            )
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
-            .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
-            .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
-            .onHover { hovering in
-                isHovered = hovering
-                if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-    }
-
-    private func buttonBackgroundColor(isPressed: Bool) -> Color {
-        if isPressed {
-            return DS.Colors.destructive.opacity(0.40)
-        } else if isHovered {
-            return DS.Colors.destructive.opacity(0.30)
-        } else {
-            return DS.Colors.destructive.opacity(0.10)
-        }
-    }
-
-    private func borderColor(isPressed: Bool) -> Color {
-        if isPressed || isHovered {
-            return DS.Colors.destructive.opacity(0.40)
-        } else {
-            return DS.Colors.destructive.opacity(0.15)
-        }
-    }
-}
-
-/// Icon-only button — compact circular button for utility actions.
-/// Used for: close button (x), send message, small toolbar actions.
-struct DSIconButtonStyle: ButtonStyle {
-    var size: CGFloat = 28
-    var isDestructiveOnHover: Bool = false
-    var tooltipText: String? = nil
-
-    /// Controls horizontal alignment of the tooltip relative to the button.
-    /// Use `.leading` for buttons near the left edge of the window (tooltip extends right),
-    /// `.trailing` for buttons near the right edge (tooltip extends left),
-    /// and `.center` for buttons in the middle.
-    var tooltipAlignment: Alignment = .center
-
-    @State private var isHovered = false
-    @State private var isTooltipVisible = false
-    @State private var tooltipShowWorkItem: DispatchWorkItem? = nil
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: size * 0.43, weight: .semibold))
-            .foregroundColor(iconColor(isPressed: configuration.isPressed))
-            .frame(width: size, height: size)
-            .background(
-                Circle()
-                    .fill(circleBackgroundColor(isPressed: configuration.isPressed))
-            )
-            .overlay(
-                Circle()
-                    .stroke(circleBorderColor(isPressed: configuration.isPressed), lineWidth: 1)
-            )
-            .scaleEffect(configuration.isPressed ? 0.93 : 1.0)
-            .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
-            .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
             .contentShape(Circle())
-            // Cursor change via AppKit cursor rects — more reliable than NSCursor.push/pop
-            // because cursor rects are managed at the window level and don't conflict
-            // with SwiftUI's internal cursor handling.
-            .overlay(PointerCursorView())
-            .onHover { hovering in
-                isHovered = hovering
-                // Show the tooltip after a delay (like native tooltips), hide immediately
-                tooltipShowWorkItem?.cancel()
-                if hovering {
-                    let workItem = DispatchWorkItem {
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            isTooltipVisible = true
-                        }
-                    }
-                    tooltipShowWorkItem = workItem
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: workItem)
-                } else {
-                    withAnimation(.easeOut(duration: 0.1)) {
-                        isTooltipVisible = false
-                    }
-                }
-            }
-            // Custom styled tooltip — positioned above the button with enough gap
-            // to not overlap the button. Horizontally aligned based on tooltipAlignment
-            // so tooltips near window edges don't clip outside the visible area.
-            // Uses .allowsHitTesting(false) so the tooltip doesn't interfere
-            // with the button's hover state.
-            .overlay(
-                Group {
-                    if isTooltipVisible, let text = tooltipText, !text.isEmpty {
-                        Text(text)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.Colors.textSecondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(DS.Colors.surface3.opacity(0.85))
-                            )
-                            .overlay(
-                                ZStack {
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(Color.white.opacity(0.20), lineWidth: 0.8)
+            .scaleEffect(isPressed ? 0.94 : 1)
+            .opacity(isEnabled ? 1 : 0.4)
+            .animation(DS.Motion.press, value: isPressed)
+            .animation(DS.Motion.hover, value: isHovered)
+            .onHover { hovering in isHovered = hovering }
+            .pointerCursor(isEnabled: isEnabled)
+    }
+}
 
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .trim(from: 0, to: 0.5)
-                                        .stroke(
-                                            LinearGradient(
-                                                colors: [
-                                                    Color.white.opacity(0.10),
-                                                    Color.white.opacity(0.02)
-                                                ],
-                                                startPoint: .top,
-                                                endPoint: .bottom
-                                            ),
-                                            lineWidth: 0.8
-                                        )
-                                }
-                            )
-                            .shadow(color: Color.black.opacity(0.42), radius: 14, x: 0, y: 8)
-                            .shadow(color: Color.black.opacity(0.26), radius: 4, x: 0, y: 2)
-                            .fixedSize()
-                            .offset(y: -(size / 2 + 20))
-                            .allowsHitTesting(false)
-                            .transition(.opacity)
-                    }
-                },
-                alignment: tooltipAlignment
-            )
+/// A text button in the tint, the way macOS and iOS draw an action inside a
+/// row (Rename, Open folder, Show all). Pass a colour for the exceptions
+/// (red for Delete, secondary for something that should recede).
+struct TeachyLinkButtonStyle: ButtonStyle {
+    var color: Color? = nil
+    var font: Font = DS.Fonts.caption
+
+    func makeBody(configuration: Configuration) -> some View {
+        TeachyLinkButtonBody(label: configuration.label, isPressed: configuration.isPressed, color: color, font: font)
+    }
+}
+
+private struct TeachyLinkButtonBody<Label: View>: View {
+    let label: Label
+    let isPressed: Bool
+    let color: Color?
+    let font: Font
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    var body: some View {
+        label
+            .font(font)
+            .foregroundColor(color ?? DS.Colors.pointer)
+            .brightness(isHovered ? 0.12 : 0)
+            .contentShape(Rectangle())
+            .opacity(isEnabled ? (isPressed ? 0.55 : 1) : 0.4)
+            .animation(DS.Motion.hover, value: isHovered)
+            .onHover { hovering in isHovered = hovering }
+            .pointerCursor(isEnabled: isEnabled)
+    }
+}
+
+extension View {
+    /// The Teachy button. `kind` is how loud it is, `size` is how tall.
+    func teachyButton(_ kind: TeachyButtonKind = .secondary, size: TeachyButtonSize = .regular, isFullWidth: Bool = false) -> some View {
+        buttonStyle(TeachyButtonStyle(kind: kind, size: size, isFullWidth: isFullWidth))
     }
 
-    private func iconColor(isPressed: Bool) -> Color {
-        if isDestructiveOnHover && (isHovered || isPressed) {
-            return .white
-        }
-        if isPressed {
-            return DS.Colors.textPrimary
-        } else if isHovered {
-            return DS.Colors.textPrimary
-        } else {
-            return DS.Colors.textSecondary
-        }
+    /// A round one-symbol button.
+    func teachyIconButton(sideLength: CGFloat = 24) -> some View {
+        buttonStyle(TeachyIconButtonStyle(sideLength: sideLength))
     }
 
-    private func circleBackgroundColor(isPressed: Bool) -> Color {
-        if isDestructiveOnHover {
-            if isPressed {
-                return DS.Colors.destructive.opacity(0.40)
-            } else if isHovered {
-                return DS.Colors.destructive.opacity(0.30)
-            } else {
-                return DS.Colors.surface2
-            }
-        }
-        if isPressed {
-            return DS.Colors.surface4
-        } else if isHovered {
-            return DS.Colors.surface3
-        } else {
-            return DS.Colors.surface2
-        }
+    /// A text button in the tint. Pass `color` for red or a quieter grey.
+    func teachyLinkButton(color: Color? = nil, font: Font = DS.Fonts.caption) -> some View {
+        buttonStyle(TeachyLinkButtonStyle(color: color, font: font))
+    }
+}
+
+// MARK: - Glass
+
+private struct TeachyIsDrawnIntoPictureKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Set to true on a view that is drawn into a picture inside the running app
+    /// (`ImageRenderer` for video export, history thumbnails) instead of a window.
+    /// Glass has nothing behind it to sample there, and AppKit-backed pieces
+    /// cannot be drawn at all, so tiles go solid and the cursor overlay is left out.
+    var teachyIsDrawnIntoPicture: Bool {
+        get { self[TeachyIsDrawnIntoPictureKey.self] }
+        set { self[TeachyIsDrawnIntoPictureKey.self] = newValue }
+    }
+}
+
+enum TeachyGlass {
+    /// Off-screen renders (the PNG harnesses in scripts/tests) have nothing
+    /// behind them for glass to sample, so they draw a frosted stand-in.
+    /// The harnesses run with the activation policy `.prohibited`; the app never does.
+    static var usesStandIn: Bool {
+        guard let application = NSApp else { return true }
+        return application.activationPolicy() == .prohibited
     }
 
-    private func circleBorderColor(isPressed: Bool) -> Color {
-        if isDestructiveOnHover && (isHovered || isPressed) {
-            return DS.Colors.destructive.opacity(0.30)
-        }
-        if isPressed || isHovered {
-            return DS.Colors.borderStrong
+    /// How much the glass is dimmed. Teachy's labels are white, so its glass
+    /// has to stay dark enough to read over a white document. A black layer of
+    /// this opacity sits on the glass, under the content. (A black `tint` on the
+    /// glass itself was tried and makes no visible difference.) The big panel
+    /// holds small secondary text, so it is dimmed a little more than a tile.
+    static let tileDimming: Double = 0.42
+    static let panelDimming: Double = 0.5
+    /// The closed notch holds nothing but the pointer and a few bars, which are
+    /// bright and bold, so it is dimmed least: it reads as a clear pane at rest.
+    static let restingDimming: Double = 0.12
+
+    /// What the stand-in and the pre-macOS-26 material are filled with.
+    static let standInFill = Color(white: 0.13).opacity(0.94)
+}
+
+/// System glass in any shape, as a background layer. The notch panel uses it
+/// with the notch's own silhouette; tiles use `.teachyTile()`, which wraps the
+/// same decisions for a rounded rectangle or a capsule.
+struct TeachyGlassSurface<SurfaceShape: Shape>: View {
+    let shape: SurfaceShape
+    var dimming: Double = TeachyGlass.panelDimming
+    /// `.clear` is the see-through glass, for a surface that holds little and
+    /// should read as a pane. `.regular` frosts what is behind it.
+    var isClear: Bool = false
+    /// What the surface becomes when it cannot be glass (Reduce Transparency,
+    /// Increase Contrast, a picture).
+    var solidFill: Color = DS.Colors.notchBlack
+
+    @Environment(\.accessibilityReduceTransparency) private var isReduceTransparencyEnabled
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.teachyIsDrawnIntoPicture) private var isDrawnIntoPicture
+
+    var body: some View {
+        if isReduceTransparencyEnabled || colorSchemeContrast == .increased || isDrawnIntoPicture {
+            shape.fill(solidFill)
+        } else if TeachyGlass.usesStandIn {
+            shape.fill(TeachyGlass.standInFill)
+        } else if #available(macOS 26.0, *) {
+            Color.clear
+                .glassEffect(isClear ? .clear : .regular, in: shape)
+                .overlay(shape.fill(Color.black.opacity(dimming)))
         } else {
-            return DS.Colors.borderSubtle.opacity(0.5)
+            shape.fill(.ultraThinMaterial)
+                .overlay(shape.fill(Color.black.opacity(dimming)))
         }
     }
 }
 
-// MARK: - Glass Card
+/// A surface that floats over the person's screen: job cards, the question
+/// card, the caption bar, pills. System glass, always in its dark form so it
+/// pairs with the black notch and white labels stay legible over any app.
+struct TeachyTileModifier: ViewModifier {
+    var cornerRadius: CGFloat = DS.CornerRadius.tile
+    /// An extra coloured edge, for a tile that is waiting on the person (orange).
+    var edgeColor: Color = .clear
 
-/// Native-material card background, two-tier system so the whole panel doesn't
-/// flatten into one undifferentiated blur:
-/// - `prominent: true` — hero cards (`.ultraThinMaterial`, colored tint, glow shadow)
-/// - `prominent: false` — standard list rows (`.regularMaterial`, near-neutral tint, no shadow)
-struct GlassCardModifier: ViewModifier {
-    var cornerRadius: CGFloat = 14
-    var tint: Color = DS.Colors.textPrimary
-    var prominent: Bool = false
+    @Environment(\.accessibilityReduceTransparency) private var isReduceTransparencyEnabled
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.teachyIsDrawnIntoPicture) private var isDrawnIntoPicture
+
+    private var tileShape: AnyShape {
+        cornerRadius.isInfinite
+            ? AnyShape(Capsule())
+            : AnyShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+
+    private var tileInsettableShape: some InsettableShape {
+        RoundedRectangle(cornerRadius: cornerRadius.isInfinite ? 999 : cornerRadius, style: .continuous)
+    }
+
+    func body(content: Content) -> some View {
+        surfaced(content)
+            .overlay(tileInsettableShape.strokeBorder(edgeColor, lineWidth: 1.5).allowsHitTesting(false))
+            .environment(\.colorScheme, .dark)
+    }
+
+    @ViewBuilder
+    private func surfaced(_ content: Content) -> some View {
+        if isReduceTransparencyEnabled || colorSchemeContrast == .increased || isDrawnIntoPicture {
+            content
+                .background(tileShape.fill(DS.Colors.surface1))
+                .overlay(tileInsettableShape.strokeBorder(DS.Colors.hairlineStrong, lineWidth: 1).allowsHitTesting(false))
+        } else if TeachyGlass.usesStandIn {
+            content
+                .background(tileShape.fill(TeachyGlass.standInFill))
+                .overlay(
+                    tileInsettableShape
+                        .strokeBorder(
+                            LinearGradient(colors: [Color.white.opacity(0.24), Color.white.opacity(0.06)], startPoint: .top, endPoint: .bottom),
+                            lineWidth: 1
+                        )
+                        .allowsHitTesting(false)
+                )
+        } else if #available(macOS 26.0, *) {
+            // The dimming layer keeps white labels readable when the tile sits over a white document.
+            content
+                .background(tileShape.fill(Color.black.opacity(TeachyGlass.tileDimming)))
+                .glassEffect(.regular, in: tileShape)
+        } else {
+            content
+                .background(tileShape.fill(Color.black.opacity(TeachyGlass.tileDimming)))
+                .background(tileShape.fill(.ultraThinMaterial))
+                .overlay(
+                    tileInsettableShape
+                        .strokeBorder(
+                            LinearGradient(colors: [Color.white.opacity(0.24), Color.white.opacity(0.06)], startPoint: .top, endPoint: .bottom),
+                            lineWidth: 0.75
+                        )
+                        .allowsHitTesting(false)
+                )
+        }
+    }
+}
+
+/// A recessed area inside a surface: a text field, a quoted command.
+struct TeachyWellModifier: ViewModifier {
+    var cornerRadius: CGFloat = DS.CornerRadius.well
+    var isEdged: Bool = false
 
     func body(content: Content) -> some View {
         content
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(prominent ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(.regularMaterial))
-                    .environment(\.colorScheme, .dark)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .fill(tint.opacity(prominent ? 0.10 : 0.03))
-                    )
+                    .fill(DS.Colors.fillTertiary)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(tint.opacity(prominent ? 0.35 : 0.08), lineWidth: prominent ? 1 : 0.75)
+                    .strokeBorder(isEdged ? DS.Colors.hairline : Color.clear, lineWidth: 1)
             )
-            .shadow(color: prominent ? tint.opacity(0.20) : .clear, radius: prominent ? 12 : 0, x: 0, y: 4)
+    }
+}
+
+/// The container of a grouped list, as in System Settings: the rows of one
+/// section in one rounded rectangle, with dividers between them.
+/// Put the rows in a `VStack(spacing: 0)` and apply this to the stack.
+struct TeachyGroupModifier: ViewModifier {
+    var cornerRadius: CGFloat = DS.CornerRadius.group
+    var horizontalPadding: CGFloat = 14
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, horizontalPadding)
+            // Rows that end with their own divider (SettingsDisclosureCard) would
+            // leave a line along the bottom edge. Pulling the bottom in by one
+            // point puts that last divider outside the clip.
+            .padding(.bottom, -1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(DS.Colors.groupFill)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+}
+
+/// One choice among several (a voice, a microphone). The chosen one takes the
+/// tint: a tinted fill and a tinted edge.
+struct TeachyOptionModifier: ViewModifier {
+    var isSelected: Bool
+    var cornerRadius: CGFloat = DS.CornerRadius.control
+
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(isSelected ? DS.Colors.pointer.opacity(0.18) : (isHovered ? DS.Colors.fillSecondary : DS.Colors.fillTertiary))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(isSelected ? DS.Colors.pointer : Color.clear, lineWidth: 1.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .animation(DS.Motion.hover, value: isHovered)
+            .animation(DS.Motion.standard, value: isSelected)
+            .onHover { hovering in isHovered = hovering }
     }
 }
 
 extension View {
-    /// Applies a native-material glass card background. See `GlassCardModifier`
-    /// for the prominent/standard tier distinction.
-    func glassCard(cornerRadius: CGFloat = 14, tint: Color = DS.Colors.textPrimary, prominent: Bool = false) -> some View {
-        modifier(GlassCardModifier(cornerRadius: cornerRadius, tint: tint, prominent: prominent))
-    }
-}
-
-// MARK: - Convenience View Extensions
-
-extension View {
-    /// Applies the primary button style (accent-colored CTA).
-    func dsPrimaryButtonStyle(isFullWidth: Bool = true) -> some View {
-        self.buttonStyle(DSPrimaryButtonStyle(isFullWidth: isFullWidth))
+    /// System glass for something that floats over the screen. See `TeachyTileModifier`.
+    func teachyTile(cornerRadius: CGFloat = DS.CornerRadius.tile, edgeColor: Color = .clear) -> some View {
+        modifier(TeachyTileModifier(cornerRadius: cornerRadius, edgeColor: edgeColor))
     }
 
-    /// Applies the secondary button style (surface-colored supporting action).
-    func dsSecondaryButtonStyle(isFullWidth: Bool = true) -> some View {
-        self.buttonStyle(DSSecondaryButtonStyle(isFullWidth: isFullWidth))
+    /// A recessed well. See `TeachyWellModifier`.
+    func teachyWell(cornerRadius: CGFloat = DS.CornerRadius.well, isEdged: Bool = false) -> some View {
+        modifier(TeachyWellModifier(cornerRadius: cornerRadius, isEdged: isEdged))
     }
 
-    /// Applies the tertiary/ghost button style (subtle hover background).
-    func dsTertiaryButtonStyle() -> some View {
-        self.buttonStyle(DSTertiaryButtonStyle())
+    /// The rounded container of a grouped list. See `TeachyGroupModifier`.
+    func teachyGroup(cornerRadius: CGFloat = DS.CornerRadius.group, horizontalPadding: CGFloat = 14) -> some View {
+        modifier(TeachyGroupModifier(cornerRadius: cornerRadius, horizontalPadding: horizontalPadding))
     }
 
-    /// Applies the text-only button style (no background ever, just color change).
-    func dsTextButtonStyle(fontSize: CGFloat = 14) -> some View {
-        self.buttonStyle(DSTextButtonStyle(fontSize: fontSize))
-    }
-
-    /// Applies the outlined button style (bordered, medium emphasis).
-    func dsOutlinedButtonStyle(isFullWidth: Bool = true) -> some View {
-        self.buttonStyle(DSOutlinedButtonStyle(isFullWidth: isFullWidth))
-    }
-
-    /// Applies the destructive button style (red-tinted danger action).
-    func dsDestructiveButtonStyle() -> some View {
-        self.buttonStyle(DSDestructiveButtonStyle())
-    }
-
-    /// Applies the icon-only button style (compact circle).
-    /// `tooltipAlignment` controls where the tooltip sits horizontally relative to the button:
-    /// `.leading` for left-edge buttons, `.trailing` for right-edge buttons, `.center` for middle.
-    func dsIconButtonStyle(size: CGFloat = 28, isDestructiveOnHover: Bool = false, tooltip: String? = nil, tooltipAlignment: Alignment = .center) -> some View {
-        self.buttonStyle(DSIconButtonStyle(size: size, isDestructiveOnHover: isDestructiveOnHover, tooltipText: tooltip, tooltipAlignment: tooltipAlignment))
+    /// One choice among several. See `TeachyOptionModifier`.
+    func teachyOption(isSelected: Bool, cornerRadius: CGFloat = DS.CornerRadius.control) -> some View {
+        modifier(TeachyOptionModifier(isSelected: isSelected, cornerRadius: cornerRadius))
     }
 
     /// Attaches the shared pointing-hand cursor treatment used across interactive controls.
     /// Disabled controls can opt out so they keep the default arrow cursor.
     func pointerCursor(isEnabled: Bool = true) -> some View {
-        self.overlay {
-            if isEnabled {
+        modifier(PointerCursorModifier(isEnabled: isEnabled))
+    }
+}
+
+private struct PointerCursorModifier: ViewModifier {
+    let isEnabled: Bool
+    @Environment(\.teachyIsDrawnIntoPicture) private var isDrawnIntoPicture
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            // The cursor view is AppKit; a picture renderer cannot draw it.
+            if isEnabled && !isDrawnIntoPicture {
                 PointerCursorView()
             }
         }
     }
 }
 
-// MARK: - Buddy Composer Visual Style
+// MARK: - Dividers and headings
 
-enum BuddyComposerVisualStyle {
-    static let waveformLeadingColor = Color(hex: "#F3FBFF")
-    static let waveformTrailingColor = Color(hex: "#8FD2FF")
-    static let waveformGlowColor = Color(hex: "#AEE3FF")
+/// The divider between rows of a group.
+struct TeachyRule: View {
+    var body: some View {
+        Rectangle()
+            .fill(DS.Colors.hairline)
+            .frame(height: 1)
+    }
+}
+
+/// The heading above a group ("Settings", "Routines"), with an optional count
+/// or state beside it ("3", "1 running").
+struct TeachySectionTitle: View {
+    let title: String
+    var detail: String? = nil
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Text(title)
+                .font(DS.Fonts.title)
+                .foregroundColor(DS.Colors.textPrimary)
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(DS.Fonts.sans(12).monospacedDigit())
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+// MARK: - The pointer mark
+
+/// Teachy's pointer, drawn small: the same tilted triangle that moves on screen.
+/// It is the brand mark, and in a list it marks what is live.
+struct TeachyPointerShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let sideLength = min(rect.width, rect.height)
+        let triangleHeight = sideLength * sqrt(3.0) / 2.0
+        path.move(to: CGPoint(x: rect.midX, y: rect.midY - triangleHeight / 1.5))
+        path.addLine(to: CGPoint(x: rect.midX - sideLength / 2, y: rect.midY + triangleHeight / 3))
+        path.addLine(to: CGPoint(x: rect.midX + sideLength / 2, y: rect.midY + triangleHeight / 3))
+        path.closeSubpath()
+        return path.applying(
+            CGAffineTransform(translationX: rect.midX, y: rect.midY)
+                .rotated(by: -35 * .pi / 180)
+                .translatedBy(x: -rect.midX, y: -rect.midY)
+        )
+    }
+}
+
+// MARK: - Status mark
+
+/// What state a job, a routine or a step is in. An SF Symbol each, so the
+/// shape carries the meaning and colour is never the only signal.
+enum TeachyStatusKind {
+    /// Teachy is working on it right now: the pointer, in the person's colour.
+    case live
+    /// Finished: a green tick.
+    case done
+    /// Waiting on the person: an orange exclamation mark.
+    case needsYou
+    /// Failed: a red cross.
+    case failed
+    /// Not started yet: an empty circle.
+    case waiting
+    /// Stopped or paused: a grey minus.
+    case stopped
+}
+
+struct TeachyStatusMark: View {
+    let kind: TeachyStatusKind
+    var sideLength: CGFloat = 14
+
+    var body: some View {
+        Group {
+            switch kind {
+            case .live:
+                TeachyPointerShape()
+                    .fill(DS.Colors.pointer)
+                    .padding(sideLength * 0.1)
+            case .done:
+                symbol("checkmark.circle.fill", color: DS.Colors.success)
+            case .needsYou:
+                symbol("exclamationmark.circle.fill", color: DS.Colors.warning)
+            case .failed:
+                symbol("xmark.circle.fill", color: DS.Colors.destructive)
+            case .waiting:
+                Image(systemName: "circle")
+                    .font(.system(size: sideLength * 0.93, weight: .medium))
+                    .foregroundStyle(DS.Colors.textQuaternary)
+            case .stopped:
+                symbol("minus.circle.fill", color: DS.Colors.surface4)
+            }
+        }
+        .frame(width: sideLength, height: sideLength)
+        .accessibilityHidden(true)
+    }
+
+    /// A filled circle in the state's colour with its glyph knocked out in white,
+    /// the way macOS draws them in notifications and Settings.
+    private func symbol(_ systemName: String, color: Color) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: sideLength * 0.93, weight: .medium))
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(Color.white, color)
+    }
+}
+
+// MARK: - Switch
+
+/// The system switch, drawn here so it keeps its colour in a panel that is not
+/// the key window. On is the tint.
+struct TeachySwitch: View {
+    let isOn: Bool
+
+    var body: some View {
+        Capsule()
+            .fill(isOn ? DS.Colors.pointer : DS.Colors.surface3)
+            .frame(width: 36, height: 22)
+            .overlay(alignment: isOn ? .trailing : .leading) {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 18, height: 18)
+                    .shadow(color: Color.black.opacity(0.28), radius: 1.5, y: 1)
+                    .padding(2)
+            }
+            .animation(DS.Motion.standard, value: isOn)
+    }
+}
+
+// MARK: - Slider
+
+/// The system slider, drawn here so it keeps its tint in a panel that is not
+/// the key window. The knob follows the pointer one to one, and a click on the
+/// track moves the knob there, as the system's does.
+struct TeachySlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    var onEditingChanged: (Bool) -> Void
+
+    @State private var isDragging = false
+
+    /// Same shape as the system `Slider(value:in:)`, so one swaps for the other.
+    init(value: Binding<Double>, in range: ClosedRange<Double>, onEditingChanged: @escaping (Bool) -> Void = { _ in }) {
+        self._value = value
+        self.range = range
+        self.onEditingChanged = onEditingChanged
+    }
+
+    private let trackHeight: CGFloat = 4
+    private let knobDiameter: CGFloat = 16
+
+    var body: some View {
+        GeometryReader { geometry in
+            let travelWidth = max(1, geometry.size.width - knobDiameter)
+            let rangeLength = range.upperBound - range.lowerBound
+            let filledFraction = rangeLength > 0 ? CGFloat((value - range.lowerBound) / rangeLength) : 0
+            let knobLeadingOffset = travelWidth * min(max(filledFraction, 0), 1)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(DS.Colors.fillSecondary)
+                    .frame(height: trackHeight)
+                Capsule()
+                    .fill(DS.Colors.pointer)
+                    .frame(width: knobLeadingOffset + knobDiameter / 2, height: trackHeight)
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: knobDiameter, height: knobDiameter)
+                    .shadow(color: Color.black.opacity(0.3), radius: 1.5, y: 1)
+                    .scaleEffect(isDragging ? 1.1 : 1)
+                    .offset(x: knobLeadingOffset)
+                    .animation(DS.Motion.press, value: isDragging)
+            }
+            .frame(height: knobDiameter)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { dragValue in
+                        if !isDragging {
+                            isDragging = true
+                            onEditingChanged(true)
+                        }
+                        let pointerFraction = min(max((dragValue.location.x - knobDiameter / 2) / travelWidth, 0), 1)
+                        value = range.lowerBound + Double(pointerFraction) * rangeLength
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                        onEditingChanged(false)
+                    }
+            )
+        }
+        .frame(height: knobDiameter)
+        .pointerCursor()
+        .accessibilityRepresentation {
+            Slider(value: $value, in: range)
+        }
+    }
+}
+
+// MARK: - Key cap
+
+/// A key on the keyboard, drawn as a key: a lit top face over a darker front edge.
+struct KeyboardKeyLabel: View {
+    let text: String
+    /// Larger, for the one place a shortcut is the headline.
+    var isProminent: Bool = false
+
+    private var keyShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: isProminent ? 7 : DS.CornerRadius.key, style: .continuous)
+    }
+
+    var body: some View {
+        Text(text)
+            .font(isProminent ? DS.Fonts.sans(13, weight: .medium) : DS.Fonts.key)
+            .foregroundColor(DS.Colors.textPrimary)
+            .padding(.horizontal, isProminent ? 9 : 6)
+            .padding(.top, isProminent ? 4 : 2)
+            .padding(.bottom, isProminent ? 5 : 3)
+            .background(keyShape.fill(DS.Colors.surface4))
+            .overlay(
+                // Light catches the top edge of the key.
+                keyShape.strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.28), Color.white.opacity(0.04)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+            )
+            // The front edge of the key, showing below the face.
+            .padding(.bottom, 1.5)
+            .background(keyShape.fill(DS.Colors.surface2))
+    }
 }
 
 // MARK: - Pointer Cursor (AppKit Bridge)

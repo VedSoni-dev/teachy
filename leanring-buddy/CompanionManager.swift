@@ -31,12 +31,9 @@ enum ClickyCursorColor: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     var displayColor: Color {
-        switch self {
-        case .red: return Color(hex: "#FF4D4D")
-        case .blue: return Color(hex: "#3380FF")
-        case .yellow: return Color(hex: "#FFD60A")
-        case .green: return Color(hex: "#30D158")
-        }
+        // The hex values live in the design system, which also reads the chosen
+        // colour for the marks in the panel, so the two cannot drift apart.
+        DS.Colors.pointerColor(named: rawValue)
     }
 }
 

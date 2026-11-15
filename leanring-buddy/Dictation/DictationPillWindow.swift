@@ -48,44 +48,81 @@ private struct DictationPillView: View {
         return text.count > 70 ? "…" + text.suffix(70) : text
     }
 
+    /// The names of the keys of the dictation shortcut, one per key cap.
+    private var dictationShortcutKeyNames: [String] {
+        DictationShortcut.current().map { PushToTalkShortcutKeys.displayName(forKeyCode: $0) }
+    }
+
     var body: some View {
         HStack(spacing: DS.Spacing.sm) {
             if isListening {
-                Circle()
-                    .fill(DS.Colors.destructive)
-                    .frame(width: 8, height: 8)
-                    .scaleEffect(1 + min(model.level * 8, 0.6))
-                    .animation(.easeOut(duration: DS.Animation.fast), value: model.level)
+                DictationMicrophoneLevelMeter(level: model.level)
             } else if model.mode == .working {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(DS.Colors.textSecondary)
+                TeachyStatusMark(kind: .live)
             }
 
             Text(title)
-                .font(.system(size: 12, weight: .semibold))
+                .font(DS.Fonts.controlCompact)
                 .foregroundColor(DS.Colors.textPrimary)
                 .fixedSize()
 
             if isListening, !liveTail.isEmpty {
                 Text(liveTail)
-                    .font(.system(size: 12))
+                    .font(DS.Fonts.caption)
                     .foregroundColor(DS.Colors.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.head)
             } else if model.mode == .handsFree {
-                Text("double-tap \(DictationShortcut.current().map { PushToTalkShortcutKeys.displayName(forKeyCode: $0) }.joined(separator: " + ")) to stop")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
-                    .fixedSize()
+                HStack(spacing: DS.Spacing.xs) {
+                    Text("double-tap")
+                    ForEach(Array(dictationShortcutKeyNames.enumerated()), id: \.offset) { _, dictationShortcutKeyName in
+                        KeyboardKeyLabel(text: dictationShortcutKeyName)
+                    }
+                    Text("to stop")
+                }
+                .font(DS.Fonts.caption)
+                .foregroundColor(DS.Colors.textSecondary)
+                .fixedSize()
             }
         }
         .padding(.horizontal, DS.Spacing.lg)
         .padding(.vertical, DS.Spacing.sm)
-        .background(Capsule().fill(DS.Colors.background))
-        .overlay(Capsule().strokeBorder(DS.Colors.borderSubtle, lineWidth: 1))
+        .teachyTile(cornerRadius: DS.CornerRadius.pill)
         .frame(maxWidth: DictationPillController.maximumWidth)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// The open microphone, drawn as four bars that rise with the input level,
+/// in the pointer colour (Teachy's one tint).
+private struct DictationMicrophoneLevelMeter: View {
+    /// The raw input level from the dictation session (quiet speech is around 0.05).
+    let level: Double
+
+    /// How far each bar rises compared with the tallest one, so the meter has a shape.
+    private let barHeightShares: [Double] = [0.55, 1.0, 0.75, 0.45]
+    private let restingBarHeight: CGFloat = 3
+    private let tallestBarHeight: CGFloat = 12
+
+    /// The same gain the pill has always applied to the level, capped at full height.
+    private var normalizedLevel: Double {
+        min(max(level * 8, 0), 1)
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(Array(barHeightShares.enumerated()), id: \.offset) { _, barHeightShare in
+                Capsule()
+                    .fill(DS.Colors.pointer)
+                    .frame(
+                        width: 2,
+                        height: restingBarHeight + (tallestBarHeight - restingBarHeight) * CGFloat(normalizedLevel * barHeightShare)
+                    )
+            }
+        }
+        .frame(height: tallestBarHeight)
+        .animation(.easeOut(duration: DS.Animation.fast), value: level)
+        .accessibilityHidden(true)
     }
 }
 

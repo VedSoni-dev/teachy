@@ -186,6 +186,8 @@ struct BlueCursorView: View {
 
     private let navigationBubbleMaxWidth: CGFloat = 280
     private let screenEdgePadding: CGFloat = 12
+    /// The corner radius of the small tiles of text that sit next to the pointer.
+    private let pointerBubbleCornerRadius: CGFloat = 10
 
     var body: some View {
         ZStack {
@@ -209,15 +211,11 @@ struct BlueCursorView: View {
             // Welcome speech bubble (first launch only)
             if isCursorOnThisScreen && showWelcome && !welcomeText.isEmpty {
                 Text(welcomeText)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(cursorAccentColor)
-                            .shadow(color: cursorAccentColor.opacity(0.5), radius: 6, x: 0, y: 0)
-                    )
+                    .font(DS.Fonts.voice)
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .teachyTile(cornerRadius: pointerBubbleCornerRadius)
                     .fixedSize()
                     .overlay(
                         GeometryReader { geo in
@@ -251,15 +249,11 @@ struct BlueCursorView: View {
             // Onboarding prompt — "press control + option and say hi" streamed after video ends
             if isCursorOnThisScreen && companionManager.showOnboardingPrompt && !companionManager.onboardingPromptText.isEmpty {
                 Text(companionManager.onboardingPromptText)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(cursorAccentColor)
-                            .shadow(color: cursorAccentColor.opacity(0.5), radius: 6, x: 0, y: 0)
-                    )
+                    .font(DS.Fonts.voice)
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .teachyTile(cornerRadius: pointerBubbleCornerRadius)
                     .fixedSize()
                     .overlay(
                         GeometryReader { geo in
@@ -277,26 +271,18 @@ struct BlueCursorView: View {
             }
 
             // Navigation pointer bubble — shown when buddy arrives at a detected element.
-            // Pops in with a scale-bounce (0.5x → 1.0x spring) and a bright initial
-            // glow that settles, creating a "materializing" effect.
+            // Pops in with a scale-bounce (0.5x → 1.0x spring).
             if buddyNavigationMode == .pointingAtTarget && !navigationBubbleText.isEmpty {
                 Text(navigationBubbleText)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white)
+                    .font(DS.Fonts.voice)
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .lineSpacing(3)
                     .lineLimit(8)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: navigationBubbleMaxWidth, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(cursorAccentColor)
-                            .shadow(
-                                color: cursorAccentColor.opacity(0.5 + (1.0 - navigationBubbleScale) * 1.0),
-                                radius: 6 + (1.0 - navigationBubbleScale) * 16,
-                                x: 0, y: 0
-                            )
-                    )
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .teachyTile(cornerRadius: pointerBubbleCornerRadius)
                     .fixedSize(horizontal: false, vertical: true)
                     .overlay(
                         GeometryReader { geo in

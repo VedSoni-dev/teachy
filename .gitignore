@@ -21,3 +21,6 @@ dist/
 dist-installers/
 **/bin/
 **/obj/
+
+# launch films (Remotion project, renders): kept out of the repo
+launch/

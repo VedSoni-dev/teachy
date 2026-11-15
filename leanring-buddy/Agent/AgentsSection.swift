@@ -2,7 +2,7 @@
 //  AgentsSection.swift
 //  leanring-buddy
 //
-//  The Home tab's agents cards, wired to the app. Mount it with `AgentsSection()`.
+//  The Home tab's agents lists, wired to the app. Mount it with `AgentsSection()`.
 //  The drawing is in AgentsSectionContent.swift.
 //
 

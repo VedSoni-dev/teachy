@@ -205,14 +205,16 @@ struct BackgroundAgentSideDockView: View {
         }
     }
 
+    /// The mascot is Teachy's pointer, so it is the pointer colour until the job
+    /// ends: green when it is done, red when it failed.
     private var mascotDockAccentColor: Color {
         switch mascotDockVisualState {
         case .idle, .working:
             return cursorAccentColor
         case .completed:
-            return BackgroundAgentSideDockColors.successGreen
+            return DS.Colors.success
         case .failed:
-            return BackgroundAgentSideDockColors.failureOrange
+            return DS.Colors.destructive
         }
     }
 
@@ -279,25 +281,14 @@ struct BackgroundAgentSideDockView: View {
             ZStack {
                 if mascotDockVisualState == .completed {
                     Circle()
-                        .stroke(
-                            BackgroundAgentSideDockColors.successGreen.opacity(completionGlowPulseOpacity),
-                            lineWidth: 3
-                        )
-                        .frame(width: 50, height: 50)
-                        .blur(radius: 1)
-
-                    Circle()
-                        .fill(BackgroundAgentSideDockColors.successGreen.opacity(0.18))
+                        .stroke(mascotDockAccentColor.opacity(completionGlowPulseOpacity), lineWidth: 2)
                         .frame(width: 38, height: 38)
                 }
 
                 if mascotDockVisualState == .failed {
                     Circle()
-                        .stroke(
-                            BackgroundAgentSideDockColors.failureOrange.opacity(0.55),
-                            lineWidth: 2.5
-                        )
-                        .frame(width: 48, height: 48)
+                        .stroke(mascotDockAccentColor.opacity(0.55), lineWidth: 2)
+                        .frame(width: 38, height: 38)
                 }
 
                 if isAgentActivelyWorking {
@@ -310,35 +301,21 @@ struct BackgroundAgentSideDockView: View {
                     .fill(mascotDockAccentColor)
                     .frame(width: 18, height: 18)
                     .rotationEffect(.degrees(-90))
-                    .shadow(color: mascotDockAccentColor.opacity(mascotDockVisualState == .completed ? 1.0 : 0.85), radius: mascotDockGlowRadius, x: 0, y: 0)
                     .offset(y: mascotBobOffset)
 
                 if mascotDockVisualState == .completed {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(BackgroundAgentSideDockColors.successGreen)
-                        .background(Circle().fill(Color.black.opacity(0.85)))
-                        .offset(x: 14, y: -14)
+                    TeachyStatusMark(kind: .done)
+                        .offset(x: 14, y: -17)
                 }
 
                 if mascotDockVisualState == .failed {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(BackgroundAgentSideDockColors.failureOrange)
-                        .offset(x: 14, y: -14)
+                    TeachyStatusMark(kind: .failed)
+                        .offset(x: 14, y: -17)
                 }
             }
             .scaleEffect(completionBounceScale)
             .frame(width: 44, height: 52)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(mascotDockBackgroundFill)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(mascotDockBorderColor, lineWidth: mascotDockBorderWidth)
-                    )
-            )
-            .shadow(color: mascotDockAccentColor.opacity(mascotDockShadowOpacity), radius: mascotDockShadowRadius, x: -2, y: 0)
+            .teachyTile(cornerRadius: DS.CornerRadius.group)
         }
         .padding(.trailing, 2)
         .contentShape(Rectangle())
@@ -347,65 +324,6 @@ struct BackgroundAgentSideDockView: View {
             isHoveringOverDock = isHovering
         }
         .pointerCursor()
-    }
-
-    private var mascotDockGlowRadius: CGFloat {
-        switch mascotDockVisualState {
-        case .completed:
-            return 16
-        case .failed:
-            return 14
-        case .working, .idle:
-            return 10
-        }
-    }
-
-    private var mascotDockBackgroundFill: Color {
-        switch mascotDockVisualState {
-        case .completed:
-            return BackgroundAgentSideDockColors.successGreen.opacity(isHoveringOverDock ? 0.28 : 0.22)
-        case .failed:
-            return BackgroundAgentSideDockColors.failureOrange.opacity(isHoveringOverDock ? 0.22 : 0.16)
-        case .working, .idle:
-            return Color.black.opacity(isHoveringOverDock ? 0.72 : 0.55)
-        }
-    }
-
-    private var mascotDockBorderColor: Color {
-        switch mascotDockVisualState {
-        case .completed:
-            return BackgroundAgentSideDockColors.successGreen.opacity(isHoveringOverDock ? 0.95 : 0.75)
-        case .failed:
-            return BackgroundAgentSideDockColors.failureOrange.opacity(isHoveringOverDock ? 0.9 : 0.7)
-        case .working, .idle:
-            return cursorAccentColor.opacity(isHoveringOverDock ? 0.55 : 0.28)
-        }
-    }
-
-    private var mascotDockBorderWidth: CGFloat {
-        mascotDockVisualState == .completed || mascotDockVisualState == .failed ? 2 : 1
-    }
-
-    private var mascotDockShadowOpacity: Double {
-        switch mascotDockVisualState {
-        case .completed:
-            return 0.55
-        case .failed:
-            return 0.45
-        case .working, .idle:
-            return 0.25
-        }
-    }
-
-    private var mascotDockShadowRadius: CGFloat {
-        switch mascotDockVisualState {
-        case .completed:
-            return 20
-        case .failed:
-            return 16
-        case .working, .idle:
-            return 12
-        }
     }
 
     private func triggerCompletionCelebrationAnimation() {
@@ -443,28 +361,22 @@ struct BackgroundAgentSideDockView: View {
 
     private func composioSyncCard(syncPrompt: ComposioSyncPromptState) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "link.circle.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(BackgroundAgentSideDockColors.accentBlue)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Sync \(syncPrompt.displayName) with Teachy")
+                    .font(DS.Fonts.itemTitle)
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Sync \(syncPrompt.displayName) with Teachy")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(BackgroundAgentSideDockColors.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Text("You're in \(syncPrompt.frontmostAppName). Connect once so Teachy can help in the background.")
-                        .font(.system(size: 11))
-                        .foregroundColor(BackgroundAgentSideDockColors.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text("Connect once so Teachy can help in the background.")
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if let lastConnectionError = composioConnectionManager.lastConnectionError {
                 Text(lastConnectionError)
-                    .font(.system(size: 10))
-                    .foregroundColor(.orange)
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.destructiveText)
                     .lineLimit(3)
             }
 
@@ -474,48 +386,22 @@ struct BackgroundAgentSideDockView: View {
                         await composioConnectionManager.connectActiveToolkit()
                     }
                 }) {
-                    HStack(spacing: 6) {
-                        if composioConnectionManager.isConnectingToolkit {
-                            ProgressView()
-                                .scaleEffect(0.55)
-                        }
-                        Text(composioConnectionManager.isConnectingToolkit ? "Connecting..." : "Sync now")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Capsule().fill(BackgroundAgentSideDockColors.accentBlue))
+                    Text(composioConnectionManager.isConnectingToolkit ? "Connecting..." : "Sync now")
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
+                .teachyButton(.primary, size: .compact)
                 .disabled(composioConnectionManager.isConnectingToolkit)
 
                 Button(action: {
                     composioConnectionManager.dismissActiveSyncPrompt()
                 }) {
                     Text("Not now")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(BackgroundAgentSideDockColors.textSecondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(Capsule().fill(Color.white.opacity(0.08)))
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
+                .teachyButton(.quiet, size: .compact)
             }
         }
         .padding(14)
         .frame(width: 268, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(BackgroundAgentSideDockColors.panelBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(BackgroundAgentSideDockColors.accentBlue.opacity(0.35), lineWidth: 1)
-                )
-        )
-        .shadow(color: Color.black.opacity(0.35), radius: 18, x: -4, y: 0)
+        .teachyTile()
         .padding(.trailing, 8)
         .onHover { isHovering in
             isHoveringOverDock = isHovering
@@ -545,16 +431,6 @@ private enum BackgroundAgentMascotDockVisualState {
     case working
     case completed
     case failed
-}
-
-private enum BackgroundAgentSideDockColors {
-    static let panelBackground = Color(hex: "#0A0A0A").opacity(0.94)
-    static let accentBlue = Color(hex: "#3380FF")
-    static let successGreen = Color(hex: "#30D158")
-    static let failureOrange = Color(hex: "#FF9F0A")
-    static let textPrimary = Color(hex: "#F0F0F0")
-    static let textSecondary = Color(hex: "#A0A0A0")
-    static let textTertiary = Color(hex: "#666666")
 }
 
 private enum BackgroundAgentSideDockFormatting {

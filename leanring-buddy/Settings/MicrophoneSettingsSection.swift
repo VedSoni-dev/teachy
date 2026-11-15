@@ -2,7 +2,7 @@
 //  MicrophoneSettingsSection.swift
 //  leanring-buddy
 //
-//  Home tab card: which microphone Teachy hears, a picker to change it, and a live
+//  Home tab row: which microphone Teachy hears, a picker to change it, and a live
 //  level meter so people can see it is picking them up. It follows devices as they
 //  are plugged in and removed (`MicrophoneDeviceWatcher`), names the microphone that
 //  is really live after a failover, and warns when that one is a Bluetooth mic.
@@ -20,6 +20,9 @@ struct MicrophoneSettingsSection: View {
     @State private var isTesting = false
     private let startsExpanded: Bool
 
+    /// The sign in front of a notice about the live microphone.
+    private let noticeIcon = "exclamationmark.triangle.fill"
+
     init(startsExpanded: Bool = false) {
         self.startsExpanded = startsExpanded
     }
@@ -32,11 +35,12 @@ struct MicrophoneSettingsSection: View {
             startsExpanded: startsExpanded
         ) {
             Text("Teachy only listens while you hold a talk or dictation key, or while always-on mode is on. This is the microphone it uses.")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
+                .font(DS.Fonts.caption)
+                .foregroundColor(DS.Colors.textSecondary)
+                .lineSpacing(1.5)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(spacing: 4) {
+            VStack(spacing: 6) {
                 microphoneRow(
                     title: "Follow the Mac's input",
                     detail: "Currently \(systemDefaultName)",
@@ -53,46 +57,46 @@ struct MicrophoneSettingsSection: View {
             }
 
             if MicrophoneCenter.isSelectedDeviceMissing {
-                Text("Your chosen microphone isn't connected, so Teachy is using \(activeName).")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.Colors.warning)
-                    .fixedSize(horizontal: false, vertical: true)
+                MicrophoneNotice(icon: noticeIcon, text: "Your chosen microphone isn't connected, so Teachy is using \(activeName).")
             } else if let failover = watcher.liveOverride {
-                Text("That microphone isn't working, so Teachy is listening with \(failover.name).")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.Colors.warning)
-                    .fixedSize(horizontal: false, vertical: true)
+                MicrophoneNotice(icon: noticeIcon, text: "That microphone isn't working, so Teachy is listening with \(failover.name).")
             }
 
             if watcher.live?.isBluetooth == true {
-                MicrophoneNotice(icon: "exclamationmark.triangle.fill", text: MicrophoneCenter.bluetoothWarning)
+                MicrophoneNotice(icon: noticeIcon, text: MicrophoneCenter.bluetoothWarning)
             }
 
-            HStack(spacing: 10) {
-                Button {
+            HStack(spacing: 12) {
+                Button(isTesting ? "Stop test" : "Test microphone") {
                     if isTesting { stopTest() } else { startTest() }
-                } label: {
-                    Text(isTesting ? "Stop test" : "Test microphone")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(DS.Colors.textPrimary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.white.opacity(0.1)))
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
+                .teachyButton(.secondary, size: .compact)
 
                 if isTesting {
                     MicrophoneLevelBar(level: meter.level)
-                        .frame(height: 8)
+                        .frame(height: 4)
                 }
             }
 
             if isTesting {
-                Text(meter.problem ?? "Say something. Hearing \(meter.listeningToName ?? activeName). Nothing is recorded or sent during this test.")
-                    .font(.system(size: 11))
-                    .foregroundColor(meter.problem == nil ? DS.Colors.textTertiary : DS.Colors.warning)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let meterProblem = meter.problem {
+                    Text(meterProblem)
+                        .font(DS.Fonts.caption)
+                        .foregroundColor(DS.Colors.warningText)
+                        .lineSpacing(1.5)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Say something.")
+                            .font(DS.Fonts.body)
+                            .foregroundColor(DS.Colors.textPrimary)
+                        Text("Hearing \(meter.listeningToName ?? activeName). Nothing is recorded or sent during this test.")
+                            .font(DS.Fonts.caption)
+                            .foregroundColor(DS.Colors.textSecondary)
+                            .lineSpacing(1.5)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
         }
         .onAppear { refresh() }
@@ -104,33 +108,26 @@ struct MicrophoneSettingsSection: View {
         }
     }
 
+    /// One microphone to choose: its name, and a fact about it at the far end.
+    /// `.teachyOption` marks the chosen one.
     private func microphoneRow(title: String, detail: String?, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 12))
-                    .foregroundColor(isSelected ? DS.Colors.learnAccent : DS.Colors.textTertiary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title)
-                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                        .foregroundColor(DS.Colors.textPrimary)
-                        .lineLimit(1)
-                    if let detail {
-                        Text(detail)
-                            .font(.system(size: 10))
-                            .foregroundColor(DS.Colors.textTertiary)
-                            .lineLimit(1)
-                    }
-                }
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(title)
+                    .font(DS.Fonts.body)
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .lineLimit(1)
                 Spacer(minLength: 0)
+                if let detail {
+                    Text(detail)
+                        .font(DS.Fonts.data)
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .lineLimit(1)
+                }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? DS.Colors.learnAccent.opacity(0.14) : Color.white.opacity(0.04))
-            )
-            .contentShape(Rectangle())
+            .padding(.vertical, 8)
+            .teachyOption(isSelected: isSelected)
         }
         .buttonStyle(.plain)
         .pointerCursor()
@@ -162,38 +159,37 @@ struct MicrophoneSettingsSection: View {
     }
 }
 
-/// An amber line with an icon, for things worth knowing about the live microphone.
+/// An orange sign and a line of text, for things worth knowing about the live microphone.
 struct MicrophoneNotice: View {
     let icon: String
     let text: String
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
+                .font(DS.Fonts.sans(10.5, weight: .semibold))
                 .foregroundColor(DS.Colors.warning)
             Text(text)
-                .font(.system(size: 11))
+                .font(DS.Fonts.caption)
                 .foregroundColor(DS.Colors.textSecondary)
+                .lineSpacing(1.5)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(DS.Colors.warning.opacity(0.1)))
     }
 }
 
-/// A simple horizontal level meter: green, turning amber when loud.
+/// A thin horizontal level meter. The microphone is open, so it is drawn in the
+/// tint; it turns orange when the input is loud.
 private struct MicrophoneLevelBar: View {
     let level: Float
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.08))
+                Capsule().fill(DS.Colors.fillSecondary)
                 Capsule()
-                    .fill(level > 0.85 ? DS.Colors.warning : DS.Colors.learnAccent)
+                    .fill(level > 0.85 ? DS.Colors.warning : DS.Colors.pointer)
                     .frame(width: max(4, geometry.size.width * CGFloat(level)))
                     .animation(.linear(duration: 0.08), value: level)
             }

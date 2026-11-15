@@ -275,7 +275,7 @@ final class BrowserBridge: ObservableObject {
         "In Terminal, from the Teachy folder, run: scripts/install-chrome-host.sh",
         "In Chrome, open chrome://extensions and turn on Developer mode (top right).",
         "Click “Load unpacked” and choose the chrome-extension folder.",
-        "Come back here: this card turns green when Chrome finds Teachy."
+        "Come back here: this row shows Connected when Chrome finds Teachy."
     ]
 
     /// The install script and the prebuilt helper inside the app bundle, when the build put them there.

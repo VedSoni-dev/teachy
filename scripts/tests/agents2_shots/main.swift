@@ -161,32 +161,38 @@ func runShots() {
     // MARK: Connectors: Popular
 
     struct StripHost: View {
+        var addedURLs = ["https://mcp.notion.com/mcp"]
         var busyID: String?
         var keyEntry: ConnectorCatalogEntry?
         var error: String?
         @State private var key = ""
         var body: some View {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Connectors").font(.system(size: 12, weight: .bold)).foregroundColor(DS.Colors.textPrimary)
-                Text("Give Teachy tools from your other apps. Add an MCP server by its URL, or a command that runs one on this Mac.")
-                    .font(.system(size: 11)).foregroundColor(DS.Colors.textTertiary).fixedSize(horizontal: false, vertical: true)
+            // The same order as ConnectorsSection: the title, the group of rows, then Popular.
+            // The connector rows themselves need a ConnectorCenter, so only the empty group is drawn here.
+            VStack(alignment: .leading, spacing: 9) {
+                TeachySectionTitle(title: "Connectors")
+                if addedURLs.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ConnectorsEmptyState()
+                    }
+                    .teachyGroup()
+                }
                 ConnectorPopularStrip(
                     entries: ConnectorCatalog.entries,
-                    addedURLs: ["https://mcp.notion.com/mcp"],
+                    addedURLs: addedURLs,
                     busyID: busyID,
                     keyEntry: keyEntry,
                     key: $key,
                     error: error
                 )
             }
-            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassCard()
         }
     }
     let githubEntry = ConnectorCatalog.entries.first { $0.id == "github" }
     render(onNotch(StripHost()), width: homeWidth, name: "30-connectors-popular")
     render(onNotch(StripHost(busyID: "linear", keyEntry: githubEntry, error: "Linear did not answer. Try again in a moment.")), width: homeWidth, name: "31-connectors-popular-key-and-error")
+    render(onNotch(StripHost(addedURLs: [])), width: homeWidth, name: "32-connectors-nothing-connected")
 
     print(failures == 0 ? "all shots rendered" : "\(failures) shot(s) failed")
     exit(failures == 0 ? 0 : 1)

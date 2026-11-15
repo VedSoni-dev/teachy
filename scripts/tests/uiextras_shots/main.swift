@@ -8,19 +8,6 @@ import SwiftUI
 // MARK: - Stand-ins for app types the real files refer to
 
 /// Same drawing as NotchPanelSharedComponents.swift (that file pulls in the model picker).
-struct KeyboardKeyLabel: View {
-    let text: String
-    var body: some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium, design: .rounded))
-            .foregroundColor(DS.Colors.textPrimary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.white.opacity(0.1)))
-            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Color.white.opacity(0.15), lineWidth: 0.5))
-    }
-}
-
 enum ClickyCursorColor: String, CaseIterable, Identifiable {
     case red, blue, yellow, green
     var id: String { rawValue }
@@ -43,6 +30,24 @@ enum TeachyElevenLabsKeyStore {
 
 extension VoicePreviewPlayer {
     static let shared = VoicePreviewPlayer { _, _, _ in Data() }
+}
+
+/// The real controller owns the microphone and the key event tap. The dictation
+/// shortcut row only asks it to record new keys, which a script never does.
+final class DictationController {
+    static let shared = DictationController()
+
+    enum ShortcutRecordingResult {
+        case saved([UInt16])
+        case cancelled
+        case rejected(String)
+    }
+
+    func recordShortcut(completion: @escaping (ShortcutRecordingResult) -> Void) {
+        completion(.cancelled)
+    }
+
+    func cancelShortcutRecording() {}
 }
 
 // MARK: - Rendering

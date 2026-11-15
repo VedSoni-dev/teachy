@@ -2,10 +2,10 @@
 //  WalkthroughRingOverlay.swift
 //  leanring-buddy / Walkthrough
 //
-//  The ring around the control a walkthrough step is about: a hand-drawn loop
-//  (the drawing engine's rough strokes) plus a small label pill, in a
-//  transparent panel that ignores the mouse entirely. It follows its control
-//  when the window moves and fades when the step is done.
+//  The ring around the control a walkthrough step is about: a clean ring in the
+//  pointer colour plus a small label tile, in a transparent panel that ignores
+//  the mouse entirely. It follows its control when the window moves and fades
+//  when the step is done.
 //
 
 import AppKit
@@ -71,16 +71,13 @@ final class WalkthroughRingModel: ObservableObject {
     @Published var pillOffsetX: CGFloat = 0
     @Published var isApproximate = false
     @Published var phase: Phase = .hidden
-    /// Changes with each step so every ring is drawn a little differently, and redrawn from the start.
+    /// Changes with each step so the ring is drawn on again from the start.
     @Published var seed = "ring"
 }
 
-/// The loop itself. `progress` 0→1 draws it on, like a pen going round.
+/// The ring itself: a clean ellipse. `progress` 0→1 draws it on, starting at the
+/// upper left and going once round.
 struct WalkthroughRingShape: Shape {
-    var seed: String
-    var roughness: Double
-    /// Two pen passes for a real control; one, dashed, for a guessed spot.
-    var passes = 2
     var progress: Double
 
     var animatableData: Double {
@@ -89,18 +86,14 @@ struct WalkthroughRingShape: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
-        var rng = SceneRNG(id: seed)
-        let strokes = SceneRough.ellipse(
-            center: SceneVec2(rect.midX, rect.midY),
-            rx: rect.width / 2,
-            ry: rect.height / 2,
-            rng: &rng,
-            roughness: roughness,
-            passes: passes
+        // A unit circle that starts at the upper left, stretched to fill the box.
+        var unitCircle = Path()
+        unitCircle.addArc(center: .zero, radius: 1, startAngle: .degrees(-135), endAngle: .degrees(225), clockwise: false)
+        let ellipse = unitCircle.applying(
+            CGAffineTransform(translationX: rect.midX, y: rect.midY)
+                .scaledBy(x: rect.width / 2, y: rect.height / 2)
         )
-        var combined = Path()
-        for path in SceneRoughPath.paths(strokes) { combined.addPath(path) }
-        return combined.trimmedPath(from: 0, to: min(max(progress, 0), 1))
+        return ellipse.trimmedPath(from: 0, to: min(max(progress, 0), 1))
     }
 }
 
@@ -111,8 +104,9 @@ struct WalkthroughRingView: View {
 
     @State private var drawn: Double = 0
 
+    /// The pointer colour (Teachy's tint) while the step is waiting; green once it is done.
     private var ringColor: Color {
-        model.phase == .completed ? DS.Colors.success : DS.Colors.overlayCursorBlue
+        model.phase == .completed ? DS.Colors.success : DS.Colors.pointer
     }
 
     var body: some View {
@@ -133,29 +127,34 @@ struct WalkthroughRingView: View {
     private var ring: some View {
         let inset = WalkthroughRingLayout.strokeRoom
         let progress = frozen ? 1 : drawn
-        let roughness = model.isApproximate ? 1.3 : 1.0
-        let passes = model.isApproximate ? 1 : 2
+        // Dashed for a guessed spot, solid for a real control.
         let dash: [CGFloat] = model.isApproximate ? [10, 8] : []
         return ZStack {
             // A soft dark edge under the stroke keeps it readable on any background.
-            WalkthroughRingShape(seed: model.seed, roughness: roughness, passes: passes, progress: progress)
-                .stroke(Color.black.opacity(0.28), style: StrokeStyle(lineWidth: 6.5, lineCap: .round, lineJoin: .round, dash: dash))
+            WalkthroughRingShape(progress: progress)
+                .stroke(DS.Colors.notchBlack.opacity(0.28), style: StrokeStyle(lineWidth: 6.5, lineCap: .round, lineJoin: .round, dash: dash))
                 .blur(radius: 1.5)
-            WalkthroughRingShape(seed: model.seed, roughness: roughness, passes: passes, progress: progress)
+            WalkthroughRingShape(progress: progress)
                 .stroke(ringColor, style: StrokeStyle(lineWidth: 3.2, lineCap: .round, lineJoin: .round, dash: dash))
         }
         .padding(inset)
         .frame(width: model.ringSize.width, height: model.ringSize.height)
     }
 
+    /// The step label: a small floating tile with the step count and what to do.
     private var pill: some View {
         HStack(spacing: DS.Spacing.sm) {
-            Text("\(model.stepNumber)/\(model.stepCount)")
-                .font(.system(size: 11, weight: .bold).monospacedDigit())
-                .foregroundColor(DS.Colors.accentText)
+            if model.phase == .completed {
+                TeachyStatusMark(kind: .done)
+            } else {
+                Text("\(model.stepNumber) of \(model.stepCount)")
+                    .font(DS.Fonts.data)
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize()
+            }
             if !model.label.isEmpty {
                 Text(model.label)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.Fonts.bodyEmphasized)
                     .foregroundColor(DS.Colors.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -163,9 +162,7 @@ struct WalkthroughRingView: View {
         }
         .padding(.horizontal, DS.Spacing.md)
         .padding(.vertical, 5)
-        .background(Capsule().fill(DS.Colors.background))
-        .overlay(Capsule().strokeBorder(ringColor.opacity(0.7), lineWidth: 1))
-        .shadow(color: .black.opacity(0.3), radius: 4, y: 1)
+        .teachyTile(cornerRadius: DS.CornerRadius.pill)
         .frame(maxWidth: WalkthroughRingLayout.pillHalfWidth * 2)
         .frame(height: WalkthroughRingLayout.pillAreaHeight)
         .offset(x: model.pillOffsetX)

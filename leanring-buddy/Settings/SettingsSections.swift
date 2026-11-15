@@ -2,9 +2,9 @@
 //  SettingsSections.swift
 //  leanring-buddy
 //
-//  The settings cards on the notch panel's Home tab: Voice, Dictation, Shortcuts,
-//  Privacy and Advanced. Each is a card that starts collapsed with a one-line
-//  summary, so Home stays short. They read and write `TeachySettings.shared`.
+//  The settings rows on the notch panel's Home tab: Voice, Dictation, Shortcuts,
+//  Privacy and Advanced. Each is a row of a grouped list that starts closed with
+//  a one-line summary, so Home stays short. They read and write `TeachySettings.shared`.
 //
 
 import AppKit
@@ -12,14 +12,22 @@ import SwiftUI
 
 // MARK: - Building blocks
 
-/// A glass card with a tappable header (icon, title, summary, chevron) that
-/// shows or hides its content.
+/// One row of a grouped settings list: a tinted symbol, the title, a one-line
+/// summary and a chevron. Clicking it opens the row in place; the content sits
+/// under the title. Rows go inside a `.teachyGroup()` container, and each row
+/// draws the inset divider below itself, the way System Settings does.
+/// (The name is from when this was a card.)
 struct SettingsDisclosureCard<Content: View>: View {
     let icon: String
     let title: String
     let summary: String?
     @State private var isExpanded: Bool
+    @State private var isHeaderHovered = false
+    @Environment(\.accessibilityReduceMotion) private var isReduceMotionEnabled
     private let content: Content
+
+    /// The opened content and the divider line up with the title, past the symbol.
+    private let contentLeadingInset: CGFloat = 30
 
     init(
         icon: String,
@@ -38,74 +46,71 @@ struct SettingsDisclosureCard<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.smooth(duration: 0.22)) { isExpanded.toggle() }
+                withAnimation(isReduceMotionEnabled ? DS.Motion.reduced : DS.Motion.standard) { isExpanded.toggle() }
             } label: {
-                HStack(spacing: 8) {
+                HStack(alignment: .center, spacing: 10) {
                     Image(systemName: icon)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(DS.Colors.learnAccent)
-                        .frame(width: 16)
+                        .font(DS.Fonts.sans(13, weight: .medium))
+                        .foregroundColor(DS.Colors.pointer)
+                        .frame(width: 20)
 
                     Text(title)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(DS.Fonts.body)
                         .foregroundColor(DS.Colors.textPrimary)
 
-                    Spacer(minLength: 8)
+                    Spacer(minLength: 12)
 
                     if let summary, !isExpanded {
                         Text(summary)
-                            .font(.system(size: 11))
-                            .foregroundColor(DS.Colors.textTertiary)
+                            .font(DS.Fonts.sans(12).monospacedDigit())
+                            .foregroundColor(DS.Colors.textSecondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(DS.Colors.textTertiary)
+                        .font(DS.Fonts.sans(10, weight: .semibold))
+                        .foregroundColor(isHeaderHovered ? DS.Colors.textSecondary : DS.Colors.textTertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
+                .padding(.vertical, 11)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .pointerCursor()
+            .onHover { hovering in
+                withAnimation(DS.Motion.hover) { isHeaderHovered = hovering }
+            }
 
             if isExpanded {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 14) {
                     content
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 14)
+                .padding(.leading, contentLeadingInset)
+                .padding(.top, 2)
+                .padding(.bottom, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .transition(.opacity)
             }
+
+            TeachyRule()
+                .padding(.leading, contentLeadingInset)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard()
     }
 }
 
-/// A small dark-theme switch drawn in SwiftUI (the system one is light-on-light here).
+/// A label on the left and Teachy's switch on the right; the whole row toggles.
 struct SettingsSwitchStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         Button {
-            withAnimation(.easeOut(duration: 0.15)) { configuration.isOn.toggle() }
+            configuration.isOn.toggle()
+            DS.Haptics.stateChanged()
         } label: {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 14) {
                 configuration.label
                 Spacer(minLength: 8)
-                Capsule()
-                    .fill(configuration.isOn ? DS.Colors.learnAccent : Color.white.opacity(0.14))
-                    .frame(width: 32, height: 19)
-                    .overlay(alignment: configuration.isOn ? .trailing : .leading) {
-                        Circle()
-                            .fill(Color.white)
-                            .frame(width: 15, height: 15)
-                            .padding(2)
-                            .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
-                    }
+                TeachySwitch(isOn: configuration.isOn)
                     .padding(.top, 1)
             }
             .contentShape(Rectangle())
@@ -123,14 +128,15 @@ struct SettingsToggleRow: View {
 
     var body: some View {
         Toggle(isOn: $isOn) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.Fonts.body)
                     .foregroundColor(DS.Colors.textPrimary)
                 if let caption {
                     Text(caption)
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.textTertiary)
+                        .font(DS.Fonts.caption)
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .lineSpacing(1.5)
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
                 }
@@ -142,19 +148,17 @@ struct SettingsToggleRow: View {
 
 struct SettingsDivider: View {
     var body: some View {
-        Rectangle()
-            .fill(Color.white.opacity(0.07))
-            .frame(height: 1)
+        TeachyRule()
     }
 }
 
+/// A quiet heading inside an opened row. Sentence case, never capitals.
 private struct SettingsSubheading: View {
     let text: String
     var body: some View {
-        Text(text.uppercased())
-            .font(.system(size: 9, weight: .bold))
-            .tracking(0.6)
-            .foregroundColor(DS.Colors.textTertiary)
+        Text(text)
+            .font(DS.Fonts.sans(12, weight: .semibold))
+            .foregroundColor(DS.Colors.textPrimary)
     }
 }
 
@@ -162,27 +166,24 @@ private struct SettingsCaption: View {
     let text: String
     var body: some View {
         Text(text)
-            .font(.system(size: 11))
-            .foregroundColor(DS.Colors.textTertiary)
+            .font(DS.Fonts.caption)
+            .foregroundColor(DS.Colors.textSecondary)
+            .lineSpacing(1.5)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
 
-/// "Hold [control] + [option]" drawn with key caps.
+/// "Hold [control] [option]" drawn with key caps.
 struct ShortcutKeysView: View {
     let shortcut: TeachyShortcut
 
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             Text(shortcut.gestureWord)
-                .font(.system(size: 11))
+                .font(DS.Fonts.caption)
                 .foregroundColor(DS.Colors.textSecondary)
-            ForEach(Array(shortcut.keyLabels.enumerated()), id: \.offset) { index, label in
-                if index > 0 {
-                    Text("+")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.Colors.textTertiary)
-                }
+                .padding(.trailing, 2)
+            ForEach(Array(shortcut.keyLabels.enumerated()), id: \.offset) { _, label in
                 KeyboardKeyLabel(text: label)
             }
         }
@@ -196,7 +197,7 @@ private struct ShortcutRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .font(DS.Fonts.body)
                 .foregroundColor(DS.Colors.textPrimary)
             Spacer(minLength: 8)
             ShortcutKeysView(shortcut: shortcut)
@@ -239,6 +240,80 @@ struct SettingsFlowLayout: Layout {
             widest = max(widest, x - spacing)
         }
         return (origins, widest, y + rowHeight)
+    }
+}
+
+// MARK: - Pieces the sections below share
+
+/// The label of a control inside an opened row, with its one-line explanation
+/// under it. The same left side as `SettingsToggleRow`, for rows that end in
+/// something other than a switch (a menu, a field) or in nothing at all.
+private struct SettingsLabelWithCaption: View {
+    let title: String
+    let caption: Text
+
+    init(title: String, caption: String) {
+        self.title = title
+        self.caption = Text(caption)
+    }
+
+    /// For a caption that sets part of itself in mono (a file path).
+    init(title: String, styledCaption: Text) {
+        self.title = title
+        self.caption = styledCaption
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(DS.Fonts.body)
+                .foregroundColor(DS.Colors.textPrimary)
+            caption
+                .font(DS.Fonts.caption)
+                .foregroundColor(DS.Colors.textSecondary)
+                .lineSpacing(1.5)
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.leading)
+        }
+    }
+}
+
+/// A menu that shows the value it holds ("Español", "5 min"), drawn the way an
+/// unselected option is.
+private struct SettingsValueMenu<MenuItems: View>: View {
+    let valueText: String
+    @ViewBuilder let menuItems: () -> MenuItems
+
+    var body: some View {
+        Menu {
+            menuItems()
+        } label: {
+            Text(valueText)
+                .font(DS.Fonts.controlCompact)
+                .monospacedDigit()
+                .lineLimit(1)
+                .foregroundColor(DS.Colors.textPrimary)
+        }
+        .menuStyle(.borderlessButton)
+        // The system's own chevron: a borderless menu draws a symbol placed in
+        // its label before the text, not after it.
+        .menuIndicator(.visible)
+        .fixedSize()
+        // On the menu itself: a borderless menu ignores backgrounds inside its label.
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .teachyOption(isSelected: false)
+        .pointerCursor()
+    }
+}
+
+private extension View {
+    /// The well a settings text field sits in.
+    func settingsFieldWell() -> some View {
+        self
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .teachyWell(cornerRadius: DS.CornerRadius.control, isEdged: true)
     }
 }
 
@@ -287,94 +362,61 @@ struct VoiceSettingsSection: View {
                 }
             }
 
-            Button {
-                withAnimation(.smooth(duration: 0.2)) { showsMoreVoices.toggle() }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(showsMoreVoices ? "Fewer voices" : "More voices (\(TeachyVoiceCatalog.moreVoices.count))")
-                        .font(.system(size: 11, weight: .semibold))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                        .rotationEffect(.degrees(showsMoreVoices ? 180 : 0))
-                }
-                .foregroundColor(DS.Colors.textSecondary)
-                .contentShape(Rectangle())
+            Button(showsMoreVoices ? "Fewer voices" : "More voices (\(TeachyVoiceCatalog.moreVoices.count))") {
+                withAnimation(DS.Motion.standard) { showsMoreVoices.toggle() }
             }
-            .buttonStyle(.plain)
-            .pointerCursor()
+            .teachyLinkButton()
 
             if let errorMessage = preview.errorMessage {
                 Text(errorMessage)
-                    .font(.system(size: 10))
+                    .font(DS.Fonts.caption)
                     .foregroundColor(DS.Colors.destructiveText)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             SettingsDivider()
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
                     Text("Speed")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DS.Fonts.body)
                         .foregroundColor(DS.Colors.textPrimary)
                     Spacer()
                     Text(TeachySpeechSpeed.label(settings.speechSpeed))
-                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .font(DS.Fonts.data)
                         .foregroundColor(DS.Colors.textSecondary)
                 }
                 HStack(spacing: 8) {
-                    Image(systemName: "tortoise.fill")
-                        .font(.system(size: 10))
+                    Image(systemName: "tortoise")
+                        .font(DS.Fonts.sans(11))
                         .foregroundColor(DS.Colors.textTertiary)
-                    // No `step:` here (it draws a row of tick marks). The setting
-                    // snaps to 0.05 itself.
-                    Slider(value: $settings.speechSpeed, in: TeachySpeechSpeed.range)
-                    .controlSize(.small)
-                    .tint(DS.Colors.learnAccent)
-                    Image(systemName: "hare.fill")
-                        .font(.system(size: 10))
+                    // The setting snaps to 0.05 itself.
+                    TeachySlider(value: $settings.speechSpeed, in: TeachySpeechSpeed.range)
+                    Image(systemName: "hare")
+                        .font(DS.Fonts.sans(11))
                         .foregroundColor(DS.Colors.textTertiary)
                 }
             }
 
             SettingsDivider()
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Answer in")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.Colors.textPrimary)
-                    Text(settings.replyLanguage == TeachyReplyLanguages.automaticCode
-                         ? "Teachy answers in whatever language you speak to it."
-                         : "Teachy always answers in this language, and listens for it.")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            HStack(alignment: .top, spacing: 8) {
+                SettingsLabelWithCaption(
+                    title: "Answer in",
+                    caption: settings.replyLanguage == TeachyReplyLanguages.automaticCode
+                        ? "Teachy answers in whatever language you speak to it."
+                        : "Teachy always answers in this language, and listens for it."
+                )
                 Spacer(minLength: 8)
-                Menu {
+                SettingsValueMenu(
+                    valueText: TeachyReplyLanguages.language(for: settings.replyLanguage)?.nativeName ?? "Same as you speak"
+                ) {
                     Button("Same as you speak") { settings.replyLanguage = TeachyReplyLanguages.automaticCode }
                     Divider()
                     ForEach(TeachyReplyLanguages.all) { language in
                         Button(language.pickerLabel) { settings.replyLanguage = language.code }
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(TeachyReplyLanguages.language(for: settings.replyLanguage)?.nativeName ?? "Same as you speak")
-                            .font(.system(size: 11, weight: .semibold))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                    }
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(Color.white.opacity(0.1)))
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .pointerCursor()
             }
 
             SettingsDivider()
@@ -387,43 +429,23 @@ struct VoiceSettingsSection: View {
 
             SettingsToggleRow(
                 title: "Quiet on calls",
-                caption: "While you're on a call, answers show as captions and are copied instead of spoken, unless you hold the talk key. If your Mac is muted, answers are always shown and copied.",
+                caption: "On a call, answers show as captions and are copied instead of spoken, unless you hold the talk key. With your Mac muted, they are always shown and copied.",
                 isOn: $settings.quietOnCallsEnabled
             )
 
             SettingsDivider()
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Always-on switches off after")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.Colors.textPrimary)
-                    Text("Press Control three times to talk without holding a key. It also switches off when your Mac locks or sleeps.")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            HStack(alignment: .top, spacing: 8) {
+                SettingsLabelWithCaption(
+                    title: "Always-on switches off after",
+                    caption: "Press Control three times to talk without holding a key. It also switches off when your Mac locks or sleeps."
+                )
                 Spacer(minLength: 8)
-                Menu {
+                SettingsValueMenu(valueText: "\(settings.alwaysOnAutoOffMinutes) min") {
                     ForEach([1, 2, 5, 10, 15, 30], id: \.self) { minutes in
                         Button("\(minutes) quiet minute\(minutes == 1 ? "" : "s")") { settings.alwaysOnAutoOffMinutes = minutes }
                     }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("\(settings.alwaysOnAutoOffMinutes) min")
-                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                    }
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(Color.white.opacity(0.1)))
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .pointerCursor()
             }
         }
         .onDisappear { preview.stop() }
@@ -431,53 +453,41 @@ struct VoiceSettingsSection: View {
 
     private func voiceChip(_ voice: TeachyVoice) -> some View {
         let isSelected = settings.voiceName == voice.name
+        let isPlayingPreview = preview.isPlaying(voice.name)
         return HStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(voice.displayName)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DS.Fonts.body)
                     .foregroundColor(DS.Colors.textPrimary)
                 Text(voice.character)
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.Colors.textTertiary)
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.textSecondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
             Button {
                 preview.toggle(voice: voice.name, speed: settings.speechSpeed)
             } label: {
-                ZStack {
-                    Circle()
-                        .fill(Color.white.opacity(preview.isPlaying(voice.name) ? 0.18 : 0.09))
-                        .frame(width: 24, height: 24)
-                    if preview.isLoading(voice.name) {
-                        ProgressView()
-                            .controlSize(.mini)
-                            .scaleEffect(0.75)
-                    } else {
-                        Image(systemName: preview.isPlaying(voice.name) ? "stop.fill" : "play.fill")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(DS.Colors.textPrimary)
-                    }
+                if preview.isLoading(voice.name) {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.75)
+                } else {
+                    // A preview that is playing is live, so its symbol takes the tint.
+                    Image(systemName: isPlayingPreview ? "stop.fill" : "play.fill")
+                        .foregroundColor(isPlayingPreview ? DS.Colors.pointer : nil)
                 }
             }
-            .buttonStyle(.plain)
-            .pointerCursor()
+            .teachyIconButton()
             .help("Hear \(voice.displayName)")
             .accessibilityLabel("Preview \(voice.displayName)")
         }
         .padding(.leading, 10)
-        .padding(.trailing, 7)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(isSelected ? DS.Colors.learnAccent.opacity(0.22) : Color.white.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(isSelected ? DS.Colors.learnAccent : Color.white.opacity(0.08), lineWidth: isSelected ? 1.5 : 0.75)
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .padding(.trailing, 6)
+        .padding(.vertical, 8)
+        .teachyOption(isSelected: isSelected)
         .onTapGesture { settings.voiceName = voice.name }
+        .pointerCursor()
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
@@ -514,18 +524,16 @@ struct DictationSettingsSection: View {
     }
 
     var body: some View {
-        SettingsDisclosureCard(icon: "mic.fill", title: "Dictation", summary: summary, startsExpanded: startsExpanded) {
+        SettingsDisclosureCard(icon: "character.cursor.ibeam", title: "Dictation", summary: summary, startsExpanded: startsExpanded) {
             dictionaryBlock
 
             SettingsDivider()
 
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Language")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(DS.Colors.textPrimary)
-                    SettingsCaption(text: "Auto-detect works for most people. Pick one if it guesses wrong.")
-                }
+            HStack(alignment: .top, spacing: 8) {
+                SettingsLabelWithCaption(
+                    title: "Language",
+                    caption: "Auto-detect works for most people. Pick one if it guesses wrong."
+                )
                 Spacer(minLength: 8)
                 languageMenu
             }
@@ -546,14 +554,14 @@ struct DictationSettingsSection: View {
     }
 
     private var dictionaryBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SettingsSubheading(text: "Dictionary")
-            SettingsCaption(text: "Names and words to spell your way. Teachy also adds a word when you correct it right after dictating.")
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                SettingsSubheading(text: "Dictionary")
+                SettingsCaption(text: "Names and words to spell your way. Teachy also adds a word when you correct it right after dictating.")
+            }
 
             if words.isEmpty {
-                Text("No words yet.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
+                SettingsCaption(text: "No words yet.")
             } else {
                 SettingsFlowLayout(spacing: 6) {
                     ForEach(visibleWords, id: \.self) { word in
@@ -561,15 +569,10 @@ struct DictationSettingsSection: View {
                     }
                 }
                 if words.count > collapsedWordLimit {
-                    Button {
+                    Button(isShowingEveryWord ? "Show fewer" : "Show all \(words.count)") {
                         isShowingEveryWord.toggle()
-                    } label: {
-                        Text(isShowingEveryWord ? "Show fewer" : "Show all \(words.count)")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.Colors.textSecondary)
                     }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
+                    .teachyLinkButton()
                 }
             }
 
@@ -577,50 +580,31 @@ struct DictationSettingsSection: View {
                 TextField(
                     "",
                     text: $newWord,
-                    prompt: Text("Add a word or name").foregroundColor(DS.Colors.textTertiary)
+                    prompt: Text("Add a word or name").foregroundColor(DS.Colors.textQuaternary)
                 )
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12))
+                    .font(DS.Fonts.body)
                     .foregroundColor(DS.Colors.textPrimary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.white.opacity(0.06))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 0.75)
-                    )
+                    .settingsFieldWell()
                     .onSubmit(addWord)
 
-                Button(action: addWord) {
-                    Text("Add")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(DS.Colors.learnAccent)
-                        )
-                }
-                .buttonStyle(.plain)
-                .disabled(trimmedNewWord.isEmpty)
-                .opacity(trimmedNewWord.isEmpty ? 0.45 : 1)
-                .pointerCursor(isEnabled: !trimmedNewWord.isEmpty)
+                Button("Add", action: addWord)
+                    .teachyButton(.secondary)
+                    .disabled(trimmedNewWord.isEmpty)
             }
 
-            Text("Saved on this Mac in \(DictationPaths.dictionaryDisplayPath)")
-                .font(.system(size: 10))
-                .foregroundColor(DS.Colors.textTertiary.opacity(0.8))
+            // The path is a real path, so it alone is mono.
+            (Text("Saved on this Mac in ") + Text(DictationPaths.dictionaryDisplayPath).font(DS.Fonts.mono(11)))
+                .font(DS.Fonts.caption)
+                .foregroundColor(DS.Colors.textTertiary)
         }
     }
 
+    /// One word of the dictionary: a small grey token with a cross that removes it.
     private func wordChip(_ word: String) -> some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 1) {
             Text(word)
-                .font(.system(size: 11, weight: .medium))
+                .font(DS.Fonts.sans(12))
                 .foregroundColor(DS.Colors.textPrimary)
                 .lineLimit(1)
             Button {
@@ -628,25 +612,19 @@ struct DictationSettingsSection: View {
                 words = dictionary.words
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 7, weight: .heavy))
-                    .foregroundColor(DS.Colors.textSecondary)
-                    .frame(width: 14, height: 14)
-                    .background(Circle().fill(Color.white.opacity(0.1)))
             }
-            .buttonStyle(.plain)
-            .pointerCursor()
+            .teachyIconButton(sideLength: 18)
             .help("Remove \(word)")
             .accessibilityLabel("Remove \(word)")
         }
-        .padding(.leading, 9)
-        .padding(.trailing, 5)
-        .padding(.vertical, 4)
-        .background(Capsule().fill(Color.white.opacity(0.07)))
-        .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 0.5))
+        .padding(.leading, 8)
+        .padding(.trailing, 3)
+        .padding(.vertical, 2)
+        .teachyWell(cornerRadius: DS.CornerRadius.small)
     }
 
     private var languageMenu: some View {
-        Menu {
+        SettingsValueMenu(valueText: TeachyDictationLanguages.name(for: settings.dictationLanguage)) {
             ForEach(TeachyDictationLanguages.all) { language in
                 Button {
                     settings.dictationLanguage = language.code
@@ -658,23 +636,7 @@ struct DictationSettingsSection: View {
                     }
                 }
             }
-        } label: {
-            HStack(spacing: 5) {
-                Text(TeachyDictationLanguages.name(for: settings.dictationLanguage))
-                    .font(.system(size: 11, weight: .semibold))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-            }
-            .foregroundColor(DS.Colors.textPrimary)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        // On the menu itself: a borderless menu ignores backgrounds inside its label.
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Capsule().fill(Color.white.opacity(0.1)))
-        .pointerCursor()
     }
 
     private var trimmedNewWord: String {
@@ -692,19 +654,44 @@ struct DictationSettingsSection: View {
 // MARK: - Shortcuts
 
 extension ShortcutsSettingsSection {
-    static var dictationKeyNames: String {
-        DictationShortcut.current().map { PushToTalkShortcutKeys.displayName(forKeyCode: $0) }.joined(separator: " + ")
+    /// The dictation keys as they are set right now, one label per key.
+    static var dictationKeyLabels: [String] {
+        DictationShortcut.current().map { PushToTalkShortcutKeys.displayName(forKeyCode: $0) }
     }
+}
 
-    func liveShortcutLine(_ title: String, _ keys: String) -> some View {
-        HStack {
+/// One shortcut as it is set right now: what it does on the left, the gesture
+/// and its key caps on the right. Drawn like `ShortcutRow`, but from key labels,
+/// because the talk and dictation keys can be any keys, not only modifiers.
+private struct LiveShortcutRow: View {
+    let title: String
+    /// "Hold" or "Double-tap".
+    let gestureWord: String
+    let keyLabels: [String]
+    /// A few words after the keys ("again to stop").
+    var noteAfterKeys: String? = nil
+
+    var body: some View {
+        HStack(spacing: 8) {
             Text(title)
-                .font(.system(size: 12))
+                .font(DS.Fonts.body)
                 .foregroundColor(DS.Colors.textPrimary)
             Spacer(minLength: 8)
-            Text(keys)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundColor(DS.Colors.textSecondary)
+            HStack(spacing: 4) {
+                Text(gestureWord)
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .padding(.trailing, 2)
+                ForEach(Array(keyLabels.enumerated()), id: \.offset) { _, keyLabel in
+                    KeyboardKeyLabel(text: keyLabel)
+                }
+                if let noteAfterKeys {
+                    Text(noteAfterKeys)
+                        .font(DS.Fonts.caption)
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .padding(.leading, 2)
+                }
+            }
         }
     }
 }
@@ -725,10 +712,10 @@ struct ShortcutsSettingsSection: View {
             startsExpanded: startsExpanded
         ) {
             // Live values: the talk and dictation keys can both be changed.
-            liveShortcutLine("Ask by voice", "Hold " + PushToTalkShortcutKeys.currentKeyCapsuleLabels.joined(separator: " + "))
-            liveShortcutLine("Type a question", "Double-tap control")
-            liveShortcutLine("Dictate", "Hold " + Self.dictationKeyNames)
-            liveShortcutLine("Hands-free dictation", "Double-tap " + Self.dictationKeyNames + " (again to stop)")
+            LiveShortcutRow(title: "Ask by voice", gestureWord: "Hold", keyLabels: PushToTalkShortcutKeys.currentKeyCapsuleLabels)
+            LiveShortcutRow(title: "Type a question", gestureWord: "Double-tap", keyLabels: ["control"])
+            LiveShortcutRow(title: "Dictate", gestureWord: "Hold", keyLabels: Self.dictationKeyLabels)
+            LiveShortcutRow(title: "Hands-free dictation", gestureWord: "Double-tap", keyLabels: Self.dictationKeyLabels, noteAfterKeys: "again to stop")
             SettingsCaption(text: "These work in any app. Change the talk keys at the top of this tab, and the dictation keys under Dictation.")
         }
     }
@@ -751,20 +738,19 @@ struct PrivacySettingsSection: View {
             summary: "What leaves this Mac",
             startsExpanded: startsExpanded
         ) {
-            fact(
-                icon: "camera.viewfinder",
+            SettingsLabelWithCaption(
                 title: "Your screen",
-                text: "A screenshot is taken when you ask something (the talk key or the text box), and while Teachy is helping with steps you started: a walkthrough or a task. It goes to publik to answer that moment. Teachy never watches when you haven't asked."
+                caption: "A screenshot is taken only when you ask (talk key or text box) and during a walkthrough or task you started. It goes to publik to answer that moment. Teachy never watches unasked."
             )
-            fact(
-                icon: "waveform",
+            SettingsLabelWithCaption(
                 title: "Your voice",
-                text: "What you say goes to publik to be turned into text, and Teachy's answers go to publik to be spoken. If publik can't be reached, your Mac's own dictation and voice are used."
+                caption: "What you say goes to publik to become text, and Teachy's answers go to publik to be spoken. If publik can't be reached, your Mac's own dictation and voice are used."
             )
-            fact(
-                icon: "internaldrive",
+            SettingsLabelWithCaption(
                 title: "Stays on this Mac",
-                text: "Memory, your dictation dictionary and your dictation history are plain files in ~/.teachy. Read, edit or delete them any time."
+                styledCaption: Text("Memory, your dictation dictionary and your dictation history are plain files in ")
+                    + Text("~/.teachy").font(DS.Fonts.mono(11))
+                    + Text(". Read, edit or delete them any time.")
             )
 
             SettingsDivider()
@@ -774,22 +760,6 @@ struct PrivacySettingsSection: View {
                 caption: "Off: Teachy never reads cookies from Safari, Chrome or other browsers. On: agent tools can open sites as you, using the sign-ins already in your browser.",
                 isOn: $settings.allowBrowserCookieTools
             )
-        }
-    }
-
-    private func fact(icon: String, title: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(DS.Colors.learnAccent)
-                .frame(width: 16)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.Colors.textPrimary)
-                SettingsCaption(text: text)
-            }
         }
     }
 }
@@ -818,55 +788,37 @@ struct AdvancedSettingsSection: View {
             summary: isConfigured ? "ElevenLabs key set" : nil,
             startsExpanded: startsExpanded
         ) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Your own ElevenLabs key")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(DS.Colors.textPrimary)
-                SettingsCaption(text: "Optional. Used for walkthrough steps and short notices only, and billed by ElevenLabs. Spoken answers use the voice you picked above.")
-            }
+            SettingsLabelWithCaption(
+                title: "Your own ElevenLabs key",
+                caption: "Optional. Used for walkthrough steps and short notices only, and billed by ElevenLabs. Spoken answers use the voice you picked above."
+            )
 
             if isConfigured {
                 HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.learnAccent)
+                    TeachyStatusMark(kind: .done)
                     Text("Key saved")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(DS.Fonts.data)
                         .foregroundColor(DS.Colors.textSecondary)
                     Spacer()
-                    Button {
+                    Button("Remove") {
                         TeachyElevenLabsKeyStore.apiKey = nil
                         apiKeyInput = ""
                         errorMessage = nil
                         isConfigured = false
-                    } label: {
-                        Text("Remove")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.Colors.destructiveText)
                     }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
+                    .teachyButton(.danger, size: .compact)
                 }
             } else {
                 HStack(spacing: 6) {
                     SecureField(
                         "",
                         text: $apiKeyInput,
-                        prompt: Text("ElevenLabs API key").foregroundColor(DS.Colors.textTertiary)
+                        prompt: Text("ElevenLabs API key").font(DS.Fonts.body).foregroundColor(DS.Colors.textQuaternary)
                     )
                         .textFieldStyle(.plain)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(DS.Fonts.mono(12))
                         .foregroundColor(DS.Colors.textPrimary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.white.opacity(0.06))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(Color.white.opacity(0.1), lineWidth: 0.75)
-                        )
+                        .settingsFieldWell()
                         .onSubmit(validateAndSave)
 
                     Button(action: validateAndSave) {
@@ -874,26 +826,19 @@ struct AdvancedSettingsSection: View {
                             if isValidating {
                                 ProgressView().controlSize(.mini)
                             } else {
-                                Text("Save").font(.system(size: 12, weight: .semibold))
+                                Text("Save")
                             }
                         }
-                        .foregroundColor(.white)
-                        .frame(width: 44)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(DS.Colors.learnAccent)
-                        )
+                        // The spinner is narrower than the word: hold the button's width.
+                        .frame(minWidth: 30)
                     }
-                    .buttonStyle(.plain)
+                    .teachyButton(.secondary)
                     .disabled(trimmedKey.isEmpty || isValidating)
-                    .opacity(trimmedKey.isEmpty || isValidating ? 0.45 : 1)
-                    .pointerCursor(isEnabled: !trimmedKey.isEmpty && !isValidating)
                 }
 
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.system(size: 10))
+                        .font(DS.Fonts.caption)
                         .foregroundColor(DS.Colors.destructiveText)
                         .fixedSize(horizontal: false, vertical: true)
                 }

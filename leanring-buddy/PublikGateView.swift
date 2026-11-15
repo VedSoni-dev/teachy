@@ -15,52 +15,40 @@ struct PublikGateView: View {
     @ObservedObject private var session = TeachyPublikSession.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             if let screen = gate.screen {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(screen.title)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(DS.Colors.textPrimary)
+                VStack(alignment: .leading, spacing: 10) {
+                    TeachySetupStepHeader(headline: screen.title, explanation: screen.body)
 
-                    Text(screen.body)
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.textTertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-
+                    // publik's note is always about something it is waiting on the
+                    // person for (finishing sign-in or a plan in the browser).
                     if let note = screen.note {
-                        Text(note)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.Colors.learnAccent)
-                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(alignment: .firstTextBaseline, spacing: 7) {
+                            TeachyStatusMark(kind: .needsYou)
+                            Text(note)
+                                .font(DS.Fonts.caption)
+                                .foregroundColor(DS.Colors.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
 
-                VStack(spacing: 8) {
-                    ForEach(Array(screen.buttons.enumerated()), id: \.offset) { index, button in
-                        Button {
+                // publik's first button is the way forward; any other is a way round it.
+                HStack(spacing: 6) {
+                    ForEach(Array(screen.buttons.enumerated()), id: \.offset) { buttonIndex, button in
+                        Button(button.label) {
                             gate.press(button.action)
-                        } label: {
-                            Text(button.label)
-                                .font(.system(size: 12, weight: .semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(index == 0 ? DS.Colors.learnAccent : Color.white.opacity(0.08))
-                                )
-                                .foregroundColor(index == 0 ? .white : DS.Colors.textPrimary)
                         }
-                        .buttonStyle(.plain)
-                        .pointerCursor()
+                        .teachyButton(buttonIndex == 0 ? .primary : .quiet)
                     }
                 }
             } else {
                 HStack(spacing: 8) {
                     ProgressView()
-                        .scaleEffect(0.6)
+                        .controlSize(.small)
                     Text("Connecting to publik…")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.textTertiary)
+                        .font(DS.Fonts.body)
+                        .foregroundColor(DS.Colors.textSecondary)
                 }
                 .padding(.vertical, 6)
             }
@@ -74,34 +62,28 @@ struct PublikBillingBanner: View {
 
     var body: some View {
         if let notice = session.billingNotice {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "creditcard.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(DS.Colors.warning)
-                    Text(notice.message)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(DS.Colors.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            HStack(alignment: .center, spacing: 10) {
+                TeachyStatusMark(kind: .needsYou, sideLength: 16)
+
+                Text(notice.message)
+                    .font(DS.Fonts.body)
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 12)
+
                 if notice.topUpURL != nil {
-                    Button {
+                    Button("Add credit on publik") {
                         session.openTopUp()
-                    } label: {
-                        Text("Add credit on publik")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(DS.Colors.textPrimary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Capsule().fill(Color.white.opacity(0.1)))
                     }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
+                    .teachyLinkButton(color: DS.Colors.warningText)
                 }
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassCard(tint: DS.Colors.warning)
+            .padding(.vertical, 11)
+            .teachyGroup()
+            // The same inset as the Home tab under it, so the two share one left edge.
+            .padding(.horizontal, 6)
+            .padding(.top, 6)
             .padding(.bottom, 10)
             .task {
                 // Clears itself once credit lands.
@@ -115,67 +97,69 @@ struct PublikBillingBanner: View {
 }
 
 /// Home tab: who is signed in, how AI is paid for, and a way to change it.
+/// The first row of Home's settings group, closed until clicked like the rows
+/// under it.
 struct PublikAccountSection: View {
     @ObservedObject private var session = TeachyPublikSession.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("AI")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundColor(DS.Colors.textPrimary)
+        SettingsDisclosureCard(
+            icon: "person.crop.circle",
+            title: "Account",
+            summary: howAIIsPaidFor.rowSummary
+        ) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(signedInFact)
+                    .font(DS.Fonts.data)
+                    .foregroundColor(DS.Colors.textPrimary)
+                Text(howAIIsPaidFor.fact)
+                    .font(DS.Fonts.data)
+                    .foregroundColor(DS.Colors.textPrimary)
+            }
 
-            Text(summaryLine)
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
+            Text("Teachy picks the right model for each moment: quick checks, coaching and planning each get their own tier.")
+                .font(DS.Fonts.caption)
+                .foregroundColor(DS.Colors.textSecondary)
+                .lineSpacing(1.5)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("Teachy picks the right model for each moment — quick checks, coaching, and planning each get their own tier.")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 8) {
-                Button {
+            HStack(spacing: 12) {
+                Button("Change how I pay for AI") {
                     session.changePaymentChoice()
-                } label: {
-                    Text("Change how I pay for AI")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(DS.Colors.textPrimary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.white.opacity(0.1)))
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
+                .teachyButton(.secondary, size: .compact)
 
                 if session.choice == "publik", let wallet = session.wallet, let url = URL(string: wallet.topUpURL) {
-                    Button {
+                    Button("publik wallet") {
                         NSWorkspace.shared.open(url)
-                    } label: {
-                        Text("publik wallet")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.Colors.textTertiary)
                     }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
+                    .teachyLinkButton()
                 }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard()
         .task { await session.refreshWallet() }
     }
 
-    private var summaryLine: String {
-        let who = session.wallet?.handle.map { "Signed in to publik as @\($0)." } ?? "Signed in to publik."
+    /// Who publik says is signed in, with the handle when it has given one.
+    private var signedInFact: String {
+        session.wallet?.handle.map { "Signed in to publik as @\($0)" } ?? "Signed in to publik"
+    }
+
+    /// What pays for AI: the person's own OpenRouter key, their publik plan, or
+    /// their publik balance. `rowSummary` is the few words shown at the end of
+    /// the row while it is closed; `fact` is the line inside the opened row.
+    private var howAIIsPaidFor: (rowSummary: String, fact: String) {
         guard session.choice == "publik" else {
-            return "\(who) AI runs on your own OpenRouter key."
+            return ("Own OpenRouter key", "AI runs on your own OpenRouter key")
         }
-        guard let wallet = session.wallet else { return "\(who) AI runs on publik." }
+        guard let wallet = session.wallet else {
+            return ("publik", "AI runs on publik")
+        }
         if wallet.planKind == "plan" {
-            return "\(who) AI runs on your publik plan (\(wallet.planLabel ?? "publik"))."
+            let planLabel = wallet.planLabel ?? "publik"
+            return ("publik plan \u{00B7} \(planLabel)", "AI runs on your publik plan (\(planLabel))")
         }
-        return "\(who) AI runs on publik. Balance: " + String(format: "$%.2f.", Double(wallet.balanceMicros) / 1_000_000)
+        let balanceLeft = String(format: "$%.2f left", Double(wallet.balanceMicros) / 1_000_000)
+        return ("publik \u{00B7} \(balanceLeft)", "AI runs on publik \u{00B7} \(balanceLeft)")
     }
 }

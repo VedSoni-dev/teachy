@@ -3,7 +3,8 @@
 //  leanring-buddy
 //
 //  Root notch UI — mirrors boring.notch ContentView:
-//  black NotchShape, closed live-activity wings, spring open height, hover chin.
+//  system glass in the NotchShape (lightly dimmed closed, more so open),
+//  closed live-activity wings, spring open height, hover chin.
 //
 
 import AppKit
@@ -15,7 +16,6 @@ struct ClickyNotchRootView: View {
 
     @Namespace private var notchNamespace
     @State private var gestureProgress: CGFloat = 0
-    @State private var idleIconPulseScale: CGFloat = 1.0
 
     private var geometry: NotchScreenGeometry {
         notchManager.currentNotchGeometry()
@@ -65,14 +65,14 @@ struct ClickyNotchRootView: View {
         if !notchManager.isExpanded && isLiveActivityActive {
             width += 2 * wingSize + 20
         } else if !notchManager.isExpanded {
-            // Symmetric wings keep the black center aligned with the camera;
+            // Symmetric wings keep the center aligned with the camera;
             // without a left spacer, centering slides the icon under the housing.
             width += 2 * idleRightWingWidth + idleIconGapFromNotch
         }
         return width
     }
 
-    /// Right wing wide enough for the glowing Clicky triangle.
+    /// Right wing wide enough for the pointer triangle.
     private var idleRightWingWidth: CGFloat {
         max(wingSize + 14, 40)
     }
@@ -92,21 +92,10 @@ struct ClickyNotchRootView: View {
                             : ClickyNotchSizing.cornerRadiusInsets.closed.bottom
                     )
                     .padding([.horizontal, .bottom], notchManager.isExpanded ? 12 : 0)
-                    .background(Color.black)
                     .clipShape(currentNotchShape)
-                    .overlay(alignment: .top) {
-                        // Seals the top edge against the bezel (boring.notch hairline).
-                        Rectangle()
-                            .fill(Color.black)
-                            .frame(height: 1)
-                            .padding(.horizontal, topCornerRadius)
-                    }
-                    .shadow(
-                        color: (notchManager.isExpanded || notchManager.isHoveringNotch)
-                            ? Color.black.opacity(0.7)
-                            : .clear,
-                        radius: 6
-                    )
+                    // No drawn shadow and no black hairline: glass brings its own
+                    // depth, and either would show through it as a smudge.
+                    .background { notchSurface }
 
                 mainLayout
                     .frame(height: notchManager.isExpanded ? ClickyNotchSizing.openNotchSize.height : nil)
@@ -184,6 +173,20 @@ struct ClickyNotchRootView: View {
         }
     }
 
+    /// What the notch is made of: system glass in the notch's silhouette, closed
+    /// and open (solid black with Reduce Transparency). The same layer stays
+    /// put and its shape grows, so opening reads as one pane unfolding. Closed it
+    /// is dimmed lightly so it looks clear at rest, and a little lighter still
+    /// under the pointer; open it is dimmed more so small text stays readable.
+    private var notchSurface: some View {
+        TeachyGlassSurface(shape: currentNotchShape, dimming: notchSurfaceDimming, isClear: !notchManager.isExpanded)
+    }
+
+    private var notchSurfaceDimming: Double {
+        if notchManager.isExpanded { return TeachyGlass.panelDimming }
+        return notchManager.isHoveringNotch ? TeachyGlass.restingDimming * 0.5 : TeachyGlass.restingDimming
+    }
+
     private var gestureScale: CGFloat {
         guard gestureProgress != 0 else { return 1 }
         return max(0.85, 1 + gestureProgress * 0.01)
@@ -229,13 +232,12 @@ struct ClickyNotchRootView: View {
 
     private var idleClosedRow: some View {
         HStack(spacing: 0) {
-            // Matching left spacer — keeps the black center locked to the camera
+            // Matching left spacer — keeps the clear center locked to the camera
             // so the Clicky icon on the right sits fully past the housing.
             Color.clear
                 .frame(width: idleRightWingWidth, height: wingSize)
 
-            Rectangle()
-                .fill(Color.black)
+            Color.clear
                 .frame(width: max(0, closedNotchWidth))
 
             Color.clear
@@ -247,34 +249,15 @@ struct ClickyNotchRootView: View {
         .frame(height: closedNotchHeight, alignment: .center)
     }
 
-    /// Clicky triangle past the camera — glowing so idle is obvious.
+    /// Teachy's pointer past the camera: one crisp triangle in the person's colour.
+    /// It sits still. Nothing in the notch moves until something is happening.
     private var idleClickyIcon: some View {
-        ZStack {
-            Triangle()
-                .fill(companionManager.selectedCursorColor.displayColor)
-                .frame(width: 16, height: 16)
-                .rotationEffect(.degrees(-35))
-                .blur(radius: 7)
-                .opacity(0.55)
-                .scaleEffect(idleIconPulseScale * 1.35)
-
-            Triangle()
-                .fill(companionManager.selectedCursorColor.displayColor)
-                .frame(width: 12, height: 12)
-                .rotationEffect(.degrees(-35))
-                .shadow(
-                    color: companionManager.selectedCursorColor.displayColor.opacity(0.7),
-                    radius: 4
-                )
-                .scaleEffect(idleIconPulseScale)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        .matchedGeometryEffect(id: "clickyCursor", in: notchNamespace)
-        .onAppear {
-            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
-                idleIconPulseScale = 1.12
-            }
-        }
+        Triangle()
+            .fill(companionManager.selectedCursorColor.displayColor)
+            .frame(width: 12, height: 12)
+            .rotationEffect(.degrees(-35))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .matchedGeometryEffect(id: "clickyCursor", in: notchNamespace)
     }
 
     // MARK: - Closed: live activity (listening / thinking / speaking / agent job)
@@ -285,13 +268,12 @@ struct ClickyNotchRootView: View {
                 .frame(width: wingSize, height: wingSize)
                 .matchedGeometryEffect(id: "clickyCursor", in: notchNamespace)
 
-            Rectangle()
-                .fill(Color.black)
+            Color.clear
                 .overlay {
                     if companionManager.voiceState != .idle {
                         Text(liveStatusLabel)
-                            .font(.system(size: 10, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Color.white.opacity(0.55))
+                            .font(DS.Fonts.data)
+                            .foregroundStyle(DS.Colors.textSecondary)
                             .lineLimit(1)
                             .opacity(0) // reserved for sneak-peek style later
                     }
@@ -315,20 +297,10 @@ struct ClickyNotchRootView: View {
     }
 
     private var closedCursorBadge: some View {
-        ZStack {
-            Triangle()
-                .fill(companionManager.selectedCursorColor.displayColor)
-                .frame(width: wingSize * 0.85, height: wingSize * 0.85)
-                .rotationEffect(.degrees(-35))
-                .blur(radius: 8)
-                .opacity(companionManager.voiceState == .listening ? 0.55 : 0.25)
-                .scaleEffect(1.35)
-
-            Triangle()
-                .fill(companionManager.selectedCursorColor.displayColor)
-                .frame(width: max(10, wingSize * 0.55), height: max(10, wingSize * 0.55))
-                .rotationEffect(.degrees(-35))
-        }
+        Triangle()
+            .fill(companionManager.selectedCursorColor.displayColor)
+            .frame(width: max(10, wingSize * 0.55), height: max(10, wingSize * 0.55))
+            .rotationEffect(.degrees(-35))
     }
 
     private var liveStatusLabel: String {
@@ -377,31 +349,17 @@ struct ClickyNotchRootView: View {
     }
 }
 
-// MARK: - Hover icon (boring.notch HoverButton)
+// MARK: - Header icon button
 
 private struct ClickyNotchHoverIconButton: View {
     let systemName: String
     let action: () -> Void
-    @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 30, height: 30)
-                .background(
-                    Capsule()
-                        .fill(isHovering ? Color.gray.opacity(0.25) : Color.black)
-                )
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .onHover { hovering in
-            withAnimation(.smooth(duration: 0.25)) {
-                isHovering = hovering
-            }
-        }
+        .teachyIconButton(sideLength: 28)
     }
 }
 

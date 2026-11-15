@@ -195,23 +195,17 @@ private struct CompanionResponseOverlayView: View {
 
     var body: some View {
         if viewModel.isShowingResponse {
+            // What Teachy says, on a floating tile. No shadow of its own: the tile
+            // brings its depth, and the panel is sized to the bubble.
             Text(viewModel.streamingResponseText.isEmpty ? "..." : viewModel.streamingResponseText)
-                .font(.system(size: 13, weight: .regular))
+                .font(DS.Fonts.voice)
                 .foregroundColor(DS.Colors.textPrimary)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 300, alignment: .leading)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(DS.Colors.surface1.opacity(0.95))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(DS.Colors.borderSubtle.opacity(0.5), lineWidth: 0.8)
-                        )
-                        .shadow(color: Color.black.opacity(0.35), radius: 16, x: 0, y: 8)
-                )
+                .teachyTile(cornerRadius: 14)
         }
     }
 }

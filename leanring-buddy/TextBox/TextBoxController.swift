@@ -9,11 +9,13 @@
 //
 //  The panel is a non-activating NSPanel that can become key, so typing works
 //  while the app the person was in stays the active app and none of Teachy's
-//  other windows come forward. Built in plain AppKit so focus is set the moment
-//  it opens.
+//  other windows come forward. The field is plain AppKit so focus is set the
+//  moment it opens; the tile around it, Teachy's pointer mark and the key hints
+//  are drawn by the design system (docs/DESIGN.md).
 //
 
 import AppKit
+import SwiftUI
 
 /// Borderless panels refuse key status unless told otherwise.
 final class TextBoxPanel: NSPanel {
@@ -23,6 +25,78 @@ final class TextBoxPanel: NSPanel {
 
 private final class TextBoxContentView: NSView {
     override var isFlipped: Bool { true }
+}
+
+/// Sizes shared by the AppKit field and the SwiftUI tile drawn behind it.
+private enum TextBoxMetrics {
+    static let width: CGFloat = 440
+    static let horizontalPadding: CGFloat = 14
+    static let topPadding: CGFloat = 13
+    static let pointerMarkSideLength: CGFloat = 10
+    static let pointerMarkGap: CGFloat = 9
+    static let hintGap: CGFloat = 9
+    /// The height of a `KeyboardKeyLabel`.
+    static let hintHeight: CGFloat = 20
+    static let bottomPadding: CGFloat = 11
+    static let maximumLines: CGFloat = 5
+    /// `DS.Fonts.body` as an NSFont: the field is an AppKit text view.
+    static let font = NSFont.systemFont(ofSize: 13, weight: .regular)
+    static var textX: CGFloat { horizontalPadding + pointerMarkSideLength + pointerMarkGap }
+    static var textWidth: CGFloat { width - textX - horizontalPadding }
+}
+
+/// Everything in the text box except the typed text: the tile it sits on,
+/// Teachy's pointer mark beside the first line, and the key hints under the field.
+private struct TextBoxTileView: View {
+    /// The person's pointer colour. The box is open and waiting for them, so it is live.
+    let pointerColor: Color
+    /// The height of one line of the field, so the pointer mark sits level with the first line.
+    let firstLineHeight: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            TeachyPointerShape()
+                .fill(pointerColor)
+                .frame(width: TextBoxMetrics.pointerMarkSideLength, height: TextBoxMetrics.pointerMarkSideLength)
+                .frame(height: firstLineHeight)
+                .accessibilityHidden(true)
+            Spacer(minLength: 0)
+            keyHints
+                .frame(height: TextBoxMetrics.hintHeight)
+                .padding(.leading, TextBoxMetrics.textX - TextBoxMetrics.horizontalPadding)
+        }
+        .padding(.top, TextBoxMetrics.topPadding)
+        .padding(.bottom, TextBoxMetrics.bottomPadding)
+        .padding(.horizontal, TextBoxMetrics.horizontalPadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .teachyTile()
+    }
+
+    private var keyHints: some View {
+        HStack(spacing: 5) {
+            KeyboardKeyLabel(text: "return")
+            Text("send")
+                .padding(.trailing, 7)
+            KeyboardKeyLabel(text: "shift")
+            KeyboardKeyLabel(text: "return")
+            Text("new line")
+                .padding(.trailing, 7)
+            KeyboardKeyLabel(text: "esc")
+            Text("close")
+        }
+        .font(DS.Fonts.caption)
+        .foregroundColor(DS.Colors.textSecondary)
+        .lineLimit(1)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("return to send  ·  shift + return for a new line  ·  esc to close")
+    }
+}
+
+/// Hosts `TextBoxTileView` behind the field. It is only drawing, so clicks pass
+/// through it to the panel, which is what lets the box be dragged by its background.
+private final class TextBoxTileHostingView: NSHostingView<TextBoxTileView> {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 @MainActor
@@ -39,23 +113,9 @@ final class TextBoxController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private(set) var textView: NSTextView?
     private var scrollView: NSScrollView?
     private var placeholderLabel: NSTextField?
-    private var hintLabel: NSTextField?
-    private var accentDot: NSView?
+    private var tileHostingView: TextBoxTileHostingView?
 
-    private enum Metrics {
-        static let width: CGFloat = 440
-        static let horizontalPadding: CGFloat = 14
-        static let topPadding: CGFloat = 12
-        static let dotSize: CGFloat = 8
-        static let dotGap: CGFloat = 10
-        static let hintGap: CGFloat = 6
-        static let hintHeight: CGFloat = 13
-        static let bottomPadding: CGFloat = 9
-        static let maximumLines: CGFloat = 5
-        static let font = NSFont.systemFont(ofSize: 15, weight: .regular)
-        static var textX: CGFloat { horizontalPadding + dotSize + dotGap }
-        static var textWidth: CGFloat { width - textX - horizontalPadding }
-    }
+    private typealias Metrics = TextBoxMetrics
 
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -72,7 +132,7 @@ final class TextBoxController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         self.panel = panel
 
         textView?.string = ""
-        accentDot?.layer?.backgroundColor = TeachySettings.currentCursorNSColor.cgColor
+        tileHostingView?.rootView = makeTileView()
         textView?.insertionPointColor = TeachySettings.currentCursorNSColor
         updatePlaceholder()
 
@@ -196,18 +256,7 @@ final class TextBoxController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         let textHeight = contentView.bounds.height - panelHeight(forTextHeight: 0)
         scrollView?.frame = NSRect(x: Metrics.textX, y: Metrics.topPadding, width: Metrics.textWidth, height: textHeight)
         placeholderLabel?.frame = NSRect(x: Metrics.textX, y: Metrics.topPadding, width: Metrics.textWidth, height: lineHeight)
-        accentDot?.frame = NSRect(
-            x: Metrics.horizontalPadding,
-            y: Metrics.topPadding + (lineHeight - Metrics.dotSize) / 2,
-            width: Metrics.dotSize,
-            height: Metrics.dotSize
-        )
-        hintLabel?.frame = NSRect(
-            x: Metrics.textX,
-            y: Metrics.topPadding + textHeight + Metrics.hintGap,
-            width: Metrics.textWidth,
-            height: Metrics.hintHeight
-        )
+        // The pointer mark and the key hints are laid out by the tile view, which fills the panel.
     }
 
     private func updatePlaceholder() {
@@ -215,6 +264,11 @@ final class TextBoxController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     }
 
     // MARK: Building
+
+    /// The tile in the person's current pointer colour, read fresh each time the box opens.
+    private func makeTileView() -> TextBoxTileView {
+        TextBoxTileView(pointerColor: Color(nsColor: TeachySettings.currentCursorNSColor), firstLineHeight: lineHeight)
+    }
 
     private func makePanel() -> TextBoxPanel {
         let initialSize = NSSize(width: Metrics.width, height: panelHeight(forTextHeight: lineHeight))
@@ -239,31 +293,18 @@ final class TextBoxController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
         let contentView = TextBoxContentView(frame: NSRect(origin: .zero, size: initialSize))
         contentView.wantsLayer = true
-        contentView.layer?.cornerRadius = 14
+        contentView.layer?.cornerRadius = DS.CornerRadius.tile
         contentView.layer?.cornerCurve = .continuous
         contentView.layer?.masksToBounds = true
-        contentView.layer?.borderWidth = 0.75
-        contentView.layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
 
-        let background = NSVisualEffectView(frame: contentView.bounds)
-        background.autoresizingMask = [.width, .height]
-        background.material = .hudWindow
-        background.blendingMode = .behindWindow
-        background.state = .active
-        contentView.addSubview(background)
-
-        // A dark wash over the blur so white text stays readable on bright pages.
-        let wash = NSView(frame: contentView.bounds)
-        wash.autoresizingMask = [.width, .height]
-        wash.wantsLayer = true
-        wash.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.45).cgColor
-        contentView.addSubview(wash)
-
-        let dot = NSView()
-        dot.wantsLayer = true
-        dot.layer?.cornerRadius = Metrics.dotSize / 2
-        contentView.addSubview(dot)
-        accentDot = dot
+        // The box floats over the screen, so it is a tile; the design system draws it.
+        let tileHostingView = TextBoxTileHostingView(rootView: makeTileView())
+        tileHostingView.frame = contentView.bounds
+        tileHostingView.autoresizingMask = [.width, .height]
+        // The panel sizes itself from the typed text, not from this view.
+        tileHostingView.sizingOptions = []
+        contentView.addSubview(tileHostingView)
+        self.tileHostingView = tileHostingView
 
         let scrollView = NSScrollView()
         scrollView.drawsBackground = false
@@ -277,7 +318,7 @@ final class TextBoxController: NSObject, NSTextViewDelegate, NSWindowDelegate {
         textView.importsGraphics = false
         textView.allowsUndo = true
         textView.font = Metrics.font
-        textView.textColor = .white
+        textView.textColor = NSColor(DS.Colors.textPrimary)
         textView.drawsBackground = false
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
@@ -296,16 +337,9 @@ final class TextBoxController: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
         let placeholder = NSTextField(labelWithString: "Ask Teachy anything…")
         placeholder.font = Metrics.font
-        placeholder.textColor = NSColor.white.withAlphaComponent(0.38)
+        placeholder.textColor = NSColor(DS.Colors.textQuaternary)
         contentView.addSubview(placeholder)
         placeholderLabel = placeholder
-
-        let hint = NSTextField(labelWithString: "return to send  ·  shift + return for a new line  ·  esc to close")
-        hint.font = .systemFont(ofSize: 10, weight: .regular)
-        hint.textColor = NSColor.white.withAlphaComponent(0.34)
-        hint.lineBreakMode = .byTruncatingTail
-        contentView.addSubview(hint)
-        hintLabel = hint
 
         panel.contentView = contentView
         return panel

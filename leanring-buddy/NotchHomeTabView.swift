@@ -2,10 +2,11 @@
 //  NotchHomeTabView.swift
 //  leanring-buddy
 //
-//  Home tab content for the notch panel: how to talk to Teachy, the publik
-//  account, then settings as collapsed cards (voice, dictation, shortcuts,
-//  cursor, memory, privacy, updates, advanced) and the feedback link.
-//  The settings cards themselves live in Settings/SettingsSections.swift.
+//  Home tab content for the notch panel, top to bottom: how to talk to Teachy,
+//  the other ways in (chat, always-on, typing, files), agents and their jobs,
+//  connectors, drawings, memory, then settings as a grouped list of rows that
+//  open in place, and the feedback links.
+//  The settings rows themselves live in Settings/SettingsSections.swift.
 //
 
 import SwiftUI
@@ -16,38 +17,142 @@ struct NotchHomeTabView: View {
     @ObservedObject private var softwareUpdater = TeachySoftwareUpdater.shared
     @ObservedObject private var settings = TeachySettings.shared
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            pushToTalkInstructions
+    /// Space between the sections of the page.
+    private let sectionSpacing: CGFloat = 24
 
-            HStack(spacing: 8) {
+    var body: some View {
+        VStack(alignment: .leading, spacing: sectionSpacing) {
+            howToTalkSection
+
+            quickActionsSection
+
+            AgentsSection()
+
+            ConnectorsSection()
+
+            DrawingsSection()
+
+            BrainMemorySection()
+
+            settingsSection
+
+            footerLinks
+        }
+        .padding(.horizontal, 6)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
+    }
+
+    // MARK: - How to talk
+
+    /// The one line the panel is about, then the three things you can do with it.
+    private var howToTalkSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            PushToTalkShortcutPickerRow(
+                shortcutMonitor: companionManager.globalPushToTalkShortcutMonitor
+            )
+
+            HStack(alignment: .top, spacing: 0) {
+                howToTalkColumn(
+                    symbolName: "text.bubble",
+                    title: "Ask",
+                    explanation: "Anything on your screen. Teachy answers out loud, and points or draws right on it."
+                )
+                howToTalkColumnDivider
+                howToTalkColumn(
+                    symbolName: "lasso",
+                    title: "Circle",
+                    explanation: "While you hold the keys, move the pointer around the thing you mean."
+                )
+                howToTalkColumnDivider
+                howToTalkColumn(
+                    symbolName: "wand.and.stars",
+                    title: "Hand it off",
+                    explanation: "Say \u{201C}do it for me\u{201D} and it takes the job. It asks before anything risky."
+                )
+            }
+            .padding(.vertical, 13)
+            .teachyGroup(horizontalPadding: 0)
+        }
+    }
+
+    private func howToTalkColumn(symbolName: String, title: String, explanation: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Image(systemName: symbolName)
+                    .font(DS.Fonts.sans(12, weight: .medium))
+                    .foregroundColor(DS.Colors.pointer)
+                Text(title)
+                    .font(DS.Fonts.itemTitle)
+                    .foregroundColor(DS.Colors.textPrimary)
+            }
+            Text(explanation)
+                .font(DS.Fonts.caption)
+                .foregroundColor(DS.Colors.textSecondary)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var howToTalkColumnDivider: some View {
+        Rectangle()
+            .fill(DS.Colors.hairline)
+            .frame(width: 1)
+            .padding(.vertical, 2)
+    }
+
+    // MARK: - Quick actions
+
+    /// The other ways in: the chat window, always-on listening, typing, dropping a file.
+    private var quickActionsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
                 Button {
                     ChatWindowController.shared.show()
                 } label: {
-                    Label("Open chat window", systemImage: "bubble.left.and.bubble.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(DS.Colors.textPrimary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.white.opacity(0.1)))
+                    HStack(spacing: 6) {
+                        Image(systemName: "bubble.left.and.bubble.right")
+                            .font(DS.Fonts.sans(10.5, weight: .medium))
+                        Text("Open chat")
+                        Text("⌃⌘A")
+                            .foregroundColor(DS.Colors.textTertiary)
+                    }
+                    .fixedSize()
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
+                .teachyButton(.secondary, size: .compact)
 
-                Text("or press control + command + A · drop files on the notch to attach them")
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.Colors.textTertiary)
+                AlwaysOnPillView(showsNotice: false)
+                    .fixedSize()
+
+                Spacer(minLength: 0)
             }
 
+            HStack(spacing: 5) {
+                Text("Double-tap")
+                KeyboardKeyLabel(text: "control")
+                Text("to type a question. Drop a file on the notch to attach it.")
+            }
+            .font(DS.Fonts.caption)
+            .foregroundColor(DS.Colors.textSecondary)
+            .lineLimit(1)
+
+            AlwaysOnNoticeLine()
+
             AttachmentChipsView(compact: true)
+        }
+    }
 
-            AlwaysOnPillView()
+    // MARK: - Settings
 
-            PublikAccountSection()
+    private var settingsSection: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            TeachySectionTitle(title: "Settings")
 
-            settingsHeader
+            VStack(alignment: .leading, spacing: 0) {
+                PublikAccountSection()
 
-            VStack(alignment: .leading, spacing: 8) {
                 VoiceSettingsSection()
 
                 MicrophoneSettingsSection()
@@ -56,15 +161,9 @@ struct NotchHomeTabView: View {
 
                 ShortcutsSettingsSection()
 
-                cursorColorSection
-
-                ConnectorsSection()
+                pointerColorSection
 
                 BrowserExtensionSection()
-
-                DrawingsSection()
-
-                AgentsSection()
 
                 PrivacySettingsSection()
 
@@ -72,253 +171,203 @@ struct NotchHomeTabView: View {
 
                 AdvancedSettingsSection()
             }
-
-            BrainMemorySection()
-
-            watchIntroAgainButton
-
-            dmFeedbackButton
+            .teachyGroup()
         }
-    }
-
-    private var settingsHeader: some View {
-        Text("SETTINGS")
-            .font(.system(size: 10, weight: .bold))
-            .tracking(0.8)
-            .foregroundColor(DS.Colors.textTertiary)
-            .padding(.leading, 4)
-            .padding(.top, 2)
-            .padding(.bottom, -6)
-    }
-
-    private var pushToTalkInstructions: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            PushToTalkShortcutPickerRow(
-                shortcutMonitor: companionManager.globalPushToTalkShortcutMonitor
-            )
-
-            Text("Ask anything about what's on your screen. Teachy answers out loud, and points or draws right on it.")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text("While you hold the keys, move the pointer to circle the thing you mean.")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text("Say \u{201C}do it for me\u{201D} and it takes the job. It asks before anything risky.")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 6) {
-                Text("Double-tap")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
-                KeyboardKeyLabel(text: "control")
-                Text("to type a question instead.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard()
     }
 
     private var softwareUpdatesSection: some View {
         SettingsDisclosureCard(
             icon: "arrow.triangle.2.circlepath",
             title: "Updates",
-            summary: "Teachy \(softwareUpdater.shortVersionString)"
+            summary: "Version \(softwareUpdater.shortVersionString)"
         ) {
-            Text("Teachy \(softwareUpdater.shortVersionString) (\(softwareUpdater.buildNumberString)). Updates are free and come from GitHub Releases.")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                softwareUpdater.checkForUpdates()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 11, weight: .semibold))
-                    Text("Check for Updates…")
-                        .font(.system(size: 12, weight: .semibold))
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Teachy \(softwareUpdater.shortVersionString) (\(softwareUpdater.buildNumberString))")
+                        .font(DS.Fonts.body)
+                        .foregroundColor(DS.Colors.textPrimary)
+                    Text("Updates are free and come from GitHub Releases.")
+                        .font(DS.Fonts.caption)
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundColor(DS.Colors.textPrimary)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.white.opacity(0.08))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
-                        )
-                )
+
+                Spacer(minLength: 8)
+
+                Button("Check for updates…") {
+                    softwareUpdater.checkForUpdates()
+                }
+                .teachyButton(.secondary, size: .compact)
+                .disabled(!softwareUpdater.canCheckForUpdates)
             }
-            .buttonStyle(.plain)
-            .disabled(!softwareUpdater.canCheckForUpdates)
-            .opacity(softwareUpdater.canCheckForUpdates ? 1 : 0.45)
-            .pointerCursor(isEnabled: softwareUpdater.canCheckForUpdates)
         }
     }
 
-    private var watchIntroAgainButton: some View {
-        Button {
-            companionManager.replayOnboarding()
-            notchManager.collapse()
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "play.rectangle.fill")
-                    .font(.system(size: 11))
-                Text("Watch demo again")
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(DS.Colors.textTertiary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .glassCard(cornerRadius: 8)
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
-    }
+    // MARK: - Pointer colour
 
-    private var cursorColorSection: some View {
+    private var pointerColorSection: some View {
         SettingsDisclosureCard(
             icon: "cursorarrow",
-            title: "Cursor",
+            title: "Pointer",
             summary: companionManager.selectedCursorColor.rawValue.capitalized
         ) {
-            Text("The colour of Teachy's pointer, and of the trail you draw while holding the talk keys.")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
+            Text("The colour of Teachy's pointer and of the trail you draw while holding the talk keys. It is also Teachy's accent colour.")
+                .font(DS.Fonts.caption)
+                .foregroundColor(DS.Colors.textSecondary)
+                .lineSpacing(1.5)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
                 ForEach(ClickyCursorColor.allCases) { cursorColor in
-                    cursorColorOptionButton(cursorColor: cursorColor)
-                }
-            }
-        }
-    }
-
-    private func cursorColorOptionButton(cursorColor: ClickyCursorColor) -> some View {
-        let isSelected = companionManager.selectedCursorColor == cursorColor
-        return Button(action: {
-            companionManager.setSelectedCursorColor(cursorColor)
-            // Same UserDefaults key; this keeps the settings object's copy current.
-            settings.cursorColor = cursorColor
-        }) {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.black.opacity(0.55))
-                .frame(maxWidth: .infinity)
-                .frame(height: 56)
-                .overlay {
-                    ZStack {
-                        Triangle()
-                            .fill(cursorColor.displayColor)
-                            .frame(width: 22, height: 22)
-                            .rotationEffect(.degrees(-35))
-                            .blur(radius: 12)
-                            .opacity(isSelected ? 0.55 : 0.2)
-                            .scaleEffect(1.8)
-
-                        Triangle()
-                            .fill(cursorColor.displayColor)
-                            .frame(width: 14, height: 14)
-                            .rotationEffect(.degrees(-35))
+                    PointerColorOptionButton(
+                        cursorColor: cursorColor,
+                        isSelected: companionManager.selectedCursorColor == cursorColor
+                    ) {
+                        companionManager.setSelectedCursorColor(cursorColor)
+                        // Same UserDefaults key; this keeps the settings object's copy current.
+                        settings.cursorColor = cursorColor
                     }
                 }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(
-                            isSelected ? cursorColor.displayColor : Color.white.opacity(0.1),
-                            lineWidth: isSelected ? 2 : 1
-                        )
-                )
-                .shadow(
-                    color: isSelected ? cursorColor.displayColor.opacity(0.35) : .clear,
-                    radius: 8,
-                    x: 0,
-                    y: 2
-                )
-                .scaleEffect(isSelected ? 1.02 : 1)
+                Spacer(minLength: 0)
+            }
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
     }
 
-    private var dmFeedbackButton: some View {
-        Button(action: {
-            if let url = URL(string: "https://github.com/VedSoni-dev/teachy/issues") {
-                NSWorkspace.shared.open(url)
+    // MARK: - Footer
+
+    private var footerLinks: some View {
+        HStack(spacing: 18) {
+            Button("Watch the demo again") {
+                companionManager.replayOnboarding()
+                notchManager.collapse()
             }
-        }) {
-            HStack(spacing: 8) {
-                Image(systemName: "bubble.left.fill")
-                    .font(.system(size: 11))
-                Text("Give feedback")
-                    .font(.system(size: 11, weight: .medium))
+            .teachyLinkButton()
+
+            Button("Give feedback") {
+                if let url = URL(string: "https://github.com/VedSoni-dev/teachy/issues") {
+                    NSWorkspace.shared.open(url)
+                }
             }
-            .foregroundColor(DS.Colors.textTertiary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .glassCard(cornerRadius: 8)
+            .teachyLinkButton()
+
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
+        .padding(.leading, 2)
     }
 }
 
-/// "Hold [key] + [key] to talk" with a Change button that records any two keys.
-/// Recording runs through the global event tap, so it works even though the
-/// notch panel never becomes the key window.
+/// One pointer colour, drawn the way System Settings draws an accent colour:
+/// a filled swatch, with a ring round the one that is chosen.
+private struct PointerColorOptionButton: View {
+    let cursorColor: ClickyCursorColor
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var isReduceMotionEnabled
+
+    private let swatchDiameter: CGFloat = 24
+    /// The ring sits this far outside the swatch.
+    private let ringGap: CGFloat = 3
+
+    var body: some View {
+        Button {
+            onSelect()
+            DS.Haptics.stateChanged()
+        } label: {
+            ZStack {
+                Circle()
+                    .strokeBorder(cursorColor.displayColor, lineWidth: 2)
+                    .frame(width: swatchDiameter + 2 * (ringGap + 2), height: swatchDiameter + 2 * (ringGap + 2))
+                    .opacity(isSelected ? 1 : 0)
+                    .scaleEffect(isSelected ? 1 : 0.82)
+
+                Circle()
+                    .fill(cursorColor.displayColor)
+                    .frame(width: swatchDiameter, height: swatchDiameter)
+                    .overlay {
+                        // The pointer itself, so the swatch says what the colour is for.
+                        TeachyPointerShape()
+                            .fill(DS.Colors.colorOnPointerColor(named: cursorColor.rawValue))
+                            .frame(width: 9, height: 9)
+                    }
+                    .brightness(isHovered && !isSelected ? 0.08 : 0)
+            }
+            .frame(width: swatchDiameter + 2 * (ringGap + 2), height: swatchDiameter + 2 * (ringGap + 2))
+            .contentShape(Circle())
+            .animation(isReduceMotionEnabled ? DS.Motion.reduced : DS.Motion.standard, value: isSelected)
+            .animation(DS.Motion.hover, value: isHovered)
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .onHover { hovering in isHovered = hovering }
+        .accessibilityLabel("\(cursorColor.rawValue.capitalized) pointer")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Why always-on switched itself off, or which microphone took over. Shown under
+/// the quick actions only when there is something to say.
+private struct AlwaysOnNoticeLine: View {
+    @ObservedObject private var voiceModeController = VoiceModeController.shared
+
+    var body: some View {
+        if let notice = voiceModeController.notice {
+            Text(notice)
+                .font(DS.Fonts.caption)
+                .foregroundColor(DS.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// "Hold [key] [key] and ask." — the headline of the panel — with a Change button
+/// that records any two keys. Recording runs through the global event tap, so it
+/// works even though the notch panel never becomes the key window.
 private struct PushToTalkShortcutPickerRow: View {
     @ObservedObject var shortcutMonitor: GlobalPushToTalkShortcutMonitor
-    /// Bumped when the saved shortcut changes so the key capsules re-read it.
+    /// Bumped when the saved shortcut changes so the key caps re-read it.
     @State private var shortcutRefreshCounter = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+            HStack(alignment: .center, spacing: 8) {
                 if shortcutMonitor.isRecordingNewShortcut {
                     recordingInProgressLabel
                 } else {
                     currentShortcutLabel
                 }
 
-                Spacer(minLength: 0)
+                Spacer(minLength: 8)
 
                 if shortcutMonitor.isRecordingNewShortcut {
-                    shortcutRowButton(title: "Cancel") {
+                    Button("Cancel") {
                         shortcutMonitor.cancelRecordingNewShortcut()
                     }
+                    .teachyButton(.quiet, size: .compact)
                 } else {
                     if !PushToTalkShortcutKeys.isUsingDefaultShortcut {
-                        shortcutRowButton(title: "Reset") {
+                        Button("Reset") {
                             PushToTalkShortcutKeys.resetToDefaultShortcut()
                         }
+                        .teachyButton(.quiet, size: .compact)
                     }
-                    shortcutRowButton(title: "Change") {
+                    Button("Change keys") {
                         shortcutMonitor.beginRecordingNewShortcut()
                     }
+                    .teachyButton(.quiet, size: .compact)
                 }
             }
             .id(shortcutRefreshCounter)
 
             if shortcutMonitor.isRecordingNewShortcut {
                 Text("Press any two keys, one after the other. Esc cancels.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.learnAccent)
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.textSecondary)
             } else if !shortcutMonitor.isEventTapActive {
                 Text("Needs Accessibility permission to listen for your shortcut.")
-                    .font(.system(size: 11))
-                    .foregroundColor(DS.Colors.textTertiary)
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.warningText)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: PushToTalkShortcutKeys.shortcutDidChangeNotification)) { _ in
@@ -331,14 +380,10 @@ private struct PushToTalkShortcutPickerRow: View {
     }
 
     private var currentShortcutLabel: some View {
-        HStack(spacing: 6) {
-            Text("Hold")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(DS.Colors.textPrimary)
-            keyCapsules(labels: PushToTalkShortcutKeys.currentKeyCapsuleLabels)
-            Text("to talk")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(DS.Colors.textPrimary)
+        HStack(alignment: .center, spacing: 8) {
+            headlineText("Hold")
+            keyCaps(labels: PushToTalkShortcutKeys.currentKeyCapsuleLabels)
+            headlineText("and ask.")
         }
     }
 
@@ -349,40 +394,23 @@ private struct PushToTalkShortcutPickerRow: View {
         let placeholderCount = PushToTalkShortcutKeys.numberOfKeysInShortcut - recordedKeyLabels.count
         let labelsWithPlaceholders = recordedKeyLabels + Array(repeating: "…", count: max(0, placeholderCount))
 
-        return HStack(spacing: 6) {
-            Text("New keys")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(DS.Colors.textPrimary)
-            keyCapsules(labels: labelsWithPlaceholders)
+        return HStack(alignment: .center, spacing: 8) {
+            headlineText("New keys")
+            keyCaps(labels: labelsWithPlaceholders)
         }
     }
 
-    private func keyCapsules(labels: [String]) -> some View {
-        HStack(spacing: 6) {
-            ForEach(Array(labels.enumerated()), id: \.offset) { keyIndex, keyLabel in
-                if keyIndex > 0 {
-                    Text("+")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(DS.Colors.textSecondary)
-                }
-                KeyboardKeyLabel(text: keyLabel)
+    private func headlineText(_ text: String) -> some View {
+        Text(text)
+            .font(DS.Fonts.display)
+            .foregroundColor(DS.Colors.textPrimary)
+    }
+
+    private func keyCaps(labels: [String]) -> some View {
+        HStack(spacing: 5) {
+            ForEach(Array(labels.enumerated()), id: \.offset) { _, keyLabel in
+                KeyboardKeyLabel(text: keyLabel, isProminent: true)
             }
         }
-    }
-
-    private func shortcutRowButton(title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(DS.Colors.textSecondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(Color.white.opacity(0.08))
-                )
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
     }
 }

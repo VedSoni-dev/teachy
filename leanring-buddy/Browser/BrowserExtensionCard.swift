@@ -2,7 +2,7 @@
 //  BrowserExtensionCard.swift
 //  leanring-buddy
 //
-//  The settings card for the browser extension, as a plain view: it is given
+//  The settings row for the browser extension, as a plain view: it is given
 //  the connection state and what to do when a button is pressed, and knows
 //  nothing about the bridge. `BrowserExtensionSection` (next file) feeds it
 //  from BrowserBridge; scripts/tests/render_chrome_shots.sh renders it to PNG.
@@ -40,27 +40,34 @@ struct BrowserExtensionCard: View {
             summary: summary,
             startsExpanded: startsExpanded
         ) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Circle()
-                    .fill(dotColor)
-                    .frame(width: 7, height: 7)
-                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-                VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(headline)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DS.Fonts.body)
                         .foregroundColor(DS.Colors.textPrimary)
-                    caption(explanation)
+                    Spacer(minLength: 8)
+                    HStack(spacing: 6) {
+                        TeachyStatusMark(kind: statusKind)
+                        Text(statusWord)
+                            .font(DS.Fonts.data)
+                            .foregroundColor(DS.Colors.textSecondary)
+                    }
                 }
+                caption(explanation)
             }
 
             switch state {
             case .notInstalled:
-                HStack(spacing: 12) {
-                    primaryButton(isInstalling ? "Installing…" : "Install the browser helper", isBusy: isInstalling) {
+                HStack(spacing: 4) {
+                    Button(isInstalling ? "Installing…" : "Install the browser helper") {
                         if canInstall { onInstall() } else { showsSteps = true }
                     }
+                    .teachyButton(.primary, size: .compact)
+                    .disabled(isInstalling)
+
                     if canInstall {
-                        quietButton(showsSteps ? "Hide the steps" : "Do it by hand") { showsSteps.toggle() }
+                        Button(showsSteps ? "Hide the steps" : "Do it by hand") { showsSteps.toggle() }
+                            .teachyButton(.quiet, size: .compact)
                     }
                 }
                 if showsSteps || !canInstall {
@@ -71,12 +78,15 @@ struct BrowserExtensionCard: View {
                 steps([
                     "Open the extensions page in your browser.",
                     "Add the Teachy extension, and leave it switched on.",
-                    "This card turns green by itself. If it does not, restart the browser."
+                    "This row shows Connected by itself. If it does not, restart the browser."
                 ])
-                HStack(spacing: 12) {
-                    primaryButton("Open chrome://extensions", isBusy: false, action: onOpenExtensionsPage)
-                    quietButton("Check again", action: onCheckAgain)
-                    quietButton(isInstalling ? "Installing…" : "Reinstall the helper", action: onInstall)
+                HStack(spacing: 4) {
+                    Button("Open chrome://extensions", action: onOpenExtensionsPage)
+                        .teachyButton(.primary, size: .compact)
+                    Button("Check again", action: onCheckAgain)
+                        .teachyButton(.quiet, size: .compact)
+                    Button(isInstalling ? "Installing…" : "Reinstall the helper", action: onInstall)
+                        .teachyButton(.quiet, size: .compact)
                 }
 
             case .connected:
@@ -89,8 +99,9 @@ struct BrowserExtensionCard: View {
 
             if let message, !message.isEmpty {
                 Text(message)
-                    .font(.system(size: 11))
-                    .foregroundColor(messageIsProblem ? DS.Colors.warningText : DS.Colors.textSecondary)
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(messageIsProblem ? DS.Colors.destructiveText : DS.Colors.textSecondary)
+                    .lineSpacing(1.5)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -117,7 +128,7 @@ struct BrowserExtensionCard: View {
     private var explanation: String {
         switch state {
         case .notInstalled:
-            return "Agents can do things on websites for you, in your own Chrome, Edge, Brave, Arc or Vivaldi, on the sites you are already signed in to. You watch it happen. This installs a small helper so the Teachy extension can reach this app; it talks to nothing else."
+            return "Agents work on websites for you in your own Chrome, Edge, Brave, Arc or Vivaldi, on the sites you are already signed in to, while you watch. This installs a small helper so the Teachy extension can reach this app; it talks to nothing else."
         case .waitingForChrome:
             let browsers = browsersWithHelper.isEmpty ? "your browser" : Self.list(browsersWithHelper)
             return "The helper is installed for \(browsers). Teachy is waiting for the extension to say hello."
@@ -135,11 +146,34 @@ struct BrowserExtensionCard: View {
         }
     }
 
-    private var dotColor: Color {
+    /// An install that failed, or a bridge that could not listen.
+    private var hasProblem: Bool {
+        guard let message else { return false }
+        return messageIsProblem && !message.isEmpty
+    }
+
+    /// The mark beside the status word. Connected wins; then an install that is
+    /// running right now; then a problem; then the state as it stands.
+    private var statusKind: TeachyStatusKind {
+        if case .connected = state { return .done }
+        if isInstalling { return .live }
+        if hasProblem { return .failed }
         switch state {
-        case .notInstalled: return DS.Colors.textTertiary
-        case .waitingForChrome: return DS.Colors.warning
-        case .connected: return DS.Colors.success
+        case .notInstalled: return .waiting
+        case .waitingForChrome: return .live
+        case .connected: return .done
+        }
+    }
+
+    /// One or two words for the state, beside the mark.
+    private var statusWord: String {
+        if case .connected = state { return "Connected" }
+        if isInstalling { return "Installing" }
+        if hasProblem { return "Failed" }
+        switch state {
+        case .notInstalled: return "Not set up"
+        case .waitingForChrome: return "Waiting"
+        case .connected: return "Connected"
         }
     }
 
@@ -147,22 +181,24 @@ struct BrowserExtensionCard: View {
 
     private func caption(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11))
-            .foregroundColor(DS.Colors.textTertiary)
+            .font(DS.Fonts.caption)
+            .foregroundColor(DS.Colors.textSecondary)
+            .lineSpacing(1.5)
             .fixedSize(horizontal: false, vertical: true)
     }
 
     private func steps(_ lines: [String]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(index + 1)")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundColor(DS.Colors.textTertiary)
-                        .frame(width: 12, alignment: .trailing)
-                    Text(line)
-                        .font(.system(size: 11))
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(index + 1).")
+                        .font(DS.Fonts.data)
                         .foregroundColor(DS.Colors.textSecondary)
+                        .frame(width: 14, alignment: .leading)
+                    Text(line)
+                        .font(DS.Fonts.caption)
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .lineSpacing(1.5)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
@@ -171,37 +207,16 @@ struct BrowserExtensionCard: View {
     }
 
     private func fact(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(DS.Colors.learnAccent)
+                .font(DS.Fonts.sans(11, weight: .medium))
+                .foregroundColor(DS.Colors.pointer)
                 .frame(width: 16)
-                .padding(.top, 1)
-            caption(text)
+            Text(text)
+                .font(DS.Fonts.caption)
+                .foregroundColor(DS.Colors.textSecondary)
+                .lineSpacing(1.5)
+                .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    private func primaryButton(_ title: String, isBusy: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(DS.Colors.textOnAccent)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Capsule().fill(DS.Colors.accent.opacity(isBusy ? 0.5 : 1)))
-        }
-        .buttonStyle(.plain)
-        .disabled(isBusy)
-        .pointerCursor(isEnabled: !isBusy)
-    }
-
-    private func quietButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DS.Colors.textTertiary)
-        }
-        .buttonStyle(.plain)
-        .pointerCursor()
     }
 }

@@ -69,29 +69,30 @@ private struct DrivePillView: View {
 
     var body: some View {
         HStack(spacing: DS.Spacing.sm) {
-            Circle()
-                .fill(DS.Colors.learnAccent)
-                .frame(width: 8, height: 8)
+            TeachyStatusMark(kind: .live)
             Text("Teachy is driving")
-                .font(.system(size: 12, weight: .semibold))
+                .font(DS.Fonts.controlCompact)
                 .foregroundColor(DS.Colors.textPrimary)
                 .fixedSize()
             if !model.note.isEmpty {
                 Text("· \(model.note)")
-                    .font(.system(size: 12))
+                    .font(DS.Fonts.data)
                     .foregroundColor(DS.Colors.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            Text("· esc to take it back")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize()
+            HStack(spacing: DS.Spacing.xs) {
+                KeyboardKeyLabel(text: "esc")
+                Text("takes it back")
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.textSecondary)
+            }
+            .fixedSize()
         }
         .padding(.horizontal, DS.Spacing.lg)
-        .padding(.vertical, DS.Spacing.sm)
-        .background(Capsule().fill(DS.Colors.background))
-        .overlay(Capsule().strokeBorder(DS.Colors.learnAccent.opacity(0.6), lineWidth: 1))
+        // 7 pt, not 8: the key cap is 20 pt tall and the pill's panel is 36 pt.
+        .padding(.vertical, 7)
+        .teachyTile(cornerRadius: DS.CornerRadius.pill)
         .frame(maxWidth: 560)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }

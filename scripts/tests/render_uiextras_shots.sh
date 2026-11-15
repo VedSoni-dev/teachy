@@ -9,6 +9,10 @@ APP=leanring-buddy
 swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/DesignSystem.swift" \
   "$APP/Dictation/DictationDictionary.swift" \
+  "$APP/Dictation/DictationShortcut.swift" \
+  "$APP/Dictation/DictationHotkeyStateMachine.swift" \
+  "$APP/Dictation/DictationShortcutPickerRow.swift" \
+  "$APP/PushToTalkShortcutKeys.swift" \
   "$APP/Settings/TeachySettings.swift" \
   "$APP/Settings/TeachySettings+CursorColor.swift" \
   "$APP/Settings/VoicePreviewPlayer.swift" \

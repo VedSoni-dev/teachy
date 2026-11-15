@@ -2,33 +2,11 @@
 //  NotchPanelSharedComponents.swift
 //  leanring-buddy
 //
-//  Small, dependency-free views/helpers shared across the notch panel tab
+//  Small views/helpers shared across the notch panel tab
 //  files (Home, Setup/Onboarding).
 //
 
 import SwiftUI
-
-// MARK: - Keyboard Key Label
-
-struct KeyboardKeyLabel: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium, design: .rounded))
-            .foregroundColor(DS.Colors.textPrimary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(Color.white.opacity(0.1))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .stroke(Color.white.opacity(0.15), lineWidth: 0.5)
-            )
-    }
-}
 
 // MARK: - OpenRouter Model Picker Row
 
@@ -44,8 +22,8 @@ func openRouterModelPickerRow(
 
     return HStack {
         Text(title)
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(DS.Colors.textSecondary)
+            .font(DS.Fonts.bodyEmphasized)
+            .foregroundColor(DS.Colors.textPrimary)
         Spacer()
         Menu {
             ForEach(models) { model in
@@ -62,26 +40,19 @@ func openRouterModelPickerRow(
             HStack(spacing: 6) {
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(selectedOption.displayName)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(DS.Fonts.controlCompact)
                         .foregroundColor(DS.Colors.textPrimary)
                     Text(selectedOption.subtitle)
-                        .font(.system(size: 9))
+                        .font(DS.Fonts.mono(10.5))
                         .foregroundColor(DS.Colors.textTertiary)
                 }
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(DS.Fonts.sans(9, weight: .semibold))
                     .foregroundColor(DS.Colors.textTertiary)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
-            )
+            .teachyOption(isSelected: false)
         }
         .menuStyle(.borderlessButton)
         .pointerCursor()

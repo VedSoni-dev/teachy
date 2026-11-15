@@ -8,18 +8,6 @@ import SwiftUI
 
 // MARK: - Stand-ins for app types the real files refer to
 
-struct KeyboardKeyLabel: View {
-    let text: String
-    var body: some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium, design: .rounded))
-            .foregroundColor(DS.Colors.textPrimary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.white.opacity(0.1)))
-    }
-}
-
 enum ClickyCursorColor: String, CaseIterable, Identifiable {
     case red, blue, yellow, green
     var id: String { rawValue }

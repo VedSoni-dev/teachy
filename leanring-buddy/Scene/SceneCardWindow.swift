@@ -2,9 +2,9 @@
 //  SceneCardWindow.swift
 //  leanring-buddy / Scene
 //
-//  Explainer cards: a small floating window of cream grid paper with handwritten
-//  text, formula boxes, step chains, charts, photos and follow-up chips. Lines
-//  appear one at a time as the script streams in.
+//  Explainer cards: a small floating tile with text, a formula, step chains,
+//  charts, photos and follow-up questions. Lines appear one at a time as the
+//  script streams in.
 //
 
 import AppKit
@@ -151,110 +151,93 @@ final class SceneCardModel: ObservableObject {
 
 // MARK: - View
 
-struct SceneGridPaper: View {
-    var spacing: CGFloat = 18
+/// What the card is written with. The script's colours were picked for pale
+/// paper, so one too dark to read on the dark tile (navy, black, "ink") is
+/// written in the primary text colour instead.
+private enum SceneCardWriting {
+    private static let darkestReadableLuminance = 0.32
 
-    var body: some View {
-        Canvas { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(SceneStyle.paper))
-            var lines = Path()
-            var x = spacing
-            while x < size.width {
-                lines.move(to: CGPoint(x: x, y: 0))
-                lines.addLine(to: CGPoint(x: x, y: size.height))
-                x += spacing
-            }
-            var y = spacing
-            while y < size.height {
-                lines.move(to: CGPoint(x: 0, y: y))
-                lines.addLine(to: CGPoint(x: size.width, y: y))
-                y += spacing
-            }
-            context.stroke(lines, with: .color(SceneStyle.paperLine), lineWidth: 0.6)
-        }
+    static func color(for contentColor: SceneColor?) -> Color {
+        guard let contentColor else { return DS.Colors.textPrimary }
+        let relativeLuminance = 0.2126 * contentColor.r + 0.7152 * contentColor.g + 0.0722 * contentColor.b
+        return relativeLuminance < darkestReadableLuminance ? DS.Colors.textPrimary : contentColor.color
     }
 }
 
 struct SceneCardView: View {
     @ObservedObject var model: SceneCardModel
     static let width: CGFloat = 400
+    /// The window is never shorter than this, so the tile is not either: the
+    /// window draws nothing of its own to fill a gap.
+    static let minimumHeight: CGFloat = 90
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !model.title.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.title)
-                        .font(SceneStyle.marker(27))
-                        .foregroundColor(SceneStyle.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                    SceneScribbleUnderline(seed: model.title)
-                        .stroke(SceneColor.marker.color.opacity(0.85), style: StrokeStyle(lineWidth: 2.6, lineCap: .round))
-                        .frame(height: 7)
-                        .frame(maxWidth: min(CGFloat(model.title.count) * 13 + 20, Self.width - 60))
-                }
+                Text(model.title)
+                    .font(DS.Fonts.title)
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(model.items) { item in
                 row(item)
                     .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 8)), removal: .opacity))
             }
             if !model.chips.isEmpty {
-                SceneChipRow(chips: model.chips) { model.onChipTapped?($0) }
+                TeachyRule()
                     .padding(.top, 2)
+                SceneChipRow(chips: model.chips) { model.onChipTapped?($0) }
             }
         }
         .padding(EdgeInsets(top: 34, leading: 22, bottom: 20, trailing: 22))
         .frame(width: Self.width, alignment: .leading)
-        .background(SceneGridPaper())
+        .frame(minHeight: Self.minimumHeight, alignment: .top)
+        .teachyTile()
     }
 
     @ViewBuilder
     private func row(_ item: SceneCardModel.Item) -> some View {
-        let ink = item.color?.color ?? SceneStyle.ink
+        let writingColor = SceneCardWriting.color(for: item.color)
         switch item.kind {
         case .text:
             Text(item.text)
-                .font(SceneStyle.body(18))
-                .foregroundColor(ink)
+                .font(DS.Fonts.voice)
+                .lineSpacing(3)
+                .foregroundColor(writingColor)
                 .fixedSize(horizontal: false, vertical: true)
         case .bullet:
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Circle().fill(SceneColor.marker.color).frame(width: 7, height: 7).offset(y: -3)
+                Circle().fill(DS.Colors.textTertiary).frame(width: 4, height: 4).offset(y: -2.5)
                 Text(item.text)
-                    .font(SceneStyle.body(18))
-                    .foregroundColor(ink)
+                    .font(DS.Fonts.voice)
+                    .lineSpacing(3)
+                    .foregroundColor(writingColor)
                     .fixedSize(horizontal: false, vertical: true)
             }
         case .formula:
             Text(item.text)
-                .font(SceneStyle.marker(23))
-                .foregroundColor(ink)
+                .font(DS.Fonts.title)
+                .foregroundColor(writingColor)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity)
-                .background(Color.white.opacity(0.55))
-                .overlay(SceneRoughBox(seed: item.id).stroke(SceneStyle.ink.opacity(0.85), style: StrokeStyle(lineWidth: 1.8, lineCap: .round)))
+                .teachyWell(cornerRadius: DS.CornerRadius.control)
         case .steps(let steps):
             SceneFlowLayout(spacing: 6, lineSpacing: 8) {
                 ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                    HStack(spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
                         if index > 0 {
-                            Text("→").font(SceneStyle.marker(20)).foregroundColor(SceneColor.marker.color)
+                            Image(systemName: "arrow.right").font(DS.Fonts.data).foregroundColor(DS.Colors.textTertiary)
                         }
-                        Text(step)
-                            .font(SceneStyle.body(16))
-                            .foregroundColor(SceneStyle.ink)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(SceneColor.palette[index % SceneColor.palette.count].color.opacity(0.16))
-                            .overlay(SceneRoughBox(seed: "\(item.id)-\(index)", roughness: 0.6)
-                                .stroke(SceneStyle.ink.opacity(0.8), style: StrokeStyle(lineWidth: 1.5, lineCap: .round)))
+                        Text("\(index + 1)").font(DS.Fonts.data).foregroundColor(DS.Colors.textTertiary)
+                        Text(step).font(DS.Fonts.itemTitle).foregroundColor(DS.Colors.textPrimary)
                     }
                 }
             }
         case .chart(let spec):
-            SceneCardChart(spec: spec)
+            SceneCardChart(spec: spec, namedColor: item.color)
         case .image(let query):
             SceneCardImage(image: item.image, failed: item.imageFailed, query: query, caption: item.text, seed: item.id,
                            sourceURL: item.sourceURL, sourceName: item.sourceName)
@@ -262,37 +245,32 @@ struct SceneCardView: View {
     }
 }
 
-/// A quick wavy underline.
-struct SceneScribbleUnderline: Shape {
-    var seed: String
-
-    func path(in rect: CGRect) -> Path {
-        var rng = SceneRNG(id: seed)
-        let strokes = SceneRough.line(SceneVec2(rect.minX + 1, rect.midY), SceneVec2(rect.maxX - 1, rect.midY + 1), rng: &rng, roughness: 1.2, passes: 2)
-        var combined = Path()
-        for path in SceneRoughPath.paths(strokes) { combined.addPath(path) }
-        return combined
-    }
-}
-
+/// The follow-up questions under a card or a model. Picking one asks it.
 struct SceneChipRow: View {
     var chips: [String]
     var onTap: (String) -> Void
 
+    /// The follow-up the person picked. It stays marked as chosen while Teachy answers.
+    @State private var pickedChip: String?
+    @Environment(\.teachyIsDrawnIntoPicture) private var isDrawnIntoPicture
+
     var body: some View {
         SceneFlowLayout(spacing: 8, lineSpacing: 8) {
             ForEach(chips, id: \.self) { chip in
-                Button { onTap(chip) } label: {
+                Button {
+                    pickedChip = chip
+                    onTap(chip)
+                } label: {
                     Text(chip)
-                        .font(SceneStyle.body(15))
-                        .foregroundColor(SceneStyle.ink)
-                        .padding(.horizontal, 12)
+                        .font(DS.Fonts.bodyEmphasized)
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.white.opacity(0.9)))
-                        .overlay(Capsule().stroke(SceneStyle.ink.opacity(0.55), lineWidth: 1.2))
-                        .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
                 }
                 .buttonStyle(.plain)
+                .teachyOption(isSelected: pickedChip == chip)
+                // The cursor is an AppKit view, which a picture cannot draw.
+                .pointerCursor(isEnabled: !isDrawnIntoPicture)
                 .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
         }
@@ -301,6 +279,8 @@ struct SceneChipRow: View {
 
 struct SceneCardChart: View {
     var spec: SceneCardModel.ChartSpec
+    /// The colour the script asked for, or nil when it left the choice to the card.
+    var namedColor: SceneColor?
 
     private struct Point: Identifiable {
         let id: Int
@@ -314,10 +294,18 @@ struct SceneCardChart: View {
         }
     }
 
+    /// Marks are drawn in the pointer colour (Teachy's one tint) unless the script named a colour.
+    private var markColor: Color {
+        guard let namedColor else { return DS.Colors.pointer }
+        return SceneCardWriting.color(for: namedColor)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             if let title = spec.title, !title.isEmpty {
-                Text(title).font(SceneStyle.marker(17)).foregroundColor(SceneStyle.ink)
+                Text(title)
+                    .font(DS.Fonts.itemTitle)
+                    .foregroundColor(DS.Colors.textPrimary)
             }
             Chart(points) { point in
                 switch spec.kind {
@@ -325,42 +313,43 @@ struct SceneCardChart: View {
                     LineMark(x: .value("x", point.label), y: .value("y", point.value))
                         .interpolationMethod(.catmullRom)
                         .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                        .foregroundStyle(spec.color.color)
+                        .foregroundStyle(markColor)
                     PointMark(x: .value("x", point.label), y: .value("y", point.value))
                         .symbolSize(46)
-                        .foregroundStyle(spec.color.color)
+                        .foregroundStyle(markColor)
                 case "point", "scatter":
                     PointMark(x: .value("x", point.label), y: .value("y", point.value))
                         .symbolSize(70)
-                        .foregroundStyle(spec.color.color)
+                        .foregroundStyle(markColor)
                 default:
                     BarMark(x: .value("x", point.label), y: .value("y", point.value), width: .ratio(0.62))
                         .cornerRadius(4)
-                        .foregroundStyle(SceneColor.palette[point.id % SceneColor.palette.count].color.opacity(0.85))
+                        .foregroundStyle(markColor)
                         .annotation(position: .top, spacing: 2) {
                             if points.count <= 10 {
-                                Text(Self.format(point.value)).font(SceneStyle.body(11)).foregroundColor(SceneStyle.ink.opacity(0.8))
+                                Text(Self.format(point.value)).font(DS.Fonts.data).foregroundColor(DS.Colors.textSecondary)
                             }
                         }
                 }
             }
             .chartXAxis {
                 AxisMarks { _ in
-                    AxisValueLabel().font(SceneStyle.body(points.count > 7 ? 10 : 12)).foregroundStyle(SceneStyle.ink)
+                    AxisValueLabel().font(DS.Fonts.data).foregroundStyle(DS.Colors.textSecondary)
                 }
             }
             .chartYAxis {
                 AxisMarks(position: .leading) { _ in
-                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.8, dash: [3, 3])).foregroundStyle(SceneStyle.ink.opacity(0.25))
-                    AxisValueLabel().font(SceneStyle.body(11)).foregroundStyle(SceneStyle.ink.opacity(0.8))
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 1, dash: [3, 3])).foregroundStyle(DS.Colors.hairlineStrong)
+                    AxisValueLabel().font(DS.Fonts.data).foregroundStyle(DS.Colors.textTertiary)
                 }
             }
-            .chartXAxisLabel(spec.xTitle ?? "")
-            .chartYAxisLabel(spec.yTitle ?? "")
+            .chartXAxisLabel {
+                Text(spec.xTitle ?? "").font(DS.Fonts.data).foregroundColor(DS.Colors.textTertiary)
+            }
+            .chartYAxisLabel {
+                Text(spec.yTitle ?? "").font(DS.Fonts.data).foregroundColor(DS.Colors.textTertiary)
+            }
             .frame(height: 170)
-            .padding(10)
-            .background(Color.white.opacity(0.5))
-            .overlay(SceneRoughBox(seed: spec.title ?? "chart", roughness: 0.6).stroke(SceneStyle.ink.opacity(0.7), style: StrokeStyle(lineWidth: 1.5, lineCap: .round)))
         }
     }
 
@@ -379,8 +368,14 @@ struct SceneCardImage: View {
     var sourceURL: URL?
     var sourceName: String?
 
+    @Environment(\.teachyIsDrawnIntoPicture) private var isDrawnIntoPicture
+
+    private var photoShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: DS.CornerRadius.control, style: .continuous)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             ZStack {
                 if let image {
                     Image(nsImage: image)
@@ -390,37 +385,40 @@ struct SceneCardImage: View {
                         .frame(maxWidth: .infinity)
                         .clipped()
                 } else {
-                    Rectangle().fill(Color.white.opacity(0.5)).frame(height: 110)
-                    VStack(spacing: 4) {
+                    Rectangle().fill(DS.Colors.fillTertiary).frame(height: 110)
+                    VStack(spacing: 6) {
                         Image(systemName: failed ? "photo" : "photo.on.rectangle.angled")
-                            .font(.system(size: 22))
-                            .foregroundColor(SceneStyle.ink.opacity(0.45))
+                            .font(DS.Fonts.sans(20))
+                            .foregroundColor(DS.Colors.textQuaternary)
                         Text(failed ? query : "Finding a photo of \(query)…")
-                            .font(SceneStyle.body(13))
-                            .foregroundColor(SceneStyle.ink.opacity(0.6))
+                            .font(DS.Fonts.caption)
+                            .foregroundColor(DS.Colors.textTertiary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 12)
                     }
                 }
             }
-            .overlay(SceneRoughBox(seed: seed, roughness: 0.6).stroke(SceneStyle.ink.opacity(0.75), style: StrokeStyle(lineWidth: 1.6, lineCap: .round)))
-            .rotationEffect(.degrees(image == nil ? 0 : -0.8))
+            .clipShape(photoShape)
+            .overlay(photoShape.strokeBorder(DS.Colors.hairline, lineWidth: 1))
             if image != nil {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     if !caption.isEmpty {
-                        Text(caption).font(SceneStyle.body(13)).foregroundColor(SceneStyle.ink.opacity(0.7))
+                        Text(caption).font(DS.Fonts.caption).foregroundColor(DS.Colors.textSecondary)
                     }
                     Spacer(minLength: 4)
                     if let sourceURL {
-                        Button { NSWorkspace.shared.open(sourceURL) } label: {
-                            Text("source: \(sourceName ?? sourceURL.host ?? "web")")
-                                .font(.system(size: 10))
-                                .foregroundColor(SceneStyle.ink.opacity(0.5))
-                                .underline()
-                                .lineLimit(1)
+                        let sourceLabel = Text("Source: \(sourceName ?? sourceURL.host ?? "web")").lineLimit(1)
+                        if isDrawnIntoPicture {
+                            // Nothing in a picture can be clicked, and the link style
+                            // carries an AppKit cursor view that a picture cannot draw.
+                            sourceLabel
+                                .font(DS.Fonts.data)
+                                .foregroundColor(DS.Colors.pointer)
+                        } else {
+                            Button { NSWorkspace.shared.open(sourceURL) } label: { sourceLabel }
+                                .teachyLinkButton(font: DS.Fonts.data)
+                                .help(sourceURL.absoluteString)
                         }
-                        .buttonStyle(.plain)
-                        .help(sourceURL.absoluteString)
                     }
                 }
             }
@@ -513,7 +511,10 @@ final class SceneCardWindow {
             panel.hidesOnDeactivate = false
             panel.becomesKeyOnlyIfNeeded = true
             panel.isReleasedWhenClosed = false
-            panel.backgroundColor = NSColor(SceneStyle.paper)
+            // The window itself draws nothing: the card's tile is the only surface,
+            // so whatever the tile is made of shows what is behind the window.
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
             panel.standardWindowButton(.zoomButton)?.isHidden = true
@@ -549,7 +550,7 @@ final class SceneCardWindow {
         guard let panel, let hostingView else { return }
         let fitting = hostingView.fittingSize
         let visible = (panel.screen ?? NSScreen.main)?.visibleFrame.height ?? 900
-        let height = min(max(fitting.height, 90), visible - 60)
+        let height = min(max(fitting.height, SceneCardView.minimumHeight), visible - 60)
         let top = panel.frame.maxY
         let frame = CGRect(x: panel.frame.minX, y: top - height, width: SceneCardView.width, height: height)
         if abs(frame.height - panel.frame.height) > 0.5 || abs(frame.width - panel.frame.width) > 0.5 {
@@ -558,7 +559,7 @@ final class SceneCardWindow {
     }
 
     func snapshot() -> NSImage? {
-        let renderer = ImageRenderer(content: SceneCardView(model: model).clipShape(RoundedRectangle(cornerRadius: 12)))
+        let renderer = ImageRenderer(content: SceneCardView(model: model).environment(\.teachyIsDrawnIntoPicture, true))
         renderer.scale = 2
         return renderer.nsImage
     }

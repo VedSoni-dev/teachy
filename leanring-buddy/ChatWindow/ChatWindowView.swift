@@ -4,33 +4,47 @@
 //
 //  The contents of the chat window: a search field, the conversation grouped by
 //  day (messages, drawings, agent jobs, notes), and a composer with attachment
-//  chips and the "hold to talk" hint. Dark like the notch panel, with larger
-//  type because this is a window you read in.
+//  chips and the "hold to talk" hint.
+//
+//  It reads like Messages: Teachy's replies are plain unboxed text on the left,
+//  the person's own words are a bubble in their pointer colour on the right,
+//  and jobs and drawings are rows of a grouped list. Colours, fonts and
+//  controls come from the design system (docs/DESIGN.md).
 //
 
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Sizes and colours used only by the chat window.
+/// Sizes used only by the chat window. Colours and fonts come from the design system.
 enum ChatStyle {
-    static let windowBackground = Color(hex: "#0B0C0F")
-    static let headerBackground = Color(hex: "#0F1014")
-    static let hairline = Color.white.opacity(0.07)
-    static let cardFill = Color.white.opacity(0.045)
-    static let cardStroke = Color.white.opacity(0.09)
-    static let codeBackground = Color(hex: "#06070A")
-    static let userBubble = Color(hex: "#1F5FD0")
-    static let bodySize: CGFloat = 14.5
-    static let bodyLineSpacing: CGFloat = 4.5
+    /// The window is not part of the notch, so it is the macOS dark window grey, not pure black.
+    static let windowBackground = DS.Colors.background
+    /// The size of the conversation's text: Teachy's replies, the person's bubbles and the composer.
+    static let bodySize: CGFloat = 13.5
+    static let bodyLineSpacing: CGFloat = 4
+    /// The size and line spacing of `DS.Fonts.voice`, for what a job answered. Kept
+    /// as numbers because bold and inline code inside the answer are set from them.
+    static let voiceSize: CGFloat = 13
+    static let voiceLineSpacing: CGFloat = 3
     static let columnWidth: CGFloat = 760
+    /// How wide a reply runs before it wraps.
+    static let readingWidth: CGFloat = 600
+    /// The margin left of the reading column. Teachy's pointer mark hangs in it.
+    static let gutterWidth: CGFloat = 22
     static let headerHeight: CGFloat = 52
+    /// The attach and send buttons at either end of the composer.
+    static let composerButtonSideLength: CGFloat = 26
+    /// Above and below the content of a job or drawing row in its group.
+    static let groupedRowVerticalPadding: CGFloat = 11
 }
 
 struct ChatWindowView: View {
     @ObservedObject var timeline: ChatTimeline
     @ObservedObject var shelf: AttachmentShelf
-    /// The colour of Teachy's mark beside its replies (the person's cursor colour).
+    /// No longer read: Teachy's marks use `DS.Colors.pointer`, which follows the
+    /// person's colour choice the next time the view is drawn. Kept because
+    /// `ChatWindowController` passes it.
     var accentColor: Color
     /// The keys that are held to talk right now, e.g. ["control", "option"].
     var talkKeyLabels: () -> [String]
@@ -48,7 +62,7 @@ struct ChatWindowView: View {
     init(
         timeline: ChatTimeline,
         shelf: AttachmentShelf? = nil,
-        accentColor: Color = DS.Colors.overlayCursorBlue,
+        accentColor: Color = DS.Colors.pointer,
         talkKeyLabels: @escaping () -> [String] = { PushToTalkShortcutKeys.currentKeyCapsuleLabels },
         leadingHeaderInset: CGFloat = 84,
         initialSearchText: String = "",
@@ -76,7 +90,7 @@ struct ChatWindowView: View {
         VStack(spacing: 0) {
             header
                 .zIndex(2)
-            Rectangle().fill(ChatStyle.hairline).frame(height: 1)
+            TeachyRule()
                 .zIndex(2)
             thread
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -96,55 +110,63 @@ struct ChatWindowView: View {
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Color.clear.frame(width: max(0, leadingHeaderInset - 16), height: 1)
 
-            ChatTeachyMark(color: accentColor, size: 13)
+            ChatTeachyMark(color: DS.Colors.pointer, size: 12)
             Text("Teachy")
-                .font(.system(size: 14, weight: .semibold))
+                .font(DS.Fonts.title)
                 .foregroundColor(DS.Colors.textPrimary)
 
             Spacer(minLength: 12)
 
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundColor(DS.Colors.textTertiary)
-                TextField("Search this chat", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .focused($searchFocused)
-                if isSearching {
-                    Button { searchText = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(DS.Colors.textTertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                    .accessibilityLabel("Clear search")
-                }
-            }
-            .padding(.horizontal, 9)
-            .frame(height: 28)
-            .frame(maxWidth: 230)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(searchFocused ? 0.09 : 0.06)))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(searchFocused ? DS.Colors.blue400.opacity(0.55) : Color.white.opacity(0.07), lineWidth: 1)
-            )
-            // Command+F from anywhere in the window.
-            .background(
-                Button("") { searchFocused = true }
-                    .keyboardShortcut("f", modifiers: .command)
-                    .opacity(0)
-                    .frame(width: 0, height: 0)
-            )
+            searchField
         }
         .padding(.horizontal, 16)
         .frame(height: ChatStyle.headerHeight)
-        .background(ChatStyle.headerBackground)
+        .background(ChatStyle.windowBackground)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(DS.Fonts.sans(11.5, weight: .semibold))
+                .foregroundColor(DS.Colors.textTertiary)
+            TextField(
+                "Search this chat",
+                text: $searchText,
+                prompt: Text("Search this chat").foregroundColor(DS.Colors.textQuaternary)
+            )
+            .textFieldStyle(.plain)
+            .font(DS.Fonts.body)
+            .foregroundColor(DS.Colors.textPrimary)
+            .focused($searchFocused)
+            if isSearching {
+                Button { searchText = "" } label: {
+                    Image(systemName: "xmark")
+                }
+                .teachyIconButton(sideLength: 18)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.leading, 9)
+        .padding(.trailing, isSearching ? 5 : 9)
+        .frame(height: 28)
+        .frame(maxWidth: 230)
+        .teachyWell()
+        .overlay(
+            // The well takes a tint edge while the field has the keyboard.
+            RoundedRectangle(cornerRadius: DS.CornerRadius.well, style: .continuous)
+                .strokeBorder(searchFocused ? DS.Colors.pointer : Color.clear, lineWidth: 1.5)
+        )
+        .animation(DS.Motion.hover, value: searchFocused)
+        // Command+F from anywhere in the window.
+        .background(
+            Button("") { searchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+        )
     }
 
     // MARK: Thread
@@ -160,25 +182,35 @@ struct ChatWindowView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         if isSearching {
                             Text("\(items.count) \(items.count == 1 ? "match" : "matches") for “\(searchText.trimmingCharacters(in: .whitespaces))”")
-                                .font(.system(size: 12))
+                                .font(DS.Fonts.data)
                                 .foregroundColor(DS.Colors.textTertiary)
                                 .padding(.top, 16)
                         }
                         ForEach(ChatThread.days(items)) { day in
                             ChatDaySeparator(label: day.label)
-                                .padding(.top, 18)
-                                .padding(.bottom, 14)
-                            VStack(alignment: .leading, spacing: 18) {
-                                ForEach(day.items) { item in
-                                    ChatItemView(item: item, accentColor: accentColor, timeline: timeline)
+                                .padding(.top, 22)
+                                .padding(.bottom, 18)
+                            let sections = ChatThreadSection.sections(for: day.items)
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(sections.enumerated()), id: \.element.id) { positionInDay, section in
+                                    let sectionAbove = positionInDay > 0 ? sections[positionInDay - 1] : nil
+                                    Group {
+                                        switch section {
+                                        case .item(let item):
+                                            ChatItemView(item: item, timeline: timeline)
+                                        case .rowGroup(let groupedItems):
+                                            ChatRowGroup(items: groupedItems, timeline: timeline)
+                                        }
+                                    }
+                                    .padding(.top, ChatThreadSpacing.spaceAbove(section, below: sectionAbove))
                                 }
                             }
                         }
                         if timeline.isWaitingForReply {
-                            ChatThinkingRow(accentColor: accentColor)
-                                .padding(.top, 18)
+                            ChatThinkingRow()
+                                .padding(.top, ChatThreadSpacing.betweenItems)
                         }
-                        Color.clear.frame(height: 20).id("chat-bottom")
+                        Color.clear.frame(height: 24).id("chat-bottom")
                     }
                     .frame(maxWidth: ChatStyle.columnWidth, alignment: .leading)
                     .padding(.horizontal, 24)
@@ -193,24 +225,21 @@ struct ChatWindowView: View {
         }
     }
 
+    /// One line that says what this surface is for, and one line under it.
     private var emptyState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             Spacer()
             if isSearching {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundColor(DS.Colors.textTertiary)
                 Text("Nothing in this chat matches “\(searchText.trimmingCharacters(in: .whitespaces))”")
-                    .font(.system(size: 14))
-                    .foregroundColor(DS.Colors.textSecondary)
+                    .font(DS.Fonts.display)
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .multilineTextAlignment(.center)
             } else {
-                ChatTeachyMark(color: accentColor, size: 26)
-                    .padding(.bottom, 6)
                 Text("Ask Teachy anything")
-                    .font(.system(size: 19, weight: .semibold))
+                    .font(DS.Fonts.display)
                     .foregroundColor(DS.Colors.textPrimary)
                 Text("Type below, hold your talk keys, or drop a file here to ask about it.")
-                    .font(.system(size: 13.5))
+                    .font(DS.Fonts.body)
                     .foregroundColor(DS.Colors.textSecondary)
                     .multilineTextAlignment(.center)
             }
@@ -243,63 +272,48 @@ struct ChatWindowView: View {
     }
 
     private var composerArea: some View {
-        VStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 10) {
-                AttachmentChipsView(shelf: shelf)
+        VStack(alignment: .leading, spacing: 8) {
+            // The chips sit above the field, not inside it: no box inside a box.
+            AttachmentChipsView(shelf: shelf)
 
-                HStack(alignment: .bottom, spacing: 10) {
-                    Button(action: chooseFiles) {
-                        Image(systemName: "paperclip")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(DS.Colors.textSecondary)
-                            .frame(width: 28, height: 28)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                    .help("Attach a file")
-                    .accessibilityLabel("Attach a file")
-
-                    ZStack(alignment: .topLeading) {
-                        if draft.isEmpty {
-                            Text("Ask Teachy…")
-                                .font(.system(size: ChatStyle.bodySize))
-                                .foregroundColor(DS.Colors.textTertiary)
-                                .padding(.top, 2)
-                                .allowsHitTesting(false)
-                        }
-                        ChatComposerTextView(text: $draft, height: $composerHeight, fontSize: ChatStyle.bodySize, onSubmit: send)
-                            .frame(height: composerHeight)
-                    }
-                    .padding(.vertical, 3)
-
-                    Button(action: send) {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(canSend ? .white : DS.Colors.textTertiary)
-                            .frame(width: 28, height: 28)
-                            .background(Circle().fill(canSend ? ChatStyle.userBubble : Color.white.opacity(0.08)))
-                    }
-                    .buttonStyle(.plain)
-                    .pointerCursor(isEnabled: canSend)
-                    .disabled(!canSend)
-                    .help("Send (Return)")
-                    .accessibilityLabel("Send")
+            HStack(alignment: .bottom, spacing: 8) {
+                Button(action: chooseFiles) {
+                    Image(systemName: "paperclip")
                 }
+                .teachyIconButton(sideLength: ChatStyle.composerButtonSideLength)
+                .help("Attach a file")
+                .accessibilityLabel("Attach a file")
+
+                ZStack(alignment: .topLeading) {
+                    if draft.isEmpty {
+                        Text("Ask Teachy…")
+                            .font(DS.Fonts.sans(ChatStyle.bodySize))
+                            .foregroundColor(DS.Colors.textQuaternary)
+                            .padding(.top, 2)
+                            .allowsHitTesting(false)
+                    }
+                    ChatComposerTextView(text: $draft, height: $composerHeight, fontSize: ChatStyle.bodySize, onSubmit: send)
+                        .frame(height: composerHeight)
+                }
+                .padding(.vertical, 2)
+
+                Button(action: send) {
+                    Image(systemName: "arrow.up")
+                }
+                .buttonStyle(ChatSendButtonStyle())
+                .disabled(!canSend)
+                .help("Send (Return)")
+                .accessibilityLabel("Send")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.055)))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.11), lineWidth: 1))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .teachyWell(cornerRadius: 16, isEdged: true)
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 0) {
                     talkHint
                     Spacer(minLength: 16)
-                    Text("Return to send  ·  Shift + Return for a new line")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(DS.Colors.textTertiary)
-                        .lineLimit(1)
+                    sendHint
                 }
                 HStack(spacing: 0) {
                     talkHint
@@ -318,86 +332,183 @@ struct ChatWindowView: View {
 
     private var talkHint: some View {
         HStack(spacing: 5) {
-            Image(systemName: "mic.fill")
-                .font(.system(size: 10))
-                .foregroundColor(DS.Colors.textTertiary)
             Text("Hold")
-            ForEach(Array(keyLabels.enumerated()), id: \.offset) { position, label in
-                if position > 0 {
-                    Text("+").foregroundColor(DS.Colors.textTertiary)
-                }
-                ChatKeyCap(text: label)
+            ForEach(Array(keyLabels.enumerated()), id: \.offset) { _, label in
+                KeyboardKeyLabel(text: label)
             }
             Text("to talk")
         }
-        .font(.system(size: 11.5))
-        .foregroundColor(DS.Colors.textTertiary)
+        .font(DS.Fonts.caption)
+        .foregroundColor(DS.Colors.textSecondary)
         .lineLimit(1)
         .fixedSize()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Hold \(keyLabels.joined(separator: " and ")) to talk")
     }
+
+    private var sendHint: some View {
+        HStack(spacing: 5) {
+            KeyboardKeyLabel(text: "return")
+            Text("to send")
+                .padding(.trailing, 7)
+            KeyboardKeyLabel(text: "shift")
+            KeyboardKeyLabel(text: "return")
+            Text("for a new line")
+        }
+        .font(DS.Fonts.caption)
+        .foregroundColor(DS.Colors.textSecondary)
+        .lineLimit(1)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Return to send  ·  Shift + Return for a new line")
+    }
+}
+
+// MARK: - Thread layout
+
+private extension ChatThreadItem {
+    /// An agent job or a drawing: a row of a grouped list, not a message.
+    var isGroupedRow: Bool {
+        if case .row(let row) = content { return row.kind == .job || row.kind == .drawing }
+        return false
+    }
+
+    var isNote: Bool {
+        if case .row(let row) = content { return row.kind == .note }
+        return false
+    }
+}
+
+/// One stretch of a day's thread: a message or a note on its own, or the jobs
+/// and drawings that follow one another, which share one grouped container.
+private enum ChatThreadSection: Identifiable {
+    case item(ChatThreadItem)
+    case rowGroup([ChatThreadItem])
+
+    var id: String {
+        switch self {
+        case .item(let item): return item.id
+        case .rowGroup(let groupedItems): return "row-group-" + (groupedItems.first?.id ?? "")
+        }
+    }
+
+    var isNote: Bool {
+        if case .item(let item) = self { return item.isNote }
+        return false
+    }
+
+    /// Folds neighbouring jobs and drawings into one group. Everything else stays on its own.
+    static func sections(for items: [ChatThreadItem]) -> [ChatThreadSection] {
+        var sections: [ChatThreadSection] = []
+        for item in items {
+            guard item.isGroupedRow else {
+                sections.append(.item(item))
+                continue
+            }
+            if case .rowGroup(let groupedItems) = sections.last {
+                sections[sections.count - 1] = .rowGroup(groupedItems + [item])
+            } else {
+                sections.append(.rowGroup([item]))
+            }
+        }
+        return sections
+    }
+}
+
+/// How far apart the things in the thread sit.
+private enum ChatThreadSpacing {
+    static let betweenItems: CGFloat = 20
+    /// A note is one small line, so it sits closer to its neighbours.
+    static let aroundNote: CGFloat = 12
+
+    static func spaceAbove(_ section: ChatThreadSection, below sectionAbove: ChatThreadSection?) -> CGFloat {
+        guard let sectionAbove else { return 0 }
+        if section.isNote || sectionAbove.isNote { return aroundNote }
+        return betweenItems
+    }
 }
 
 // MARK: - Small pieces
 
-/// Teachy's pointer triangle, as it appears beside the notch.
+/// Teachy's pointer, drawn small. Grey beside a finished reply; the person's
+/// pointer colour in the header and where Teachy is live.
 struct ChatTeachyMark: View {
     var color: Color
     var size: CGFloat
 
     var body: some View {
-        ChatTriangle()
+        TeachyPointerShape()
             .fill(color)
             .frame(width: size, height: size)
-            .rotationEffect(.degrees(-35))
-            .shadow(color: color.opacity(0.55), radius: size * 0.3)
-            .frame(width: size * 1.35, height: size * 1.35)
             .accessibilityHidden(true)
     }
 }
 
-private struct ChatTriangle: Shape {
-    /// Same equilateral triangle as the cursor in the notch (`Triangle` in OverlayWindow.swift).
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let size = min(rect.width, rect.height)
-        let height = size * sqrt(3.0) / 2.0
-        path.move(to: CGPoint(x: rect.midX, y: rect.midY - height / 1.5))
-        path.addLine(to: CGPoint(x: rect.midX - size / 2, y: rect.midY + height / 3))
-        path.addLine(to: CGPoint(x: rect.midX + size / 2, y: rect.midY + height / 3))
-        path.closeSubpath()
-        return path
-    }
-}
-
-struct ChatKeyCap: View {
-    let text: String
+/// The pointer in the person's colour: Teachy is thinking or still writing.
+/// It breathes slowly while there is nothing else moving (thinking); beside a
+/// reply that is arriving it holds still, because the caret after the text
+/// already blinks. Always still when Reduce Motion is on.
+struct ChatLivePointerMark: View {
+    var size: CGFloat = 11
+    var isBreathing = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isDimmed = false
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 10.5, weight: .medium, design: .rounded))
-            .foregroundColor(DS.Colors.textSecondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.white.opacity(0.09)))
-            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(Color.white.opacity(0.14), lineWidth: 0.5))
+        TeachyPointerShape()
+            .fill(DS.Colors.pointer)
+            .frame(width: size, height: size)
+            .opacity(isDimmed ? 0.4 : 1)
+            .onAppear {
+                guard isBreathing, !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { isDimmed = true }
+            }
+            .accessibilityLabel("Teachy is answering")
     }
 }
 
+/// The send button, as in Messages: a circle in the person's pointer colour
+/// with an arrow. Grey while there is nothing to send.
+private struct ChatSendButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        ChatSendButtonBody(label: configuration.label, isPressed: configuration.isPressed)
+    }
+}
+
+/// A view (not just a style) so it can read whether the button is enabled.
+private struct ChatSendButtonBody<Label: View>: View {
+    let label: Label
+    let isPressed: Bool
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        label
+            .font(DS.Fonts.sans(12, weight: .bold))
+            .foregroundColor(isEnabled ? DS.Colors.onPointer : DS.Colors.textQuaternary)
+            .frame(width: ChatStyle.composerButtonSideLength, height: ChatStyle.composerButtonSideLength)
+            .background(Circle().fill(isEnabled ? DS.Colors.pointer : DS.Colors.fillSecondary))
+            .contentShape(Circle())
+            // Feedback starts on mouse-down, like the other Teachy buttons.
+            .opacity(isPressed ? 0.8 : 1)
+            .scaleEffect(isPressed ? 0.97 : 1)
+            .animation(DS.Motion.press, value: isPressed)
+            .animation(DS.Motion.hover, value: isEnabled)
+            .pointerCursor(isEnabled: isEnabled)
+    }
+}
+
+/// The day a stretch of the conversation happened on, centred above it.
 struct ChatDaySeparator: View {
     let label: String
 
     var body: some View {
-        HStack(spacing: 12) {
-            Rectangle().fill(ChatStyle.hairline).frame(height: 1)
-            Text(label)
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundColor(DS.Colors.textTertiary)
-                .fixedSize()
-            Rectangle().fill(ChatStyle.hairline).frame(height: 1)
-        }
-        .accessibilityAddTraits(.isHeader)
+        Text(label)
+            .font(DS.Fonts.caption)
+            .fontWeight(.semibold)
+            .foregroundColor(DS.Colors.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -415,7 +526,6 @@ struct ChatCopyButton: View {
     let text: String
     var showsLabel = true
     @State private var didCopy = false
-    @State private var isHovering = false
 
     var body: some View {
         Button {
@@ -424,23 +534,15 @@ struct ChatCopyButton: View {
             didCopy = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { didCopy = false }
         } label: {
-            HStack(spacing: 4) {
+            if showsLabel {
+                Text(didCopy ? "Copied" : "Copy")
+            } else {
                 Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 10, weight: .semibold))
-                if showsLabel {
-                    Text(didCopy ? "Copied" : "Copy")
-                        .font(.system(size: 11.5, weight: .medium))
-                }
+                    .contentTransition(.symbolEffect(.replace))
             }
-            .foregroundColor(didCopy ? DS.Colors.success : (isHovering ? DS.Colors.textPrimary : DS.Colors.textTertiary))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(isHovering ? 0.08 : 0)))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .onHover { isHovering = $0 }
+        // Grey, not the tint: it repeats under every reply, so it should recede.
+        .teachyLinkButton(color: DS.Colors.textSecondary)
         .accessibilityLabel("Copy")
     }
 }
@@ -449,7 +551,6 @@ struct ChatCopyButton: View {
 
 struct ChatItemView: View {
     let item: ChatThreadItem
-    var accentColor: Color
     let timeline: ChatTimeline
 
     var body: some View {
@@ -457,15 +558,14 @@ struct ChatItemView: View {
         case .userMessage(let text):
             ChatUserBubble(text: text, date: item.date)
         case .assistantMessage(let text):
-            ChatAssistantMessage(text: text, date: item.date, isStreaming: false, accentColor: accentColor)
+            ChatAssistantMessage(text: text, date: item.date, isStreaming: false)
         case .streamingReply(let text):
-            ChatAssistantMessage(text: text, date: item.date, isStreaming: true, accentColor: accentColor)
+            ChatAssistantMessage(text: text, date: item.date, isStreaming: true)
         case .row(let row):
             switch row.kind {
-            case .drawing:
-                ChatDrawingRow(row: row, date: item.date) { timeline.onOpenDrawing?(String(row.id.dropFirst("drawing-".count))) }
-            case .job:
-                ChatJobRow(row: row, date: item.date) { timeline.onOpenJob?(String(row.id.dropFirst("job-".count))) }
+            case .drawing, .job:
+                // On its own, a job or a drawing is a group of one row.
+                ChatRowGroup(items: [item], timeline: timeline)
             case .note:
                 ChatNoteRow(text: row.title)
             }
@@ -473,6 +573,41 @@ struct ChatItemView: View {
     }
 }
 
+/// Jobs and drawings that follow one another, as one grouped list: each is a
+/// row of the same rounded container, with a divider between rows.
+struct ChatRowGroup: View {
+    let items: [ChatThreadItem]
+    let timeline: ChatTimeline
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { positionInGroup, item in
+                if positionInGroup > 0 { TeachyRule() }
+                rowView(for: item)
+            }
+        }
+        .teachyGroup()
+        .frame(maxWidth: ChatStyle.readingWidth, alignment: .leading)
+        // Lines the container up with the text of Teachy's replies.
+        .padding(.leading, ChatStyle.gutterWidth)
+    }
+
+    @ViewBuilder
+    private func rowView(for item: ChatThreadItem) -> some View {
+        if case .row(let row) = item.content {
+            switch row.kind {
+            case .drawing:
+                ChatDrawingRow(row: row, date: item.date) { timeline.onOpenDrawing?(String(row.id.dropFirst("drawing-".count))) }
+            case .job:
+                ChatJobRow(row: row, date: item.date) { timeline.onOpenJob?(String(row.id.dropFirst("job-".count))) }
+            case .note:
+                EmptyView()
+            }
+        }
+    }
+}
+
+/// What the person said: a bubble in their pointer colour, on the right.
 struct ChatUserBubble: View {
     let text: String
     let date: Date
@@ -480,22 +615,16 @@ struct ChatUserBubble: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
             Text(text)
-                .font(.system(size: ChatStyle.bodySize))
+                .font(DS.Fonts.sans(ChatStyle.bodySize))
                 .lineSpacing(ChatStyle.bodyLineSpacing - 1)
-                .foregroundColor(.white)
+                .foregroundColor(DS.Colors.onPointer)
                 .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 17, bottomLeadingRadius: 17, bottomTrailingRadius: 5, topTrailingRadius: 17,
-                        style: .continuous
-                    )
-                    .fill(ChatStyle.userBubble)
-                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(DS.Colors.pointer))
                 .frame(maxWidth: 520, alignment: .trailing)
             Text(ChatTimeFormat.time.string(from: date))
-                .font(.system(size: 10.5))
+                .font(DS.Fonts.data)
                 .foregroundColor(DS.Colors.textTertiary)
                 .padding(.trailing, 4)
         }
@@ -505,44 +634,81 @@ struct ChatUserBubble: View {
     }
 }
 
+/// What Teachy said: plain text, unboxed, in a column narrow enough to read.
 struct ChatAssistantMessage: View {
     let text: String
     let date: Date
     var isStreaming: Bool
-    var accentColor: Color
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// When this reply started to be shown, so the caret's blink starts lit.
+    @State private var caretBlinkStartDate = Date()
+
+    private static let caretBlinkInterval: TimeInterval = 0.55
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            ChatTeachyMark(color: accentColor, size: 12)
-                .padding(.top, 2)
+        HStack(alignment: .top, spacing: 0) {
+            Group {
+                if isStreaming {
+                    ChatLivePointerMark(isBreathing: false)
+                } else {
+                    ChatTeachyMark(color: DS.Colors.textTertiary, size: 11)
+                }
+            }
+            .frame(width: ChatStyle.gutterWidth, alignment: .leading)
+            // Sits the mark on the middle of the first line of text.
+            .padding(.top, 3)
 
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(ChatReplyText.blocks(text).enumerated()), id: \.offset) { _, block in
-                    switch block {
-                    case .paragraph(let paragraph):
-                        ChatProseView(text: paragraph, fontSize: ChatStyle.bodySize, lineSpacing: ChatStyle.bodyLineSpacing, opacity: 0.94)
-                    case .code(let language, let code):
-                        ChatCodeBlock(language: language, code: code)
+            VStack(alignment: .leading, spacing: 12) {
+                if isStreaming && !reduceMotion {
+                    TimelineView(.periodic(from: caretBlinkStartDate, by: Self.caretBlinkInterval)) { timelineContext in
+                        replyBlocks(streamingCaretColor: caretColor(at: timelineContext.date))
                     }
+                } else {
+                    replyBlocks(streamingCaretColor: isStreaming ? DS.Colors.pointer : nil)
                 }
 
-                HStack(spacing: 6) {
-                    if isStreaming {
-                        ChatTypingDots(color: accentColor)
-                    } else {
+                if !isStreaming {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Text(ChatTimeFormat.time.string(from: date))
-                            .font(.system(size: 10.5))
+                            .font(DS.Fonts.data)
                             .foregroundColor(DS.Colors.textTertiary)
                         ChatCopyButton(text: text)
                     }
                 }
-                .padding(.top, -3)
             }
-            .frame(maxWidth: 640, alignment: .leading)
+            .frame(maxWidth: ChatStyle.readingWidth, alignment: .leading)
 
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The caret after the last word is lit for one interval, then faint for the next.
+    private func caretColor(at date: Date) -> Color {
+        let intervalsSinceStart = Int(date.timeIntervalSince(caretBlinkStartDate) / Self.caretBlinkInterval)
+        return intervalsSinceStart.isMultiple(of: 2) ? DS.Colors.pointer : DS.Colors.pointer.opacity(0.25)
+    }
+
+    /// The reply's paragraphs and code blocks. `streamingCaretColor` is nil for a finished reply.
+    private func replyBlocks(streamingCaretColor: Color?) -> some View {
+        let blocks = ChatReplyText.blocks(text)
+        return VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { blockPosition, block in
+                switch block {
+                case .paragraph(let paragraph):
+                    ChatProseView(
+                        text: paragraph,
+                        fontSize: ChatStyle.bodySize,
+                        lineSpacing: ChatStyle.bodyLineSpacing,
+                        // Only the last block is still being written.
+                        streamingCaretColor: blockPosition == blocks.count - 1 ? streamingCaretColor : nil
+                    )
+                case .code(let language, let code):
+                    ChatCodeBlock(language: language, code: code)
+                }
+            }
+        }
     }
 }
 
@@ -552,23 +718,27 @@ struct ChatProseView: View {
     let text: String
     var fontSize: CGFloat
     var lineSpacing: CGFloat
-    var opacity: Double
+    /// Set while the reply is still arriving: a caret in this colour follows the last word.
+    var streamingCaretColor: Color? = nil
 
     var body: some View {
         // Blank lines separate groups; a group is text and list items that belong together.
+        let groups = text.components(separatedBy: "\n\n")
         VStack(alignment: .leading, spacing: fontSize * 0.75) {
-            ForEach(Array(text.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, group in
+            ForEach(Array(groups.enumerated()), id: \.offset) { groupPosition, group in
+                let pieces = ChatProse.pieces(group)
                 VStack(alignment: .leading, spacing: lineSpacing + 2) {
-                    ForEach(Array(ChatProse.pieces(group).enumerated()), id: \.offset) { _, piece in
+                    ForEach(Array(pieces.enumerated()), id: \.offset) { piecePosition, piece in
+                        let isLastPieceOfReply = groupPosition == groups.count - 1 && piecePosition == pieces.count - 1
                         switch piece {
                         case .text(let body):
-                            styled(Text(ChatProse.attributed(body)))
+                            styled(Text(attributedText(body, endsWithCaret: isLastPieceOfReply)), color: DS.Colors.textPrimary)
                         case .listItem(let marker, let body):
-                            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                                styled(Text(marker)).foregroundColor(DS.Colors.textSecondary)
-                                styled(Text(ChatProse.attributed(body)))
+                            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                                styled(Text(marker), color: DS.Colors.textTertiary)
+                                    .frame(width: markerColumnWidth(for: marker), alignment: .leading)
+                                styled(Text(attributedText(body, endsWithCaret: isLastPieceOfReply)), color: DS.Colors.textPrimary)
                             }
-                            .padding(.leading, 2)
                         }
                     }
                 }
@@ -576,11 +746,28 @@ struct ChatProseView: View {
         }
     }
 
-    private func styled(_ text: Text) -> some View {
+    /// Every marker gets the same column, so the text of each item starts on one
+    /// line and wraps under itself. Numbers ("12.") need a wider column than a bullet.
+    private func markerColumnWidth(for marker: String) -> CGFloat {
+        marker == "•" ? fontSize * 1.05 : fontSize * 1.6
+    }
+
+    private func attributedText(_ body: String, endsWithCaret: Bool) -> AttributedString {
+        var attributed = ChatProse.attributed(body, fontSize: fontSize)
+        if endsWithCaret, let streamingCaretColor {
+            // A thin bar, like the text system's insertion point.
+            var caret = AttributedString(" \u{258F}")
+            caret.foregroundColor = streamingCaretColor
+            attributed.append(caret)
+        }
+        return attributed
+    }
+
+    private func styled(_ text: Text, color: Color) -> some View {
         text
-            .font(.system(size: fontSize))
+            .font(DS.Fonts.sans(fontSize))
             .lineSpacing(lineSpacing)
-            .foregroundColor(DS.Colors.textPrimary.opacity(opacity))
+            .foregroundColor(color)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -619,7 +806,9 @@ enum ChatProse {
         return pieces
     }
 
-    static func attributed(_ paragraph: String) -> AttributedString {
+    /// `fontSize` is the size the text will be set in: bold becomes semibold at
+    /// that size, and inline code becomes mono a little smaller.
+    static func attributed(_ paragraph: String, fontSize: CGFloat = ChatStyle.bodySize) -> AttributedString {
         let lines = paragraph.components(separatedBy: "\n").map { line -> String in
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if let heading = trimmed.range(of: #"^#{1,6} +"#, options: .regularExpression) {
@@ -636,86 +825,79 @@ enum ChatProse {
         guard var attributed = try? AttributedString(markdown: prepared, options: options) else {
             return AttributedString(prepared)
         }
-        for run in attributed.runs where run.inlinePresentationIntent?.contains(.code) == true {
-            attributed[run.range].font = .system(size: ChatStyle.bodySize - 1, design: .monospaced)
-            attributed[run.range].foregroundColor = DS.Colors.codeText
+        for run in attributed.runs {
+            guard let presentationIntent = run.inlinePresentationIntent else { continue }
+            if presentationIntent.contains(.code) {
+                // Mono looks larger than the text around it at the same size.
+                attributed[run.range].font = DS.Fonts.mono(fontSize - 1)
+                attributed[run.range].foregroundColor = DS.Colors.textPrimary
+            } else if presentationIntent.contains(.stronglyEmphasized) {
+                // The weight is set here, so the "bold" intent is taken off the run:
+                // left on, it would be applied on top and give a heavier weight than semibold.
+                attributed[run.range].font = DS.Fonts.sans(fontSize, weight: .semibold)
+                attributed[run.range].inlinePresentationIntent = presentationIntent.subtracting(.stronglyEmphasized)
+            }
         }
         return attributed
     }
 }
 
+/// A block of code in a reply: mono, in a well, with its language and a Copy link.
 struct ChatCodeBlock: View {
     let language: String?
     let code: String
 
+    private var wellShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: DS.CornerRadius.well, style: .continuous)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Text(language ?? "code")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(DS.Fonts.data)
                     .foregroundColor(DS.Colors.textTertiary)
                 Spacer()
                 ChatCopyButton(text: code)
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 6)
-            .frame(height: 30)
-            .background(Color.white.opacity(0.04))
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(code)
-                    .font(.system(size: 12.5, design: .monospaced))
+                    .font(DS.Fonts.mono(12.5))
                     .lineSpacing(3.5)
-                    .foregroundColor(Color(hex: "#D6DEEB"))
+                    .foregroundColor(DS.Colors.textPrimary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 11)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .padding(.bottom, 13)
             }
         }
-        .background(ChatStyle.codeBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(ChatStyle.cardStroke, lineWidth: 1))
+        .teachyWell()
+        // Long lines scroll sideways; this keeps them inside the well's corners.
+        .clipShape(wellShape)
     }
 }
 
-struct ChatTypingDots: View {
-    var color: Color
-    @State private var phase = 0.0
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(0..<3, id: \.self) { index in
-                Circle()
-                    .fill(color.opacity(0.9))
-                    .frame(width: 5, height: 5)
-                    .opacity(0.35 + 0.65 * abs(sin(phase + Double(index) * 0.7)))
-            }
-        }
-        .frame(height: 16)
-        .onAppear {
-            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) { phase = .pi }
-        }
-        .accessibilityLabel("Teachy is answering")
-    }
-}
-
+/// Shown between a question and the first words of its answer.
 struct ChatThinkingRow: View {
-    var accentColor: Color
-
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            ChatTeachyMark(color: accentColor, size: 12)
-            ChatTypingDots(color: accentColor)
+        HStack(alignment: .center, spacing: 0) {
+            ChatLivePointerMark()
+                .frame(width: ChatStyle.gutterWidth, alignment: .leading)
             Text("Thinking")
-                .font(.system(size: 12.5))
-                .foregroundColor(DS.Colors.textTertiary)
+                .font(DS.Fonts.data)
+                .foregroundColor(DS.Colors.textSecondary)
         }
     }
 }
 
 // MARK: - Rows from other parts of the app
 
+/// A drawing Teachy made, as a row of a grouped list: its picture, its name and
+/// when. The whole row opens the drawing.
 struct ChatDrawingRow: View {
     let row: ChatTimelineRow
     let date: Date
@@ -723,62 +905,57 @@ struct ChatDrawingRow: View {
     @State private var thumbnail: NSImage?
     @State private var isHovering = false
 
+    private var thumbnailShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: DS.CornerRadius.small, style: .continuous)
+    }
+
     var body: some View {
         Button(action: onOpen) {
-            HStack(spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color(hex: "#F4F1E8"))
+                    thumbnailShape.fill(DS.Colors.fillTertiary)
                     if let thumbnail {
                         Image(nsImage: thumbnail)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
                     } else {
                         Image(systemName: "scribble.variable")
-                            .font(.system(size: 22, weight: .medium))
-                            .foregroundColor(Color(hex: "#3B4252"))
+                            .font(DS.Fonts.sans(18, weight: .medium))
+                            .foregroundColor(DS.Colors.textTertiary)
                     }
                 }
-                .frame(width: 104, height: 68)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .frame(width: 84, height: 56)
+                .clipShape(thumbnailShape)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "pencil.and.outline")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("Drawing")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundColor(DS.Colors.floatingGradientOrange)
+                VStack(alignment: .leading, spacing: 3) {
                     Text(row.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DS.Fonts.itemTitle)
                         .foregroundColor(DS.Colors.textPrimary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
-                    Text(ChatTimeFormat.time.string(from: date))
-                        .font(.system(size: 10.5))
-                        .foregroundColor(DS.Colors.textTertiary)
+                    Text("Drawing · \(ChatTimeFormat.time.string(from: date))")
+                        .font(DS.Fonts.data)
+                        .foregroundColor(DS.Colors.textSecondary)
                 }
                 Spacer(minLength: 8)
-                HStack(spacing: 4) {
+                // Drawn like `.teachyLinkButton()` (tint, brighter on hover), but it is
+                // not a button of its own: the whole row is the button.
+                HStack(spacing: 3) {
                     Text("Open")
-                        .font(.system(size: 12, weight: .medium))
                     Image(systemName: "arrow.up.right")
-                        .font(.system(size: 9.5, weight: .bold))
+                        .imageScale(.small)
                 }
-                .foregroundColor(isHovering ? DS.Colors.textPrimary : DS.Colors.textSecondary)
-                .padding(.trailing, 6)
+                .font(DS.Fonts.caption)
+                .foregroundColor(DS.Colors.pointer)
+                .brightness(isHovering ? 0.12 : 0)
             }
-            .padding(8)
-            .frame(maxWidth: 480, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(isHovering ? 0.07 : 0.045)))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(ChatStyle.cardStroke, lineWidth: 1))
+            .padding(.vertical, ChatStyle.groupedRowVerticalPadding)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointerCursor()
+        .animation(DS.Motion.hover, value: isHovering)
         .onHover { isHovering = $0 }
-        .padding(.leading, 26)
         .task(id: row.thumbnailPath) {
             guard let path = row.thumbnailPath else { thumbnail = nil; return }
             thumbnail = NSImage(contentsOfFile: path)
@@ -787,6 +964,8 @@ struct ChatDrawingRow: View {
     }
 }
 
+/// An agent job in the conversation, as a row of a grouped list: a status
+/// mark, the job's name, its state and time, what it answered, and "Open job".
 struct ChatJobRow: View {
     let row: ChatTimelineRow
     let date: Date
@@ -795,13 +974,14 @@ struct ChatJobRow: View {
 
     private var status: ChatJobStatus { row.status ?? .running }
 
-    private var tint: Color {
+    /// The symbol says the state; see `TeachyStatusMark`.
+    private var statusMarkKind: TeachyStatusKind {
         switch status {
-        case .running: return DS.Colors.blue400
-        case .waitingForYou: return DS.Colors.warning
-        case .done: return DS.Colors.success
-        case .failed: return DS.Colors.destructiveText
-        case .stopped: return DS.Colors.textSecondary
+        case .running: return .live
+        case .waitingForYou: return .needsYou
+        case .done: return .done
+        case .failed: return .failed
+        case .stopped: return .stopped
         }
     }
 
@@ -810,122 +990,88 @@ struct ChatJobRow: View {
         answer.count > 420 || answer.filter { $0 == "\n" }.count >= 7
     }
 
-    private var iconName: String {
-        switch status {
-        case .running: return "arrow.triangle.2.circlepath"
-        case .waitingForYou: return "hand.raised.fill"
-        case .done: return "checkmark"
-        case .failed: return "exclamationmark"
-        case .stopped: return "stop.fill"
-        }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle().fill(tint.opacity(0.16))
-                    Image(systemName: iconName)
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(tint)
-                }
-                .frame(width: 26, height: 26)
+        HStack(alignment: .firstTextBaseline, spacing: 9) {
+            TeachyStatusMark(kind: statusMarkKind)
+                // Drops the symbol so it sits level with the job's name.
+                .alignmentGuide(.firstTextBaseline) { dimensions in dimensions[.bottom] - 2.5 }
 
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 9.5, weight: .semibold))
-                        Text("Agent job")
-                            .font(.system(size: 11, weight: .semibold))
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.title)
+                            .font(DS.Fonts.itemTitle)
+                            .foregroundColor(DS.Colors.textPrimary)
+                            .lineLimit(1)
+                        HStack(alignment: .firstTextBaseline, spacing: 0) {
+                            Text(status.label)
+                                .foregroundColor(DS.Colors.textSecondary)
+                            Text(" · \(ChatTimeFormat.time.string(from: date))")
+                                .foregroundColor(DS.Colors.textTertiary)
+                        }
+                        .font(DS.Fonts.data)
                     }
-                    .foregroundColor(DS.Colors.textTertiary)
-                    Text(row.title)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(DS.Colors.textPrimary)
-                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    ChatTextButton(title: "Open job", systemImage: "arrow.up.right", action: onOpen)
                 }
-                Spacer(minLength: 8)
-                Text(status.label)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(tint)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(tint.opacity(0.14)))
-            }
 
-            if let answer = row.answer, !answer.isEmpty {
-                if isLong(answer) && !isExpanded {
-                    Text(ChatProse.attributed(answer))
-                        .font(.system(size: 13.5))
-                        .lineSpacing(3.5)
-                        .foregroundColor(DS.Colors.textPrimary.opacity(0.88))
-                        .textSelection(.enabled)
-                        .lineLimit(6)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    ChatProseView(text: answer, fontSize: 13.5, lineSpacing: 3.5, opacity: 0.88)
-                }
-            }
-
-            HStack(spacing: 6) {
-                Text(ChatTimeFormat.time.string(from: date))
-                    .font(.system(size: 10.5))
-                    .foregroundColor(DS.Colors.textTertiary)
                 if let answer = row.answer, !answer.isEmpty {
-                    ChatCopyButton(text: answer)
-                    if isLong(answer) {
-                        ChatTextButton(title: isExpanded ? "Show less" : "Show all") { isExpanded.toggle() }
+                    if isLong(answer) && !isExpanded {
+                        Text(ChatProse.attributed(answer, fontSize: ChatStyle.voiceSize))
+                            .font(DS.Fonts.voice)
+                            .lineSpacing(ChatStyle.voiceLineSpacing)
+                            .foregroundColor(DS.Colors.textPrimary)
+                            .textSelection(.enabled)
+                            .lineLimit(6)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        ChatProseView(text: answer, fontSize: ChatStyle.voiceSize, lineSpacing: ChatStyle.voiceLineSpacing)
+                    }
+
+                    HStack(alignment: .firstTextBaseline, spacing: 14) {
+                        ChatCopyButton(text: answer)
+                        if isLong(answer) {
+                            ChatTextButton(title: isExpanded ? "Show less" : "Show all") { isExpanded.toggle() }
+                        }
                     }
                 }
-                Spacer()
-                ChatTextButton(title: "Open job", systemImage: "arrow.up.right", action: onOpen)
             }
         }
-        .padding(12)
-        .frame(maxWidth: 560, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(ChatStyle.cardFill))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(ChatStyle.cardStroke, lineWidth: 1))
-        .padding(.leading, 26)
+        .padding(.vertical, ChatStyle.groupedRowVerticalPadding)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Agent job \(row.title), \(status.label)")
     }
 }
 
+/// A text button in the thread ("Open job", "Show all").
 struct ChatTextButton: View {
     let title: String
     var systemImage: String?
     let action: () -> Void
-    @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Text(title).font(.system(size: 11.5, weight: .medium))
+            HStack(spacing: 3) {
+                Text(title)
                 if let systemImage {
-                    Image(systemName: systemImage).font(.system(size: 9, weight: .bold))
+                    Image(systemName: systemImage)
+                        .imageScale(.small)
                 }
             }
-            .foregroundColor(isHovering ? DS.Colors.textPrimary : DS.Colors.textSecondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(isHovering ? 0.08 : 0)))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .pointerCursor()
-        .onHover { isHovering = $0 }
+        .teachyLinkButton()
     }
 }
 
+/// Something that happened ("Attached report.pdf"): one small centred line.
 struct ChatNoteRow: View {
     let text: String
 
     var body: some View {
         Text(text)
-            .font(.system(size: 12))
+            .font(DS.Fonts.caption)
             .foregroundColor(DS.Colors.textTertiary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, -4)
     }
 }

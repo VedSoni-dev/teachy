@@ -264,6 +264,20 @@ private struct SceneWindowDragHandle: NSViewRepresentable {
     func updateNSView(_ nsView: HandleView, context: Context) {}
 }
 
+/// The name of the model, on a small floating pill at its top left.
+private struct Scene3DTitleTile: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(DS.Fonts.title)
+            .foregroundColor(DS.Colors.textPrimary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .teachyTile(cornerRadius: DS.CornerRadius.pill)
+    }
+}
+
 struct Scene3DView: View {
     @ObservedObject var model: Scene3DModel
     let controller: Scene3DController
@@ -278,14 +292,7 @@ struct Scene3DView: View {
                 Scene3DRepresentable(view: controller.view)
                 HStack(alignment: .top) {
                     if !model.title.isEmpty {
-                        Text(model.title)
-                            .font(SceneStyle.marker(19))
-                            .foregroundColor(SceneStyle.ink)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 6)
-                            .background(Capsule().fill(SceneStyle.paper.opacity(0.96)))
-                            .overlay(Capsule().stroke(SceneStyle.ink.opacity(0.7), lineWidth: 1.3))
-                            .shadow(color: .black.opacity(0.14), radius: 4, y: 2)
+                        Scene3DTitleTile(title: model.title)
                             .overlay(SceneWindowDragHandle())
                     }
                     Spacer()
@@ -294,29 +301,22 @@ struct Scene3DView: View {
                         Button(action: { controller.recenter() }) {
                             HStack(spacing: 4) {
                                 Image(systemName: "scope")
-                                    .font(.system(size: 10, weight: .bold))
+                                    .font(DS.Fonts.sans(10, weight: .semibold))
                                 Text("Recenter")
-                                    .font(SceneStyle.body(12))
                             }
-                            .foregroundColor(SceneStyle.ink.opacity(0.8))
-                            .padding(.horizontal, 9)
-                            .frame(height: 22)
-                            .background(Capsule().fill(SceneStyle.paper.opacity(0.92)))
-                            .overlay(Capsule().stroke(SceneStyle.ink.opacity(0.45), lineWidth: 1))
                         }
-                        .buttonStyle(.plain)
+                        .teachyButton(.quiet, size: .compact)
+                        // Like the close button beside it: its own glass capsule, because the model floats over the screen.
+                        .teachyTile(cornerRadius: DS.CornerRadius.pill)
                         .help("Show the whole model again (Esc)")
                         .transition(.opacity)
                     }
                     Button(action: onClose) {
                         Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(SceneStyle.ink.opacity(0.75))
-                            .frame(width: 22, height: 22)
-                            .background(Circle().fill(SceneStyle.paper.opacity(0.9)))
-                            .overlay(Circle().stroke(SceneStyle.ink.opacity(0.45), lineWidth: 1))
                     }
-                    .buttonStyle(.plain)
+                    .teachyIconButton(sideLength: 22)
+                    // The model floats over whatever is on screen, so the button sits on its own round tile.
+                    .teachyTile(cornerRadius: DS.CornerRadius.pill)
                 }
                 .padding(10)
             }
@@ -341,15 +341,14 @@ struct Scene3DChrome: View {
                     ForEach(model.sliders) { slider in
                         HStack(spacing: 10) {
                             Text(slider.label)
-                                .font(SceneStyle.marker(16))
-                                .foregroundColor(SceneStyle.ink)
+                                .font(DS.Fonts.bodyEmphasized)
+                                .foregroundColor(DS.Colors.textPrimary)
                                 .frame(width: 110, alignment: .leading)
-                            Slider(value: Binding(get: { slider.value }, set: { controller?.setSlider(slider.id, value: $0, fromUser: true) }),
-                                   in: slider.minimum...slider.maximum)
-                                .tint(SceneColor.marker.color)
+                            TeachySlider(value: Binding(get: { slider.value }, set: { controller?.setSlider(slider.id, value: $0, fromUser: true) }),
+                                         in: slider.minimum...slider.maximum)
                             Text(Self.format(slider.value) + slider.unit)
-                                .font(SceneStyle.body(15))
-                                .foregroundColor(SceneStyle.ink)
+                                .font(DS.Fonts.data)
+                                .foregroundColor(DS.Colors.textSecondary)
                                 .frame(width: 58, alignment: .trailing)
                                 .monospacedDigit()
                         }
@@ -361,12 +360,13 @@ struct Scene3DChrome: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
                 .frame(width: 460)
-                .background(RoundedRectangle(cornerRadius: 14).fill(SceneStyle.paper.opacity(0.97)))
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(SceneStyle.ink.opacity(0.6), lineWidth: 1.3))
-                .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
+                .teachyTile(cornerRadius: DS.CornerRadius.group)
             }
             if !model.chips.isEmpty {
+                // The follow-ups float over the screen too, so they sit on their own tile.
                 SceneChipRow(chips: model.chips, onTap: onChipTapped)
+                    .padding(8)
+                    .teachyTile(cornerRadius: DS.CornerRadius.group)
                     .frame(maxWidth: 560)
             }
         }
@@ -384,15 +384,15 @@ struct Scene3DPlotView: View {
     var body: some View {
         HStack(spacing: 10) {
             Text(plot.label)
-                .font(SceneStyle.marker(16))
-                .foregroundColor(SceneStyle.ink)
+                .font(DS.Fonts.bodyEmphasized)
+                .foregroundColor(DS.Colors.textPrimary)
                 .frame(width: 110, alignment: .leading)
             Canvas { context, size in
                 let samples = plot.samples
                 var axis = Path()
                 axis.move(to: CGPoint(x: 0, y: size.height / 2))
                 axis.addLine(to: CGPoint(x: size.width, y: size.height / 2))
-                context.stroke(axis, with: .color(SceneStyle.ink.opacity(0.25)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                context.stroke(axis, with: .color(DS.Colors.hairlineStrong), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                 guard samples.count > 1 else { return }
                 let extent = max(samples.map { abs($0) }.max() ?? 1, 1e-6)
                 var path = Path()
@@ -409,10 +409,9 @@ struct Scene3DPlotView: View {
                 }
             }
             .frame(height: 54)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.55)))
             Text((plot.samples.last.map { Scene3DChrome.format($0) } ?? "–") + plot.unit)
-                .font(SceneStyle.body(15))
-                .foregroundColor(SceneStyle.ink)
+                .font(DS.Fonts.data)
+                .foregroundColor(DS.Colors.textSecondary)
                 .frame(width: 58, alignment: .trailing)
                 .monospacedDigit()
         }
@@ -496,15 +495,11 @@ final class Scene3DWindow {
     func snapshot(backdrop: NSColor = NSColor(calibratedWhite: 0.94, alpha: 1)) -> NSImage? {
         let scale: CGFloat = 2
         let model3D = controller.snapshot()
-        let chromeRenderer = ImageRenderer(content: Scene3DChrome(model: controller.model, controller: nil).frame(width: Scene3DView.viewSize.width))
+        let chromeRenderer = ImageRenderer(content: Scene3DChrome(model: controller.model, controller: nil).frame(width: Scene3DView.viewSize.width)
+            .environment(\.teachyIsDrawnIntoPicture, true))
         chromeRenderer.scale = scale
         let chrome = chromeRenderer.nsImage
-        let titleRenderer = ImageRenderer(content: Text(controller.model.title)
-            .font(SceneStyle.marker(19))
-            .foregroundColor(SceneStyle.ink)
-            .padding(.horizontal, 14).padding(.vertical, 6)
-            .background(Capsule().fill(SceneStyle.paper))
-            .overlay(Capsule().stroke(SceneStyle.ink.opacity(0.7), lineWidth: 1.3)))
+        let titleRenderer = ImageRenderer(content: Scene3DTitleTile(title: controller.model.title).environment(\.teachyIsDrawnIntoPicture, true))
         titleRenderer.scale = scale
         let chromeHeight = chrome?.size.height ?? 0
         let size = CGSize(width: Scene3DView.viewSize.width, height: Scene3DView.viewSize.height + chromeHeight)

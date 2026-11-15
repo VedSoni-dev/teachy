@@ -81,7 +81,7 @@ npm run harness                      # validate all routes
 | `TeachyDataPaths.swift` | ~35 | Resolves `~/.teachy/{connectors,brain}` with legacy `~/.clicky/` fallback for connectors. |
 | `academy/` | — | Marketing site: assistant landing page (`index.html`, `site.css`, `app.js`) and `changelog.html`. Course store removed; `registry.json` kept for old installs. |
 | `AgentToolResult.swift` | ~35 | Tool results with optional vision images fed back into the agent loop. |
-| `BackgroundAgentSideDockWindow.swift` | ~590 | Side-docked Teachy mascot shown during a live Composio sync prompt (background-agent progress card removed as dead UI — the mascot dock, sync card, and their animations are still live). |
+| `BackgroundAgentSideDockWindow.swift` | ~470 | Side-docked Teachy mascot shown during a live Composio sync prompt (background-agent progress card removed as dead UI — the mascot dock, sync card, and their animations are still live). |
 | `BackgroundAgentManager.swift` | ~470 | OpenRouter tool-calling agent loop. OpenRouter server tools for web search/fetch; Mac-native tools + browser cookie sessions + App Connectors run locally. |
 | `AppConnectorManager.swift` | ~320 | Discovers `~/.teachy/connectors/*.json`, loads OpenAPI or Teachy HTTP connections, registers dynamic agent tools. |
 | `AppConnectorManifest.swift` | ~175 | Connection manifest types, tool naming (`connector_id__tool_name`), seed manifest for Plant Maint demo. |
@@ -104,13 +104,12 @@ npm run harness                      # validate all routes
 | `ClickyNotchSizing.swift` | ~40 | Open/closed sizes, corner radii, spring animations (boring.notch `matters.swift`). |
 | `ClickyNotchShape.swift` | ~75 | Animatable notch silhouette (DynamicNotchKit / boring.notch). |
 | `ClickyAudioSpectrumView.swift` | ~180 | Closed-notch spectrum bars + idle blinking face. |
-| `ClickyNotchRootView.swift` | ~400 | Root notch UI — black shape, live activity, header, spring open height. |
+| `ClickyNotchRootView.swift` | ~370 | Root notch UI — one `TeachyGlassSurface` in the notch shape: clear glass when closed, frosted when open, solid black with Reduce Transparency; live activity, header, spring open height. |
 | `NotchWindowManager.swift` | ~220 | Fixed-size floating `NSPanel`, hover-to-open, click-outside collapse. |
 | `NotchPanelView.swift` | ~70 | Thin notch panel shell — setup/onboarding until done, then the Home tab (the only `NotchPanelTab` case). |
-| `NotchPanelColors.swift` | ~20 | Shared color tokens (`NotchPanelColors`) for the notch panel UI. |
-| `NotchPanelSharedComponents.swift` | ~135 | Dependency-free shared views/helpers: `KeyboardKeyLabel`, `FlowLayout`, and the free-function `openRouterModelPickerRow`. |
-| `NotchHomeTabView.swift` | ~760 | Home tab — push-to-talk instructions, trust copy, check-in card, AI Brain (OpenRouter key add/rotate/remove), Voice (ElevenLabs key), software updates, cursor color, model picker, feedback link. |
-| `NotchSetupOnboardingView.swift` | ~630 | Setup stage router — permission choreography, one-time Automation explainer, API key setup, and the in-panel Teachy product tour (`TeachyOnboardingPage`). |
+| `NotchPanelSharedComponents.swift` | ~110 | Shared helpers for the notch panel: `FlowLayout` and the free-function `openRouterModelPickerRow`. (`KeyboardKeyLabel` moved to `DesignSystem.swift`.) |
+| `NotchHomeTabView.swift` | ~415 | Home tab, top to bottom: the "Hold [keys] and ask." headline with the shortcut recorder, a three-column group of what you can do, quick actions (chat window, always-on, typing, files), agents / connectors / drawings / memory sections, then settings as one grouped list of rows that open in place (account, voice, microphone, dictation, shortcuts, pointer colour, browser, privacy, updates, advanced) and the feedback links. |
+| `NotchSetupOnboardingView.swift` | ~575 | Setup stage router — permission choreography, one-time Automation explainer, API key setup, and the in-panel Teachy product tour (`TeachyOnboardingPage`). |
 | `PermissionChoreographyView.swift` | ~430 | One-permission-at-a-time setup wizard: auto-fires system prompts, animated System Settings toggle mock, 1s poll auto-advances on grant. |
 | `MenuBarPanelManager.swift` | ~103 | NSStatusItem lifecycle. Menu bar icon toggles the notch panel. |
 | `OverlayWindow.swift` | ~881 | Full-screen transparent overlay hosting the blue cursor, response text, waveform, and spinner. Handles cursor animation, element pointing with bezier arcs, multi-monitor coordinate mapping, and fade-out transitions. |
@@ -131,7 +130,7 @@ npm run harness                      # validate all routes
 | `OpenAIAPI.swift` | ~142 | OpenAI GPT vision API client. |
 | `ElevenLabsTTSClient.swift` | — | Removed — app uses `LocalSpeechSynthesizer` instead. |
 | `ElementLocationDetector.swift` | ~335 | Detects UI element locations in screenshots for cursor pointing. |
-| `DesignSystem.swift` | ~880 | Design system tokens — colors, corner radii, shared styles. All UI references `DS.Colors`, `DS.CornerRadius`, etc. |
+| `DesignSystem.swift` | ~1020 | The design language in code ("Teachy looks like part of macOS", see `docs/DESIGN.md`): `DS.Colors` (Dark Mode system greys, label colours, the pointer colour as the tint), `DS.Fonts` (SF Pro at macOS sizes), `DS.Motion`, `DS.Haptics`, and the components every screen uses: `.teachyButton` (capsules), `.teachyIconButton`, `.teachyLinkButton`, `.teachyOption`, `.teachyTile` (system glass: Liquid Glass on macOS 26, a material before it, solid with Reduce Transparency, a frosted stand-in in off-screen renders), `.teachyGroup` (grouped-list container), `.teachyWell`, `TeachyRule`, `TeachySectionTitle`, `TeachyStatusMark` (SF Symbols), `TeachySwitch`, `KeyboardKeyLabel`, `TeachyPointerShape`. Controls are drawn here rather than borrowed from AppKit because Teachy's panels never become the key window. |
 | `ClickyAnalytics.swift` | ~121 | PostHog analytics integration for usage tracking. |
 | `WindowPositionManager.swift` | ~262 | Window placement logic, Screen Recording permission flow, and accessibility permission helpers. |
 | `AppBundleConfiguration.swift` | ~28 | Runtime configuration reader for keys stored in the app bundle Info.plist. |
@@ -205,6 +204,7 @@ IMPORTANT: Follow these naming rules strictly. Clarity is the top priority.
 - Use async/await for all asynchronous operations
 - Comments should explain "why" not just "what", especially for non-obvious AppKit bridging
 - AppKit `NSPanel`/`NSWindow` bridged into SwiftUI via `NSHostingView`
+- All UI follows `docs/DESIGN.md` and is built from the tokens and components in `DesignSystem.swift`. No `Color(hex:)`, `Color.white.opacity(…)` fills or raw `.font(.system(size:))` in views; if a token is missing, add it to the design system. After a visual change, render the view to PNG (`scripts/tests/render_*_shots.sh`) and look at it.
 - All buttons must show a pointer cursor on hover
 - For any interactive element, explicitly think through its hover behavior (cursor, visual feedback, and whether hover should communicate clickability)
 
@@ -280,5 +280,6 @@ Direction: Teachy is a full HeyClicky competitor; the course/teaching system was
 
 - **Second batch (14 Nov 2026, evening)**: dictation types while you speak and corrects on release (`Dictation/DictationSession.swift`, `DictationSpeedPolicy.swift`); `[WRITE:]` drafts into the focused field (`Writing/`); chat window + attachments + whole-document reading (`ChatWindow/`, `Documents/`); hands-free voice, reply language, screen memory, mic failover (`Voice/`); concurrent jobs, history, named agents, routines (`Agent/`, `Agent/Routines/`), connector catalog (`Connectors/ConnectorCatalog.swift`); Chrome extension + native host + bridge (`chrome-extension/`, `native-host/`, `Browser/`); walkthroughs via `[WALK:]` (`Walkthrough/`) and app skill files (`Skills/Library/*.skill.md`); drawings narrate themselves, `[MARK:]` draws on the live screen, photos, replay and video export (`Scene/`, `Core/SceneDirector.swift`).
 - **Dead code to delete**: the old guided task in `CompanionManager.swift` (`activeGuidedTask`, `[GUIDE:]`, `presentGuidedTaskPlan`, `executeActStep`, `reflectAndReplaceRemainingSteps`), `GuidedTaskPlanner.swift`, most of `CompanionGuidedTask.swift`. `[WALK:]` replaces it.
+- **Design language (14 Nov 2026, night)**: every screen was redrawn to `docs/DESIGN.md`: Teachy looks like part of macOS (SF Pro, system glass for the notch (clear when closed, frosted when open) and everything that floats, only the camera housing black, grouped lists as in System Settings, system-style capsule buttons and switches, SF Symbols, the pointer colour as the one tint, springs). Kit shots: `scripts/tests/render_design_shots.sh`; Home tab shots: `scripts/tests/render_home_shots.sh`; onboarding, permissions and publik gate shots: `scripts/tests/render_onboarding_shots.sh`. Off-screen renders show glass as a dark frosted stand-in. Real Liquid Glass is checked with `scripts/tests/run_notch_demo.sh` (the real `ClickyNotchRootView` in an on-screen window over a stand-in desktop, opening and closing; `--record DIR` writes mp4 and gif); it has not been looked at in the installed app yet. Known: `run_chrome_e2e_tests.sh` fails to compile (its file list lacks `Agent/ToolPolicy.swift`); that predates the redesign.
 - **More tests**: `run_dictspeed_tests.sh`, `run_dictation_shortcut_tests.sh`, `run_microphone_tests.sh`, `run_docs2_tests.sh`, `run_voice2_tests.sh`, `run_agents2_tests.sh`, `run_chrome_tests.sh`, `run_chrome_e2e_tests.sh`, `run_walk_tests.sh`, `run_scene2_tests.sh`; evals `scripts/eval/run_annotate_eval.sh`. Parallel-builder rules: `docs/BUILDER-RULES.md`.
 - **Still not built**: Windows/iOS, notarized release, new onboarding, bundling the Chrome helper into the app, structured actions (tags are still free text).

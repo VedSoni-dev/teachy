@@ -28,8 +28,9 @@ final class ChatWindowController: NSObject, NSWindowDelegate {
 
     /// Where typed questions go. Set by `install(onSubmit:)`.
     var onSubmit: (String) -> Void = { _ in }
-    /// The colour of Teachy's mark in the thread. Set it to the person's cursor colour.
-    var accentColor: Color = DS.Colors.overlayCursorBlue
+    /// The person's cursor colour. The view no longer reads it (its marks use
+    /// `DS.Colors.pointer`, which follows a new colour choice); kept because the app sets it.
+    var accentColor: Color = DS.Colors.pointer
 
     private var window: NSWindow?
     private var isWatching = false
@@ -105,7 +106,7 @@ final class ChatWindowController: NSObject, NSWindowDelegate {
         window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(red: 0.043, green: 0.047, blue: 0.059, alpha: 1)
+        window.backgroundColor = NSColor(DS.Colors.background)
         window.collectionBehavior = [.fullScreenPrimary]
         window.tabbingMode = .disallowed
         // The traffic lights sit centred in the 52-point header drawn by the content.

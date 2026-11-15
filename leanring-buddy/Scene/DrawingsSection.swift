@@ -2,13 +2,14 @@
 //  DrawingsSection.swift
 //  leanring-buddy / Scene
 //
-//  The "Drawings" card for the notch panel's Home tab: a grid of the drawings
+//  The "Drawings" section for the notch panel's Home tab: a grid of the drawings
 //  Teachy has made, each with Replay and Save video. Mount it with
 //  `DrawingsSection()`. It reads and writes `SceneHistory.shared` and needs
 //  nothing else from the app but the design tokens.
 //
-//  Looks like the settings cards (SettingsDisclosureCard): a glass card that
-//  starts collapsed with a one-line summary.
+//  A standalone section, like the others on Home: a heading with the count
+//  beside it, then one grouped container. The heading opens and closes the
+//  section, and it starts closed so Home stays short.
 //
 
 import AppKit
@@ -17,8 +18,10 @@ import SwiftUI
 struct DrawingsSection: View {
     @ObservedObject private var history: SceneHistory
     @State private var isExpanded: Bool
+    @State private var isHeaderHovered = false
     @State private var showsAll = false
     @State private var problem: String?
+    @Environment(\.accessibilityReduceMotion) private var isReduceMotionEnabled
 
     /// How many drawings are shown before "Show all".
     private let previewCount = 4
@@ -29,50 +32,34 @@ struct DrawingsSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 9) {
             Button {
-                withAnimation(.smooth(duration: 0.22)) { isExpanded.toggle() }
+                withAnimation(isReduceMotionEnabled ? DS.Motion.reduced : DS.Motion.standard) { isExpanded.toggle() }
             } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "scribble.variable")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(DS.Colors.learnAccent)
-                        .frame(width: 16)
-                    Text("Drawings")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(DS.Colors.textPrimary)
-                    Spacer(minLength: 8)
-                    if !isExpanded {
-                        Text(summary)
-                            .font(.system(size: 11))
-                            .foregroundColor(DS.Colors.textTertiary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    TeachySectionTitle(title: "Drawings", detail: summary)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(DS.Colors.textTertiary)
+                        .font(DS.Fonts.sans(10, weight: .semibold))
+                        .foregroundColor(isHeaderHovered ? DS.Colors.textSecondary : DS.Colors.textTertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .pointerCursor()
+            .onHover { hovering in
+                withAnimation(DS.Motion.hover) { isHeaderHovered = hovering }
+            }
 
             if isExpanded {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 0) {
                     content
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .teachyGroup()
                 .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard()
         .onAppear { history.reload() }
     }
 
@@ -84,39 +71,42 @@ struct DrawingsSection: View {
         }
     }
 
+    /// The rows of the group: the drawings, then "Show all" under a divider.
     @ViewBuilder
     private var content: some View {
         if history.entries.isEmpty {
             Text("Ask Teachy to show you something, like “show me how a jet engine works”. Each drawing is kept here so you can play it again or save it as a video.")
-                .font(.system(size: 11))
-                .foregroundColor(DS.Colors.textTertiary)
+                .font(DS.Fonts.body)
+                .foregroundColor(DS.Colors.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 12)
         } else {
             let shown = showsAll ? history.entries : Array(history.entries.prefix(previewCount))
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], alignment: .leading, spacing: 12) {
-                ForEach(shown) { entry in
-                    DrawingTile(entry: entry, thumbnail: history.thumbnail(for: entry.id), progress: history.exportProgress[entry.id],
-                                onReplay: { history.replay(entry.id) },
-                                onSaveVideo: { saveVideo(entry) },
-                                onDelete: { history.delete(entry.id) })
+            VStack(alignment: .leading, spacing: 12) {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], alignment: .leading, spacing: 18) {
+                    ForEach(shown) { entry in
+                        DrawingTile(entry: entry, thumbnail: history.thumbnail(for: entry.id), progress: history.exportProgress[entry.id],
+                                    onReplay: { history.replay(entry.id) },
+                                    onSaveVideo: { saveVideo(entry) },
+                                    onDelete: { history.delete(entry.id) })
+                    }
+                }
+                if let problem {
+                    Text(problem)
+                        .font(DS.Fonts.caption)
+                        .foregroundColor(DS.Colors.destructiveText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if let problem {
-                Text(problem)
-                    .font(.system(size: 10))
-                    .foregroundColor(DS.Colors.warningText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            .padding(.vertical, 14)
+
             if history.entries.count > previewCount {
-                Button {
-                    withAnimation(.smooth(duration: 0.2)) { showsAll.toggle() }
-                } label: {
-                    Text(showsAll ? "Show fewer" : "Show all \(history.entries.count)")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.Colors.textTertiary)
+                TeachyRule()
+                Button(showsAll ? "Show fewer" : "Show all \(history.entries.count)") {
+                    withAnimation(isReduceMotionEnabled ? DS.Motion.reduced : DS.Motion.standard) { showsAll.toggle() }
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
+                .teachyLinkButton(font: DS.Fonts.body)
+                .padding(.vertical, 10)
             }
         }
     }
@@ -146,8 +136,12 @@ struct DrawingTile: View {
 
     @State private var isHovered = false
 
+    private var pictureShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: DS.CornerRadius.control, style: .continuous)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             ZStack(alignment: .topTrailing) {
                 Group {
                     if let thumbnail {
@@ -156,84 +150,78 @@ struct DrawingTile: View {
                             .aspectRatio(contentMode: .fill)
                     } else {
                         ZStack {
-                            Color.white.opacity(0.06)
+                            DS.Colors.fillTertiary
                             Image(systemName: "scribble.variable")
-                                .font(.system(size: 18))
-                                .foregroundColor(DS.Colors.textTertiary)
+                                .font(DS.Fonts.sans(16))
+                                .foregroundColor(DS.Colors.textQuaternary)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: DS.CornerRadius.medium, style: .continuous).stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+                .clipShape(pictureShape)
+                .overlay(pictureShape.strokeBorder(isHovered ? DS.Colors.hairlineStrong : DS.Colors.hairline, lineWidth: 1))
                 .contentShape(Rectangle())
                 .onTapGesture(perform: onReplay)
+                .pointerCursor()
 
                 if isHovered {
                     Button(action: onDelete) {
                         Image(systemName: "trash")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(DS.Colors.textPrimary)
-                            .frame(width: 20, height: 20)
-                            .background(Circle().fill(Color.black.opacity(0.55)))
+                            .foregroundColor(DS.Colors.destructiveText)
                     }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
+                    .teachyIconButton(sideLength: 22)
+                    // A disc of notch black under the symbol, so it reads over any picture.
+                    .background(Circle().fill(DS.Colors.notchBlack))
                     .padding(5)
                     .help("Remove this drawing")
                     .transition(.opacity)
                 }
             }
+            .padding(.bottom, 4)
 
             Text(entry.title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(DS.Fonts.itemTitle)
                 .foregroundColor(DS.Colors.textPrimary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Text("\(Self.dayText(entry.date)) · \(entry.kind)")
-                .font(.system(size: 10))
-                .foregroundColor(DS.Colors.textTertiary)
+                .font(DS.Fonts.data)
+                .foregroundColor(DS.Colors.textSecondary)
                 .lineLimit(1)
 
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Button(action: onReplay) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "play.fill").font(.system(size: 8, weight: .bold))
-                        Text("Replay").font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                    HStack(spacing: 5) {
+                        Image(systemName: "play.fill")
+                            .font(DS.Fonts.sans(8, weight: .bold))
+                        Text("Replay")
                     }
                     .fixedSize()
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(Color.white.opacity(0.1)))
                 }
-                .buttonStyle(.plain)
-                .pointerCursor()
+                .teachyButton(.secondary, size: .compact)
 
                 if let progress {
-                    Text("Saving \(Int((progress * 100).rounded()))%")
-                        .lineLimit(1)
-                        .fixedSize()
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(DS.Colors.textTertiary)
-                        .monospacedDigit()
-                } else {
-                    Button(action: onSaveVideo) {
-                        Text("Save video")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(DS.Colors.textTertiary)
+                    // The video is being made right now: the live mark.
+                    HStack(spacing: 5) {
+                        TeachyStatusMark(kind: .live, sideLength: 11)
+                        Text("Saving \(Int((progress * 100).rounded()))%")
+                            .font(DS.Fonts.data)
+                            .foregroundColor(DS.Colors.textSecondary)
                             .lineLimit(1)
-                            .fixedSize()
                     }
-                    .buttonStyle(.plain)
-                    .pointerCursor()
-                    .help(entry.hasNarration ? "Save as a video with the voice" : "Save as a video (no sound)")
+                    .fixedSize()
+                } else {
+                    Button("Save video", action: onSaveVideo)
+                        .teachyLinkButton()
+                        .fixedSize()
+                        .help(entry.hasNarration ? "Save as a video with the voice" : "Save as a video (no sound)")
                 }
             }
+            .padding(.top, 4)
         }
         .onHover { hovering in
-            withAnimation(.easeOut(duration: DS.Animation.fast)) { isHovered = hovering }
+            withAnimation(DS.Motion.hover) { isHovered = hovering }
         }
     }
 
