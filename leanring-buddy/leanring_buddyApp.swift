@@ -66,6 +66,8 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         // Fn+Control dictation: waits for the publik gate and for the Accessibility
         // and Microphone permissions before it listens for the hotkey.
         DictationController.shared.startWhenReady()
+        // Scheduled routines run as agent jobs while the app is open.
+        RoutineScheduler.shared.start(using: companionManager.backgroundAgentManager)
         // The chat window: full conversation history, a composer and file drops (Control+Command+A).
         ChatWindowController.shared.accentColor = companionManager.selectedCursorColor.displayColor
         ChatWindowController.shared.install(onSubmit: { [weak self] text in

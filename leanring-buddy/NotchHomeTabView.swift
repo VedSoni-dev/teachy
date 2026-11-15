@@ -60,7 +60,7 @@ struct NotchHomeTabView: View {
 
                 ConnectorsSection()
 
-                // MOUNT: AgentJobsSection()
+                AgentsSection()
 
                 PrivacySettingsSection()
 
