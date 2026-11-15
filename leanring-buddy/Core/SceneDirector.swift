@@ -8,6 +8,10 @@
 //                   simulation. The scene model writes the narration into the script as
 //                   `say` lines, and each sentence is spoken through `speak` while the
 //                   lines after it are drawn, so the drawing narrates itself.
+//                   When a 3D model is already up and the request is about it ("zoom in on the
+//                   turbine", "show me inside", "go back", a tap on a part), nothing is drawn
+//                   again: `refine` sends the model the parts that are on screen and applies
+//                   its camera, visibility and speech lines to the live scene.
 //    annotate(…)    [MARK: …] in a reply: draw on the live screen, over the screenshot the
 //                   person was looking at (only on-screen marks and label pills).
 //    stop()         barge-in: cancels the stream and the narration and clears the marks on
@@ -39,6 +43,8 @@ final class SceneDirector {
     var silentMarkTime: TimeInterval = 5
     /// A follow-up within this long of the last drawing is told what that drawing showed.
     var followUpWindow: TimeInterval = 600
+    /// False: every request draws from scratch and a tapped part asks through `onFollowUpQuestion`, as before.
+    var refinesInPlace = true
     /// Adjusts where a drawing's windows go before it starts (a host with its own overlay sets
     /// `hostsOverlay`; the tests move every window off the displays).
     var placement: ((inout SceneAnchor) -> Void)?
@@ -58,12 +64,33 @@ final class SceneDirector {
     private(set) var lastSummary: String?
     private var lastSummaryAt = Date.distantPast
 
+    /// How the most recent `show` or `refine` went, for measuring (seconds from the request).
+    struct TurnTiming {
+        enum Kind { case drawing, refinement }
+        var kind = Kind.drawing
+        var request = ""
+        var startedAt = Date()
+        /// Why the request was (or was not) treated as a refinement.
+        var reason = ""
+        /// The camera moved at once, before the model answered.
+        var instantScript: String?
+        var firstLine: TimeInterval?
+        var streamEnded: TimeInterval?
+    }
+    private(set) var lastTurn = TurnTiming()
+
     private init() {
         photos = ScenePhotoFetcher(search: SceneDirector.publikSearch)
         scene.onChipTapped = { [weak self] question in self?.onFollowUpQuestion?(question) }
-        scene.onPartTapped = { [weak self] _, label in
+        scene.onPartTapped = { [weak self] id, label in
             guard let self, !label.isEmpty else { return }
-            self.onFollowUpQuestion?(Self.partQuestion(label: label, title: self.scene.log.title))
+            // A tapped part is answered on the drawing itself: the camera goes to it and one or two
+            // sentences are spoken about it. (Before, it went out as a new question and the drawing was redrawn.)
+            if self.refinesInPlace, self.scene.canRefine {
+                self.refine(Self.partQuestion(label: label, title: nil), tappedPart: id)
+            } else {
+                self.onFollowUpQuestion?(Self.partQuestion(label: label, title: self.scene.log.title))
+            }
         }
         scene.photoFetcher = { [photos] query in await photos.photo(for: query) }
         scene.onSay = { [weak self] index, text in self?.sentenceArrived(index: index, text: text) }
@@ -105,6 +132,7 @@ final class SceneDirector {
     /// The system-prompt rules that tell the voice model when to use each tag.
     /// (CompanionManager's prompt should carry this text; see the scene builder's report.)
     static let voicePromptRules = """
+    - When a 3D drawing Teachy made is still up and they ask to zoom in or out, look closer at or inside a part, rotate it, take it apart, go back, or ask what one of its parts is or does, add [SHOW: their request in a few words, naming the part] as usual. Teachy then moves the camera on the drawing that is already there instead of drawing it again.
     - When a picture would explain it better than words — how a machine or a body part works, what a real object looks like inside, a concept, a comparison, numbers worth charting, or they say "show me" / "draw" / "in 3D" — add [SHOW: what to draw, in a few words] at the end and SAY only one short lead-in sentence ("Sure, here's how it works."). Teachy then draws it and explains it aloud while it draws, so do not explain it yourself. Use [SHOW:] for things that are NOT on their screen.
     - When they ask about something that IS on their screen right now and it would help to mark it — "circle the bug", "where is the hypotenuse on this diagram", "which button do I press", "show me where that is" — add [MARK: what to point out, in a few words] at the end and SAY only one short lead-in sentence. Teachy then draws on their screen (rings, boxes, arrows, small labels) and says what each mark is. Use [MARK:] for several things or a region; use [POINT:] for one single control they should click. Never use [SHOW:] and [MARK:] in the same reply.
     """
@@ -115,11 +143,51 @@ final class SceneDirector {
     /// A request soon after another drawing is told what that drawing showed, so
     /// "show it in 3D" or "what does the turbine do" builds on it.
     func show(_ request: String) {
+        if refinesInPlace, scene.canRefine, let controller = scene.modelWindow?.controller {
+            let decision = SceneRefineClassifier.classify(request: request, sceneIsLive: true, title: controller.model.title, parts: controller.subjectCandidates)
+            if case .refine(let parts, let reason) = decision {
+                print("🎥 Adjusting the drawing on screen (\(reason))")
+                refine(request, parts: parts, reason: reason)
+                return
+            }
+        }
         let mouse = NSEvent.mouseLocation
         guard let screenFrame = SceneScreenMapping.displayFrame(containing: mouse, among: NSScreen.screens.map(\.frame)) ?? NSScreen.main?.frame else { return }
         let context = Date().timeIntervalSince(lastSummaryAt) < followUpWindow ? lastSummary : nil
         begin(question: request, screenFrame: screenFrame, saves: true, filter: nil)
+        lastTurn = TurnTiming(kind: .drawing, request: request, startedAt: Date())
         run(body: SceneScriptPrompt.requestBody(question: request, context: context), hasImages: false)
+    }
+
+    // MARK: Adjust the drawing that is up
+
+    /// Answers a request about the 3D model on screen without drawing it again. The camera goes
+    /// at once to the part the request names (`parts`, or the part that was tapped); the model is
+    /// told what is on screen and answers with camera, visibility, label and `say` lines, which
+    /// are applied to the live scene and added to its log.
+    func refine(_ request: String, tappedPart: String? = nil, parts: [String] = [], reason: String = "") {
+        guard scene.canRefine, let controller = scene.modelWindow?.controller else { return }
+        stop()
+        generation += 1
+        currentQuestion = request
+        savesToHistory = false
+        beganAt = Date()
+        sequencer = SceneNarrationSequencer()
+        scene.commandFilter = SceneRefinePrompt.allows
+        // What is on screen, described before anything moves.
+        let state = controller.liveState
+        scene.beginRefinement(timing: speak == nil ? .stagger : .speech, maximumHold: speak == nil ? 8 : 120)
+        var turn = TurnTiming(kind: .refinement, request: request, startedAt: Date(), reason: tappedPart == nil ? reason : "tapped \(tappedPart ?? "")")
+        if let tappedPart {
+            turn.instantScript = "focus \(tappedPart) zoom=medium\nhighlight \(tappedPart)"
+        } else {
+            turn.instantScript = SceneRefineClassifier.instantScript(request: request, parts: parts)
+        }
+        if let instant = turn.instantScript { scene.perform(instant) }
+        lastTurn = turn
+        // The drawing stays "recent" for follow-ups while the person keeps working with it.
+        if lastSummary != nil { lastSummaryAt = Date() }
+        run(body: SceneRefinePrompt.requestBody(request: request, state: state, tappedPart: tappedPart), hasImages: false)
     }
 
     // MARK: Draw on the real screen
@@ -204,17 +272,19 @@ final class SceneDirector {
                           let delta = (event["choices"] as? [[String: Any]])?.first?["delta"] as? [String: Any],
                           let chunk = delta["content"] as? String, !chunk.isEmpty
                     else { continue }
+                    guard let self, self.generation == turn else { return }
                     if !firstLineLogged, chunk.contains("\n") {
                         firstLineLogged = true
+                        self.lastTurn.firstLine = Date().timeIntervalSince(self.lastTurn.startedAt)
                         print("🎨 First drawing line \(String(format: "%.2f", Date().timeIntervalSince(startedAt))) s after the request")
                     }
-                    guard let self, self.generation == turn else { return }
                     scene.feed(chunk: chunk)
                 }
             } catch {
                 print("⚠️ Drawing failed: \(error.localizedDescription)")
             }
             guard !Task.isCancelled, let self, self.generation == turn else { return }
+            self.lastTurn.streamEnded = Date().timeIntervalSince(self.lastTurn.startedAt)
             scene.end()
             self.perform(self.sequencer.streamDidEnd(), turn: turn)
         }

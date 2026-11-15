@@ -419,6 +419,8 @@ enum SceneValidator {
         switch c.verb {
         case .ring:
             return c.vec2("at") == nil ? "ring needs at=x,y" : nil
+        case .highlight where c.isPartHighlight:
+            return c.hasExplicitID || !c.targetIDs.isEmpty || c.names("none") ? nil : "highlight needs from=x,y to=x,y or a part id"
         case .rect, .highlight:
             if c.vec2("from") != nil && c.vec2("to") != nil { return nil }
             if c.vec2("at") != nil && c.vec2("size") != nil { return nil }
@@ -449,8 +451,16 @@ enum SceneValidator {
             return c.numbers("pts").count >= 4 ? nil : "lathe needs pts= with two r,y points"
         case .extrude:
             return c.numbers("pts").count >= 6 ? nil : "extrude needs pts= with three x,y points"
-        case .spin, .pulse, .orbit, .remove, .hide, .show, .body, .fixed, .force, .impulse:
+        case .orbit where c.isCameraOrbit:
+            return nil
+        case .hide, .show:
+            return c.hasExplicitID || !c.targetIDs.isEmpty ? nil : "\(c.verb.rawValue) needs a target id"
+        case .spin, .pulse, .orbit, .remove, .body, .fixed, .force, .impulse:
             return c.hasExplicitID ? nil : "\(c.verb.rawValue) needs a target id"
+        case .focus, .detail:
+            return c.targetIDs.isEmpty ? "\(c.verb.rawValue) needs a part id" : nil
+        case .ghost:
+            return c.targetIDs.isEmpty && !c.names("others") && !c.names("other") && !c.names("all") && !c.names("none") ? "ghost needs part ids or `others`" : nil
         case .move:
             guard c.hasExplicitID else { return "move needs a target id" }
             return c.args["to"] != nil || c.args["by"] != nil ? nil : "move needs to= or by="

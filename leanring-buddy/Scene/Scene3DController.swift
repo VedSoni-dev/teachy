@@ -42,6 +42,8 @@ final class Scene3DModel: ObservableObject {
     @Published var plots: [PlotState] = []
     @Published var chips: [String] = []
     @Published var tappedLabel: String?
+    /// The view is not the default one (zoomed on a part, or turned by hand): show "Recenter".
+    @Published var canRecenter = false
 
     /// Sliders, plots or chips were added or removed, so the window should resize.
     var onLayoutChanged: (() -> Void)?
@@ -50,52 +52,122 @@ final class Scene3DModel: ObservableObject {
 // MARK: - SceneKit view
 
 final class Scene3DSCNView: SCNView {
+    /// A click on the view that was not a drag or the first half of a double-click.
     var onTap: ((CGPoint) -> Void)?
-    var onInteraction: (() -> Void)?
+    var onDoubleTap: ((CGPoint) -> Void)?
+    /// A drag began, turned the model (dx, dy in points), slid it, ended.
+    var onDragBegan: (() -> Void)?
+    var onOrbit: ((CGFloat, CGFloat) -> Void)?
+    var onPan: ((CGFloat, CGFloat) -> Void)?
+    var onDragEnded: (() -> Void)?
+    /// Zoom by a factor (above 1 moves in) about a point of the view.
+    var onZoom: ((CGFloat, CGPoint) -> Void)?
+    /// Escape was pressed.
+    var onEscape: (() -> Void)?
+
     private var mouseDownPoint: CGPoint?
+    private var lastDragPoint: CGPoint?
     private var dragStarted = false
+    private var dragPans = false
+    private var pendingTap: DispatchWorkItem?
     /// A press that moves less than this many points is a click on a part, not a turn of the model.
     static let clickSlop: CGFloat = 4
+    /// A click waits this long to see whether it is the first half of a double-click
+    /// (which focuses the part instead of asking about it). Zero reports clicks at once.
+    var tapDelay: TimeInterval = min(NSEvent.doubleClickInterval, 0.3)
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override var acceptsFirstResponder: Bool { true }
 
     override func mouseDown(with event: NSEvent) {
-        mouseDownPoint = convert(event.locationInWindow, from: nil)
-        dragStarted = false
-        super.mouseDown(with: event)
+        window?.makeFirstResponder(self)
+        beginPress(event, pans: event.modifierFlags.contains(.option))
     }
 
-    /// Only a real drag takes the camera from the gentle sway. A plain click on a part must
-    /// not stop the model turning (it used to: every mouse-down counted as taking the camera).
-    override func mouseDragged(with event: NSEvent) {
-        if !dragStarted, let start = mouseDownPoint {
-            let point = convert(event.locationInWindow, from: nil)
-            if hypot(point.x - start.x, point.y - start.y) >= Self.clickSlop {
-                dragStarted = true
-                onInteraction?()
-            }
-        }
-        super.mouseDragged(with: event)
-    }
+    override func mouseDragged(with event: NSEvent) { continueDrag(event) }
 
     override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
         let point = convert(event.locationInWindow, from: nil)
-        if let start = mouseDownPoint, !dragStarted, hypot(point.x - start.x, point.y - start.y) < Self.clickSlop {
+        let wasDrag = dragStarted
+        let start = mouseDownPoint
+        endPress()
+        guard !wasDrag, let start, hypot(point.x - start.x, point.y - start.y) < Self.clickSlop else { return }
+        if event.clickCount >= 2 {
+            pendingTap?.cancel()
+            pendingTap = nil
+            onDoubleTap?(point)
+        } else if tapDelay <= 0 {
             onTap?(point)
+        } else {
+            let work = DispatchWorkItem { [weak self] in
+                self?.pendingTap = nil
+                self?.onTap?(point)
+            }
+            pendingTap?.cancel()
+            pendingTap = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + tapDelay, execute: work)
         }
-        mouseDownPoint = nil
-        dragStarted = false
     }
 
+    // The right button (or the middle one) slides the model.
+    override func rightMouseDown(with event: NSEvent) { beginPress(event, pans: true) }
+    override func rightMouseDragged(with event: NSEvent) { continueDrag(event) }
+    override func rightMouseUp(with event: NSEvent) { endPress() }
+    override func otherMouseDown(with event: NSEvent) { beginPress(event, pans: true) }
+    override func otherMouseDragged(with event: NSEvent) { continueDrag(event) }
+    override func otherMouseUp(with event: NSEvent) { endPress() }
+
+    private func beginPress(_ event: NSEvent, pans: Bool) {
+        mouseDownPoint = convert(event.locationInWindow, from: nil)
+        lastDragPoint = mouseDownPoint
+        dragStarted = false
+        dragPans = pans
+    }
+
+    /// Only a real drag takes the camera. A plain click on a part must not.
+    private func continueDrag(_ event: NSEvent) {
+        guard let start = mouseDownPoint else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        if !dragStarted {
+            guard hypot(point.x - start.x, point.y - start.y) >= Self.clickSlop else { return }
+            dragStarted = true
+            if event.modifierFlags.contains(.option) { dragPans = true }
+            onDragBegan?()
+        }
+        let last = lastDragPoint ?? start
+        lastDragPoint = point
+        if dragPans { onPan?(point.x - last.x, point.y - last.y) } else { onOrbit?(point.x - last.x, point.y - last.y) }
+    }
+
+    private func endPress() {
+        if dragStarted { onDragEnded?() }
+        mouseDownPoint = nil
+        lastDragPoint = nil
+        dragStarted = false
+        dragPans = false
+    }
+
+    /// A mouse wheel zooms toward the cursor. Two fingers on a trackpad slide the model
+    /// (with Command held they zoom); a pinch zooms.
     override func scrollWheel(with event: NSEvent) {
-        onInteraction?()
-        super.scrollWheel(with: event)
+        let point = convert(event.locationInWindow, from: nil)
+        if event.hasPreciseScrollingDeltas, !event.modifierFlags.contains(.command) {
+            onPan?(event.scrollingDeltaX, -event.scrollingDeltaY)
+        } else {
+            let amount = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY * 0.01 : event.scrollingDeltaY * 0.09
+            guard amount != 0 else { return }
+            onZoom?(CGFloat(exp(Double(max(min(amount, 1.2), -1.2)))), point)
+        }
     }
 
     override func magnify(with event: NSEvent) {
-        onInteraction?()
-        super.magnify(with: event)
+        let factor = 1 + event.magnification
+        guard factor > 0.05 else { return }
+        onZoom?(factor, convert(event.locationInWindow, from: nil))
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { onEscape?() } else { super.keyDown(with: event) }
     }
 }
 
@@ -180,19 +252,87 @@ final class Scene3DController: NSObject {
     private var measuredVelocity: [String: simd_float3] = [:]
 
     // Camera
-    private var azimuth = 0.5
+    /// The view the camera eases between, without the gentle sway that is added when it is drawn.
+    private var pose = SceneCameraPose(center: .zero, azimuth: 0.5, elevation: 0.30, distance: 9)
+    /// The opening view of the whole model.
     private var baseAzimuth = 0.5
+    private var baseElevation = 0.30
     private var swayPhase = 0.0
-    private var elevation = 0.30
+    private var swayAmount = Scene3DController.wholeSway
+    static let wholeSway = 0.3
+    static let focusSway = 0.05
+    enum CameraMode: Equatable {
+        /// Framing the whole model, following it as it is built.
+        case whole
+        /// Resting on the parts in `focusIDs`.
+        case focus
+        /// Put somewhere by a `camera` line.
+        case pinned
+        /// In the person's hands.
+        case user
+    }
+    private(set) var cameraMode = CameraMode.whole
+    private struct CameraMove {
+        var from: SceneCameraPose
+        var to: SceneCameraPose
+        var start: CFTimeInterval
+        var duration: Double
+        var toSway: Double
+        /// Extra turn on top of the way from `from` to `to`, radians (an `orbit`).
+        var turn = 0.0
+        var then: CameraMode
+    }
+    private var cameraMove: CameraMove?
+    /// The parts the camera is on (empty: the whole model).
+    private(set) var focusIDs: [String] = []
+    private var focusBox: SceneBox?
     private var fitCenter = simd_float3(0, 0, 0)
     private var fitRadius: Float = 2
-    private var shownCenter = simd_float3(0, 0, 0)
-    private var shownDistance: Float = 9
     private var hasFit = false
-    private var userTookCamera = false
-    private var cameraPinned = false
     private var autoRotate = true
     private var fitCountdown = 0.0
+    private var shownCenter: simd_float3 { simd_float3(pose.center) }
+    private var shownDistance: Float { Float(pose.distance) }
+    private var userTookCamera: Bool { cameraMode == .user }
+    private var cameraPinned: Bool { cameraMode == .pinned }
+
+    /// Calm movement: dwell, one move per sentence, no fidgeting.
+    var policy = SceneCameraPolicy()
+    /// The person always wins: automatic moves wait until they have been idle this long.
+    var gesturePause = SceneGesturePause()
+    /// False: `focus`, `frame`, `orbit`, `ghost`, `highlight` and automatic focus are ignored and the
+    /// camera only ever frames the whole model (how the engine behaved before; used to compare).
+    var directsCamera = true
+    enum CommandOrigin { case narration, person, replay }
+    /// Who is behind the lines being applied: the narration (held back while the person steers),
+    /// the person's own request (always obeyed), or a replay (always obeyed).
+    var commandOrigin = CommandOrigin.narration
+    /// A line the engine wrote itself (automatic focus, a double-click, Recenter). The session
+    /// draws and records it, so replays and saved videos repeat it. Nil: applied directly.
+    var onDirectorCommand: ((SceneCommand) -> Void)?
+
+    // What is shown how
+    private struct Ghost { var opacity: Double; var auto: Bool }
+    private var ghosts: [String: Ghost] = [:]
+    private var hiddenIDs: Set<String> = []
+    private struct Highlight { var materials: [SCNMaterial]; var start: CFTimeInterval }
+    private var highlights: [String: Highlight] = [:]
+    private var detailed: Set<String> = []
+    /// The line that made each part, and the whole object it belongs to (for `detail` and for describing the scene).
+    private var sources: [String: SceneCommand] = [:]
+    private var macroOf: [String: SceneVerb] = [:]
+    private var labelTexts: [String: String] = [:]
+    /// Building hundreds of identical small pieces (a membrane's lipids): they share geometry and are merged into one node.
+    private var bulkBuild = false
+    /// Parts with geometry beyond this are not added (small unnamed pieces are dropped first).
+    static let maximumNodes = 3200
+    private struct PendingAuto { var ids: [String]; var sentence: Int?; var notBefore: CFTimeInterval; var expires: CFTimeInterval; var wholeIfEmpty: Bool }
+    private var pendingAuto: PendingAuto?
+    /// `label a on=j.fan`: the label's own id stands for the part it names.
+    private var labelIDs: [String: String] = [:]
+    private var bulkGeometries: [String: SCNGeometry] = [:]
+    private var bulkBoxes: [String: (low: simd_float3, high: simd_float3)] = [:]
+    private var coilEnds: [String: (simd_float3, simd_float3)] = [:]
 
     private var timer: Timer?
     private var lastTick: CFTimeInterval = 0
@@ -231,17 +371,23 @@ final class Scene3DController: NSObject {
         view.scene = scene
         view.backgroundColor = .clear
         view.antialiasingMode = .multisampling4X
-        view.allowsCameraControl = true
-        view.defaultCameraController.interactionMode = .orbitTurntable
-        view.defaultCameraController.inertiaEnabled = true
+        // The engine moves the camera itself (so it can ease to a part, and so the person's
+        // drags, scrolls and pinches are clamped and never fight an automatic move).
+        view.allowsCameraControl = false
         view.autoenablesDefaultLighting = false
         view.isPlaying = true
         view.rendersContinuously = true
         view.preferredFramesPerSecond = 60
         view.wantsLayer = true
         view.layer?.isOpaque = false
-        view.onInteraction = { [weak self] in self?.userTouchedCamera() }
         view.onTap = { [weak self] point in self?.handleTap(at: point) }
+        view.onDoubleTap = { [weak self] point in self?.handleDoubleTap(at: point) }
+        view.onDragBegan = { [weak self] in self?.userBeganDrag() }
+        view.onOrbit = { [weak self] dx, dy in self?.userOrbit(dx: dx, dy: dy) }
+        view.onPan = { [weak self] dx, dy in self?.userPan(dx: dx, dy: dy) }
+        view.onDragEnded = { [weak self] in self?.userEndedDrag() }
+        view.onZoom = { [weak self] factor, point in self?.userZoom(by: factor, at: point) }
+        view.onEscape = { [weak self] in self?.recenter() }
     }
 
     private func configureScene() {
@@ -349,13 +495,17 @@ final class Scene3DController: NSObject {
         builder = ScenePartBuilder()
         nodes = [:]; parts = [:]; baseOrientation = [:]; order = []
         spins = [:]; spinAngles = [:]; solvedRPM = [:]; flows = [:]; pistons = [:]; orbits = [:]; coils = [:]; explodedOffsets = [:]
-        beats = [:]; chipExtent = nil; leaderOffsets = [:]; labelRowsDecidedFor = -1
+        beats = [:]; chipExtent = nil; leaderOffsets = [:]; labelRowsDecidedFor = ""
         labels = [:]; chipTargets = [:]; springVelocity = [:]; bodyMass = [:]; joints = [:]; forces = [:]; sliderBindings = [:]; plotSources = [:]; plotBuffers = [:]
         isSimulation = false; speed = 1; movingIDs = []; lastPositions = [:]; measuredVelocity = [:]; labelBoxes = [:]
-        azimuth = 0.5; baseAzimuth = 0.5; swayPhase = 0; elevation = 0.30; hasFit = false; userTookCamera = false; cameraPinned = false; autoRotate = true
-        fitCenter = .zero; fitRadius = 2; shownCenter = .zero; shownDistance = 9
+        pose = SceneCameraPose(center: .zero, azimuth: 0.5, elevation: 0.30, distance: 9)
+        baseAzimuth = 0.5; baseElevation = 0.30; swayPhase = 0; swayAmount = Self.wholeSway; hasFit = false; autoRotate = true
+        cameraMode = .whole; cameraMove = nil; focusIDs = []; focusBox = nil; pendingAuto = nil
+        fitCenter = .zero; fitRadius = 2
+        ghosts = [:]; hiddenIDs = []; highlights = [:]; flashes = []; detailed = []; sources = [:]; macroOf = [:]; labelTexts = [:]; bulkBuild = false
+        labelIDs = [:]; bulkGeometries = [:]; bulkBoxes = [:]; coilEnds = [:]; emissionOriginals = [:]
+        policy.reset(); gesturePause.resume(); model.canRecenter = false
         shadowNode.isHidden = true
-        view.pointOfView = cameraNode
         model.title = ""; model.sliders = []; model.plots = []; model.chips = []; model.tappedLabel = nil
         placeCamera()
     }
@@ -365,7 +515,16 @@ final class Scene3DController: NSObject {
     func apply(_ original: SceneCommand) {
         if let expansion = SceneMacros.expand(original) {
             // A whole object (jet, rocket, heart…): draw the simpler commands it stands for.
-            for command in expansion { apply(command) }
+            let bulk = expansion.count > 120
+            if bulk { bulkBuild = true }
+            for command in expansion {
+                macroOf[command.id] = original.verb
+                apply(command)
+            }
+            if bulk {
+                bulkBuild = false
+                mergeBulkPieces(under: original.id)
+            }
             return
         }
         var c = original
@@ -380,6 +539,7 @@ final class Scene3DController: NSObject {
         case .label:
             if let target = c.string("on"), let text = c.freeText {
                 addLabel(to: target, text: text, number: c.number("n", "num").map { Int($0) }, side: c.string("side"))
+                if c.hasExplicitID, nodes[target] != nil { labelIDs[c.id] = target }
             }
         case .chip:
             if let text = c.freeText, !model.chips.contains(text), model.chips.count < 4 {
@@ -387,7 +547,10 @@ final class Scene3DController: NSObject {
                 model.onLayoutChanged?()
             }
         case .spin:
-            spins[c.id] = Spin(axis: c.axis(), rpm: Self.watchable(c.number("rpm", "speed") ?? 20))
+            // A piece of a ready-made object that already turns keeps its own axle: the script cannot
+            // know which way the object lies, and a wrong axis would swing the piece round.
+            let keepsAxle = macroOf[c.id] != nil && spins[c.id] != nil && spins[c.id]?.axis == nil
+            spins[c.id] = Spin(axis: keepsAxle ? nil : c.axis(), rpm: Self.watchable(c.number("rpm", "speed") ?? 20))
             if let piston = pistons[c.id] { pistons[c.id]?.rpm = c.number("rpm", "speed") ?? piston.rpm; spins[c.id] = nil }
             if setEngineSpeed(c.id, rpm: Self.watchable(c.number("rpm", "speed") ?? 20, limit: 150)) { spins[c.id] = nil }
             solvedRPM = [:]
@@ -395,7 +558,13 @@ final class Scene3DController: NSObject {
         case .pulse: pulse(c.id, times: Int(c.number("times", "n") ?? 3))
         case .explode: explode(c)
         case .camera: moveCamera(c)
-        case .orbit: addOrbit(c)
+        case .orbit:
+            if c.isCameraOrbit { orbitCamera(c) } else { addOrbit(c) }
+        case .focus: focus(c)
+        case .frame: frame(c)
+        case .ghost: ghost(c)
+        case .detail: detail(c)
+        case .highlight: highlight(c)
         case .gravity: setGravity(c)
         case .body: addBody(c, dynamic: true)
         case .fixed: addBody(c, dynamic: false)
@@ -425,9 +594,18 @@ final class Scene3DController: NSObject {
             if let value = c.number("value", "to", "v") { setSlider(c.id, value: value, fromUser: false) }
         case .plot: addPlot(c)
         case .remove: remove(c.id)
-        case .hide: nodes[c.id]?.runAction(.fadeOut(duration: 0.3))
+        case .hide:
+            for id in resolve(c.targetIDs) { setHidden(id, true) }
         case .show:
-            if let node = nodes[c.id] { node.runAction(.fadeOpacity(to: CGFloat(parts[c.id]?.opacity ?? 1), duration: 0.3)) }
+            if c.names("all") || c.names("everything") {
+                for id in Array(hiddenIDs) { setHidden(id, false) }
+                for id in Array(ghosts.keys) { setGhost(id, opacity: nil, auto: false) }
+            } else {
+                for id in resolve(c.targetIDs) {
+                    setHidden(id, false)
+                    setGhost(id, opacity: nil, auto: false)
+                }
+            }
         case .spring:
             let build = builder.build(c)
             add(build)
@@ -447,6 +625,7 @@ final class Scene3DController: NSObject {
             }
         default:
             guard c.verb.makes3DPart || c.verb == .group else { return }
+            sources[c.id] = c
             add(builder.build(c))
         }
     }
@@ -468,9 +647,11 @@ final class Scene3DController: NSObject {
 
     private func addNode(for part: ScenePart) {
         nodes[part.id]?.removeFromParentNode()
+        // A scene past the node budget keeps its named parts and drops further small unnamed pieces.
+        if nodes.count >= Self.maximumNodes, nodes[part.id] == nil, part.id.contains("."), part.label == nil, part.name == nil { return }
         let node = SCNNode()
         node.name = part.id
-        node.geometry = Scene3DAssets.geometry(for: part)
+        node.geometry = bulkBuild ? Scene3DAssets.bulkGeometry(for: part, cache: &bulkGeometries) : Scene3DAssets.geometry(for: part)
         node.simdPosition = simd_float3(part.position)
         let orientation = simd_quatf(part.resolvedOrientation)
         node.simdOrientation = orientation
@@ -491,6 +672,7 @@ final class Scene3DController: NSObject {
         if part.opacity < 0.999 { node.renderingOrder = 10 }
         nodes[part.id] = node
         parts[part.id] = part
+        hasUnpreparedGeometry = true
         baseOrientation[part.id] = orientation
         if !order.contains(part.id) { order.append(part.id) }
         if let label = part.label, !label.isEmpty {
@@ -541,6 +723,7 @@ final class Scene3DController: NSObject {
         guard nodes[partID] != nil else { return }
         // "1 Fan" with n=1, or "1. Fan" with no n: the number belongs in the dot, once.
         let (text, number) = SceneLabelText.split(text, number: number)
+        labelTexts[partID] = text
         if let existing = labels[partID] {
             existing.chip.removeFromParentNode()
             existing.leader.removeFromParentNode()
@@ -599,10 +782,11 @@ final class Scene3DController: NSObject {
         var low = simd_float3(repeating: .greatestFiniteMagnitude), high = simd_float3(repeating: -.greatestFiniteMagnitude)
         var found = false
         func visit(_ node: SCNNode) {
-            if let name = node.name, name.hasPrefix("_") { return }
+            if let name = node.name, name.hasPrefix("_") || hiddenIDs.contains(name) { return }
             if node.isHidden { return }
             if let geometry = node.geometry {
-                let (minimum, maximum) = geometry.boundingBox
+                // (A merged node's own box is not reliable, so the box of the pieces it was made from is kept.)
+                let (minimum, maximum) = bulkBoxes[node.name ?? ""].map { (SCNVector3($0.low), SCNVector3($0.high)) } ?? geometry.boundingBox
                 let a = simd_float3(minimum), b = simd_float3(maximum)
                 // Only physics moves a node without us setting its transform; reading
                 // `presentation` takes SceneKit's lock, so skip it for everything else.
@@ -656,14 +840,19 @@ final class Scene3DController: NSObject {
     }
 
     /// The direction from the model to the camera that chips are laid out for: the opening
-    /// view while the model sways by itself, the real view once the person turns it.
+    /// view while the model sways by itself, the view being moved to when the camera is on a
+    /// part, the real view once the person turns it.
     private var layoutDirection: simd_float3 {
-        if userTookCamera || cameraPinned, let camera = view.pointOfView {
-            let direction = camera.presentation.simdWorldPosition - shownCenter
-            if simd_length(direction) > 1e-5 { return simd_normalize(direction) }
-        }
-        return cameraDirection(azimuth: autoRotate ? baseAzimuth : azimuth)
+        if usesFocusLayout { return simd_float3((cameraMode == .user ? pose : (cameraMove?.to ?? pose)).direction) }
+        if userTookCamera || cameraPinned { return simd_float3(pose.direction) }
+        return wholeDirection
     }
+
+    /// The opening view of the whole model.
+    private var wholeDirection: simd_float3 { cameraDirection(azimuth: baseAzimuth) }
+
+    /// The camera is on some parts: chips are laid out round those parts, for that view.
+    private var usesFocusLayout: Bool { !focusIDs.isEmpty && focusBox != nil }
 
     /// Where on a part its leader line lands, as an offset from the part's position. Found by
     /// hit-testing at refit rate, because the middle of a part's box is often thin air (a
@@ -675,6 +864,7 @@ final class Scene3DController: NSObject {
         let origin = currentPosition(of: id, node: node)
         if !refresh, let offset = leaderOffsets[id] { return origin + offset }
         // Aim at the nearest piece of the part, then stop where the line first touches it.
+        prepareForHitTesting()
         var aim = center
         var best = Float.greatestFiniteMagnitude
         node.enumerateHierarchy { child, _ in
@@ -704,7 +894,7 @@ final class Scene3DController: NSObject {
     }
 
     private var labelRows = false
-    private var labelRowsDecidedFor = -1
+    private var labelRowsDecidedFor = ""
 
     private func isMovingPart(_ id: String) -> Bool {
         movingIDs.contains(id) || orbits[id] != nil || nodes[id]?.physicsBody?.type == .kinematic
@@ -715,38 +905,92 @@ final class Scene3DController: NSObject {
             chipExtent = nil
             return
         }
+        let focusLayout = usesFocusLayout
+        let viewPose = cameraMode == .user ? pose : (cameraMove?.to ?? pose)
         let radius = max(fitRadius, 0.05)
         let toCamera = layoutDirection
         var right = simd_cross(simd_float3(0, 1, 0), toCamera)
         right = simd_length(right) > 1e-5 ? simd_normalize(right) : simd_float3(1, 0, 0)
         let up = simd_cross(toCamera, right)
-        let origin = fitCenter
+        let origin = focusLayout ? simd_float3(viewPose.center) : fitCenter
+        let tanVertical = tan(Float(Self.fieldOfView) * .pi / 360)
         var chipHeight = radius * 0.115
         if isSimulation {
             // A simulation is framed by the space its bodies move in, which can be much bigger
             // than the bodies; size chips by the picture so they stay readable.
-            chipHeight = max(chipHeight, shownDistance * tan(Float(Self.fieldOfView) * .pi / 360) * 0.085)
+            chipHeight = max(chipHeight, shownDistance * tanVertical * 0.085)
+        }
+        if focusLayout {
+            // Zoomed on a part: chips keep the same size in the picture at every zoom.
+            chipHeight = Float(viewPose.distance) * tanVertical * 0.095
         }
         func flat(_ point: simd_float3) -> SceneVec2 { SceneVec2(Double(simd_dot(point - origin, right)), Double(simd_dot(point - origin, up))) }
         func world(_ point: SceneVec2) -> simd_float3 { origin + right * Float(point.x) + up * Float(point.y) }
 
-        // The model's box as the camera sees it.
+        // The box chips are laid out round, as the camera sees it: the model's, or the focused parts'.
         var low = SceneVec2(repeating: .greatestFiniteMagnitude), high = SceneVec2(repeating: -.greatestFiniteMagnitude)
-        for corner in 0..<8 {
-            let point = flat(simd_float3(corner & 1 == 0 ? boundsLow.x : boundsHigh.x, corner & 2 == 0 ? boundsLow.y : boundsHigh.y, corner & 4 == 0 ? boundsLow.z : boundsHigh.z))
+        let corners: [simd_float3] = focusLayout ? (focusBox?.corners.map { simd_float3($0) } ?? []) : (0..<8).map { corner in
+            simd_float3(corner & 1 == 0 ? boundsLow.x : boundsHigh.x, corner & 2 == 0 ? boundsLow.y : boundsHigh.y, corner & 4 == 0 ? boundsLow.z : boundsHigh.z)
+        }
+        for corner in corners {
+            let point = flat(corner)
             low = simd_min(low, point)
             high = simd_max(high, point)
+        }
+        let lens = self.lens
+        if focusLayout {
+            // Zoomed in, the model fills the picture: chips go toward the picture's edges, clear of
+            // the subject in the middle, not right beside the subject on top of its neighbours.
+            let reach = SceneVec2(Double(viewPose.distance) * lens.tanHorizontal * 0.58, Double(viewPose.distance) * lens.tanVertical * 0.50)
+            let middle = flat(simd_float3(viewPose.center))
+            low = simd_min(low, middle - reach)
+            high = simd_max(high, middle + reach)
         }
 
         struct Entry { var label: LabelChip; var center: simd_float3; var halfExtent: simd_float3; var size: SceneVec2 }
         var fixed: [Entry] = [], riding: [Entry] = []
+        var neighbours: [(entry: Entry, offCentre: Double)] = []
         for label in labels.values.sorted(by: { $0.index < $1.index }) {
-            guard let node = nodes[label.partID], let (boxLow, boxHigh) = labelBox(for: label.partID, node: node, refresh: refresh) else { continue }
+            let id = label.partID
+            // A part that is hidden or ghosted keeps no label; neither does one that is out of the picture.
+            var shown = !isEffectivelyHidden(id) && !isEffectivelyGhosted(id)
+            guard shown, let node = nodes[id], let (boxLow, boxHigh) = labelBox(for: id, node: node, refresh: refresh) else {
+                label.chip.isHidden = true
+                label.leader.isHidden = true
+                continue
+            }
             let aspect = Double((label.chip.geometry as? SCNPlane)?.width ?? 3)
             let entry = Entry(label: label, center: (boxLow + boxHigh) / 2, halfExtent: (boxHigh - boxLow) / 2,
                               size: SceneVec2(aspect * Double(chipHeight), Double(chipHeight)))
-            if isMovingPart(label.partID) { riding.append(entry) } else { fixed.append(entry) }
+            if focusLayout {
+                let isFocused = focusIDs.contains { id == $0 || isDescendant(id, of: $0) }
+                if !isFocused {
+                    // A neighbour keeps its label only while it is well inside the picture.
+                    let (ndc, depth) = SceneFraming.project(SceneVec3(entry.center), pose: viewPose, lens: lens)
+                    shown = depth > 0 && abs(ndc.x) < 0.62 && abs(ndc.y) < 0.58
+                    if shown {
+                        neighbours.append((entry, simd_length(ndc)))
+                        continue
+                    }
+                }
+            }
+            if !shown {
+                label.chip.isHidden = true
+                label.leader.isHidden = true
+                continue
+            }
+            if isMovingPart(id) { riding.append(entry) } else { fixed.append(entry) }
         }
+        // At most a few neighbours, nearest the middle first, so the subject is not crowded.
+        let keptNeighbours = neighbours.sorted { $0.offCentre < $1.offCentre }.prefix(max(0, 4 - fixed.count - riding.count))
+        for neighbour in neighbours where !keptNeighbours.contains(where: { $0.entry.label.partID == neighbour.entry.label.partID }) {
+            neighbour.entry.label.chip.isHidden = true
+            neighbour.entry.label.leader.isHidden = true
+        }
+        for neighbour in keptNeighbours {
+            if isMovingPart(neighbour.entry.label.partID) { riding.append(neighbour.entry) } else { fixed.append(neighbour.entry) }
+        }
+        fixed.sort { $0.label.index < $1.label.index }
 
         var targets: [String: (position: simd_float3, side: SceneLabelLayout.Side)] = [:]
         let items = fixed.map { entry -> SceneLabelLayout.Item in
@@ -757,18 +1001,58 @@ final class Scene3DController: NSObject {
         }
         // Rows or columns is decided when the set of labels changes, not every frame: a spinning
         // part changes the model's box a little all the time, and chips must not hop about.
-        if labelRowsDecidedFor != labels.count {
-            labelRowsDecidedFor = labels.count
+        let layoutKey = "\(labels.count)|\(fixed.count)|\(focusIDs.joined(separator: ","))"
+        if labelRowsDecidedFor != layoutKey {
+            labelRowsDecidedFor = layoutKey
             labelRows = SceneLabelLayout.prefersRows(low: low, high: high)
         }
-        let placements = SceneLabelLayout.place(items, low: low, high: high, gap: Double(chipHeight) * 0.3, margin: Double(radius) * 0.14, rows: labelRows)
-        for (id, placement) in placements {
-            targets[id] = (world(placement.center), placement.side)
+        let margin = focusLayout ? Double(chipHeight) * 0.7 : Double(radius) * 0.14
+        let placements = SceneLabelLayout.place(items, low: low, high: high, gap: Double(chipHeight) * 0.3, margin: margin, rows: labelRows)
+        // Zoomed in, a chip must stay in the picture (and clear of the title in the top corner).
+        let halfWidth = Double(viewPose.distance) * lens.tanHorizontal, halfHeight = Double(viewPose.distance) * lens.tanVertical
+        let viewCentre = flat(simd_float3(viewPose.center))
+        var spots: [(id: String, spot: SceneVec2, size: SceneVec2, side: SceneLabelLayout.Side)] = []
+        for item in items {
+            guard let placement = placements[item.id] else { continue }
+            var spot = placement.center
+            if focusLayout {
+                let limitX = max(halfWidth * 0.95 - item.size.x / 2, 0), limitTop = max(halfHeight * (model.title.isEmpty ? 0.93 : 0.72) - item.size.y / 2, 0)
+                let limitBottom = max(halfHeight * 0.93 - item.size.y / 2, 0)
+                spot.x = min(max(spot.x, viewCentre.x - limitX), viewCentre.x + limitX)
+                spot.y = min(max(spot.y, viewCentre.y - limitBottom), viewCentre.y + limitTop)
+            }
+            spots.append((item.id, spot, item.size, placement.side))
         }
+        if focusLayout {
+            // Pulling chips into the picture can push two in one row together: slide them apart again.
+            let gap = Double(chipHeight) * 0.3
+            let limit = halfWidth * 0.95
+            for side in [SceneLabelLayout.Side.up, .down] {
+                var row = spots.indices.filter { spots[$0].side == side }.sorted { spots[$0].spot.x < spots[$1].spot.x }
+                // Chips more than a chip apart in height are different rows.
+                while !row.isEmpty {
+                    let height = spots[row[0]].spot.y
+                    let same = row.filter { abs(spots[$0].spot.y - height) < Double(chipHeight) * 0.9 }
+                    row.removeAll { same.contains($0) }
+                    for (previous, index) in zip(same, same.dropFirst()) {
+                        let needed = spots[previous].spot.x + (spots[previous].size.x + spots[index].size.x) / 2 + gap
+                        if spots[index].spot.x < needed { spots[index].spot.x = needed }
+                    }
+                    if let last = same.last, spots[last].spot.x + spots[last].size.x / 2 > viewCentre.x + limit {
+                        spots[last].spot.x = viewCentre.x + limit - spots[last].size.x / 2
+                        for (next, index) in zip(same.reversed(), same.reversed().dropFirst()) {
+                            let allowed = spots[next].spot.x - (spots[next].size.x + spots[index].size.x) / 2 - gap
+                            if spots[index].spot.x > allowed { spots[index].spot.x = allowed }
+                        }
+                    }
+                }
+            }
+        }
+        for entry in spots { targets[entry.id] = (world(entry.spot), entry.side) }
         // A chip on a moving body rides just above it.
-        var taken: [(center: SceneVec2, size: SceneVec2)] = items.compactMap { item in placements[item.id].map { ($0.center, item.size) } }
+        var taken: [(center: SceneVec2, size: SceneVec2)] = spots.map { ($0.spot, $0.size) }
         for entry in riding {
-            var spot = flat(entry.center) + SceneVec2(0, Double(entry.halfExtent.y) + Double(radius) * 0.2)
+            var spot = flat(entry.center) + SceneVec2(0, Double(entry.halfExtent.y) + Double(focusLayout ? chipHeight : radius * 0.2))
             var attempts = 0
             while attempts < 12, taken.contains(where: { abs($0.center.x - spot.x) < ($0.size.x + entry.size.x) / 2 * 1.04 && abs($0.center.y - spot.y) < Double(chipHeight) * 1.12 }) {
                 spot.y += Double(chipHeight) * 1.2
@@ -783,16 +1067,23 @@ final class Scene3DController: NSObject {
         var top = -Float.greatestFiniteMagnitude
         for entry in fixed + riding {
             let id = entry.label.partID
-            guard let target = targets[id] else { continue }
-            // Ease toward the target so chips glide instead of jumping.
-            let previous = chipTargets[id] ?? target.position
+            guard let target = targets[id] else {
+                entry.label.chip.isHidden = true
+                entry.label.leader.isHidden = true
+                continue
+            }
+            // Ease toward the target so chips glide instead of jumping. A chip that was out of sight starts in place.
+            let wasHidden = entry.label.chip.isHidden
+            entry.label.chip.isHidden = false
+            entry.label.leader.isHidden = false
+            let previous = wasHidden ? target.position : (chipTargets[id] ?? target.position)
             let position = isHeadless ? target.position : previous + (target.position - previous) * 0.2
             chipTargets[id] = position
             entry.label.chip.simdPosition = position
             // A chip riding on a body nearer the camera would look bigger than the rest; undo the perspective.
             var chipScale = chipHeight
             if isMovingPart(id) {
-                let cameraPosition = (view.pointOfView ?? cameraNode).simdWorldPosition
+                let cameraPosition = cameraNode.simdWorldPosition
                 let reference = simd_dot(cameraPosition - origin, toCamera)
                 let depth = simd_dot(cameraPosition - position, toCamera)
                 if reference > 1e-4, depth > 1e-4 { chipScale *= min(max(depth / reference, 0.4), 2.5) }
@@ -818,9 +1109,11 @@ final class Scene3DController: NSObject {
             let along = (end - anchor) / span
             entry.label.leader.simdPosition = (anchor + end) / 2
             entry.label.leader.simdOrientation = simd_quatf(SceneOrientation.aligning(SceneVec3(0, 1, 0), to: SceneVec3(along)))
-            let thickness = radius * 0.0045
+            let thickness = chipHeight * 0.039
             entry.label.leader.simdScale = simd_float3(thickness, span, thickness)
         }
+        // The whole-model view is fitted round the chips of the whole-model layout only.
+        guard !focusLayout else { return }
         if top > -Float.greatestFiniteMagnitude { labelsTop = top }
         chipExtent = extentLow.x <= extentHigh.x ? (extentLow, extentHigh) : nil
     }
@@ -859,22 +1152,59 @@ final class Scene3DController: NSObject {
 
     private struct Flash { var materials: [SCNMaterial]; var start: CFTimeInterval; var duration: Double; var times: Int }
     private var flashes: [Flash] = []
+    /// What each material's glow was before a flash or a highlight borrowed it.
+    private var emissionOriginals: [ObjectIdentifier: (material: SCNMaterial, contents: Any?, intensity: CGFloat)] = [:]
+
+    private func borrowEmission(of node: SCNNode) -> [SCNMaterial] {
+        var materials: [SCNMaterial] = []
+        node.enumerateHierarchy { child, _ in
+            if let name = child.name, name.hasPrefix("_") { return }
+            materials += child.geometry?.materials ?? []
+        }
+        for material in materials where emissionOriginals[ObjectIdentifier(material)] == nil {
+            emissionOriginals[ObjectIdentifier(material)] = (material, material.emission.contents, material.emission.intensity)
+        }
+        return materials
+    }
+
+    /// Gives materials their own glow back once no flash or highlight is using them.
+    private func returnEmission(of materials: [SCNMaterial]) {
+        for material in materials {
+            let key = ObjectIdentifier(material)
+            let inUse = flashes.contains { $0.materials.contains { $0 === material } } || highlights.values.contains { $0.materials.contains { $0 === material } }
+            guard !inUse, let original = emissionOriginals[key] else { continue }
+            material.emission.contents = original.contents
+            material.emission.intensity = original.intensity
+            emissionOriginals[key] = nil
+        }
+    }
 
     private func flash(_ node: SCNNode, times: Int) {
-        var materials: [SCNMaterial] = []
-        node.enumerateHierarchy { child, _ in materials += child.geometry?.materials ?? [] }
-        for material in materials { material.emission.contents = NSColor.white; material.emission.intensity = 0 }
+        let materials = borrowEmission(of: node)
+        let highlighted = highlights.values.flatMap(\.materials)
+        for material in materials where !highlighted.contains(where: { $0 === material }) {
+            material.emission.contents = NSColor.white
+            material.emission.intensity = 0
+        }
         flashes.append(Flash(materials: materials, start: now, duration: 0.42 * Double(times), times: times))
     }
 
     private func updateFlashes(now: CFTimeInterval) {
+        // The part being talked about glows softly, breathing about once every second and a half.
+        for highlight in highlights.values {
+            let wave = 0.5 - 0.5 * cos((now - highlight.start) / 1.5 * 2 * Double.pi)
+            for material in highlight.materials { material.emission.intensity = CGFloat(0.14 + 0.3 * wave) }
+        }
         guard !flashes.isEmpty else { return }
+        let highlighted = highlights.values.flatMap(\.materials)
         for flash in flashes {
             let elapsed = now - flash.start
             let wave = elapsed >= flash.duration ? 0 : 0.5 - 0.5 * cos(elapsed / flash.duration * Double(flash.times) * 2 * Double.pi)
-            for material in flash.materials { material.emission.intensity = CGFloat(wave * 0.55) }
+            for material in flash.materials where !highlighted.contains(where: { $0 === material }) { material.emission.intensity = CGFloat(wave * 0.55) }
         }
+        let finished = flashes.filter { now - $0.start >= $0.duration }
         flashes.removeAll { now - $0.start >= $0.duration }
+        for flash in finished { returnEmission(of: flash.materials) }
     }
 
     /// Pulls the top-level parts (or one group's children) apart along an axis. `dist=0` puts them back.
@@ -997,22 +1327,17 @@ final class Scene3DController: NSObject {
     }
 
     private func moveCamera(_ c: SceneCommand) {
+        if commandOrigin == .narration, gesturePause.isPaused(now: now) { return }
         let look = c.vec3("look").map { simd_float3($0) } ?? shownCenter
         var position = c.vec3("to").map { simd_float3($0) } ?? cameraNode.simdPosition
         if let zoom = c.number("zoom"), zoom > 0 {
             position = look + (position - look) / Float(zoom)
         }
         guard simd_length(position - look) > 1e-4 else { return }
-        cameraPinned = true
-        view.pointOfView = cameraNode
-        SCNTransaction.begin()
-        SCNTransaction.animationDuration = c.number("dur", "t") ?? 1.0
-        SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        cameraNode.simdPosition = position
-        cameraNode.simdLook(at: look)
-        SCNTransaction.commit()
-        shownCenter = look
-        shownDistance = simd_length(position - look)
+        var target = SceneCameraPose(center: SceneVec3(look), direction: SceneVec3(position - look), distance: Double(simd_length(position - look)))
+        target.elevation = min(max(target.elevation, -SceneCameraPose.maximumElevation), SceneCameraPose.maximumElevation)
+        startMove(to: target, duration: c.number("dur", "t") ?? 1.0, sway: 0, then: .pinned)
+        policy.noteMove(now: now, sentence: c.cue)
     }
 
     // MARK: Simulation
@@ -1022,9 +1347,8 @@ final class Scene3DController: NSObject {
         isSimulation = true
         // Simulations are easiest to read nearly face-on and holding still.
         autoRotate = false
-        azimuth = 0.22
         baseAzimuth = 0.22
-        elevation = 0.14
+        baseElevation = 0.14
     }
 
     private func setGravity(_ c: SceneCommand) {
@@ -1334,13 +1658,34 @@ final class Scene3DController: NSObject {
     // MARK: Tapping
 
     private func handleTap(at point: CGPoint) {
+        if let id = partID(at: point) { tapPart(id) }
+    }
+
+    /// The part under a point of the view. Ghosted and hidden parts are clicked through.
+    private func partID(at point: CGPoint) -> String? {
         let hits = view.hitTest(point, options: [.searchMode: SCNHitTestSearchMode.all.rawValue, .ignoreHiddenNodes: true])
         for hit in hits {
-            if let id = tappablePartID(for: hit.node) {
-                tapPart(id)
-                return
-            }
+            if let name = hit.node.name, !name.hasPrefix("_"), isEffectivelyGhosted(name) || isEffectivelyHidden(name) { continue }
+            if let id = tappablePartID(for: hit.node) { return id }
         }
+        return nil
+    }
+
+    /// A double-click on a part puts the camera on it; on empty space it goes back to the whole model.
+    private func handleDoubleTap(at point: CGPoint) {
+        gesturePause.touched(now: now)
+        if let id = partID(at: point) {
+            emitDirector("focus \(id) zoom=medium", origin: .person)
+        } else {
+            emitDirector("frame all", origin: .person)
+        }
+    }
+
+    /// Reports a double-click on a part, as if the person had double-clicked it.
+    func doubleTapPart(_ id: String) {
+        guard nodes[id] != nil else { return }
+        gesturePause.touched(now: now)
+        emitDirector("focus \(id) zoom=medium", origin: .person)
     }
 
     private func tappablePartID(for node: SCNNode) -> String? {
@@ -1387,14 +1732,9 @@ final class Scene3DController: NSObject {
         return CGPoint(x: projected.x, y: projected.y)
     }
 
-    /// True once the person has dragged, scrolled or pinched the view: the model stops swaying by itself.
+    /// True once the person has dragged, scrolled or pinched the view: the camera is theirs until
+    /// they recenter or the next move they ask for.
     var cameraWasTakenByUser: Bool { userTookCamera }
-
-    private func userTouchedCamera() {
-        guard !userTookCamera else { return }
-        userTookCamera = true
-        view.defaultCameraController.target = SCNVector3(shownCenter)
-    }
 
     // MARK: Per-frame
 
@@ -1402,14 +1742,27 @@ final class Scene3DController: NSObject {
         let time = CACurrentMediaTime()
         let wall = min(time - lastTick, 0.1)
         lastTick = time
+        processPendingAuto()
         step(wall: wall)
     }
 
     /// Headless only: moves motion, simulation and the camera on by `seconds`.
     func advance(by seconds: Double) {
         guard isHeadless, seconds > 0 else { return }
+        // Before the clock moves, so a move the engine starts itself begins on the same frame
+        // when the recorded scene is played back.
+        processPendingAuto()
         manualClock += seconds
         step(wall: seconds)
+    }
+
+    /// A new request about the model that is already up: the camera rules start afresh and the
+    /// person's lines are obeyed even if they were steering a moment ago.
+    func beginRefinement() {
+        policy.reset()
+        gesturePause.resume()
+        pendingAuto = nil
+        commandOrigin = .person
     }
 
     private func step(wall: Double) {
@@ -1494,11 +1847,16 @@ final class Scene3DController: NSObject {
         for (id, coil) in coils {
             guard let node = nodes[id], let a = nodes[coil.a], let b = nodes[coil.b] else { continue }
             let start = worldPosition(coil.a), end = worldPosition(coil.b)
-            let mesh = SceneGeometry.tubeMesh(path: SceneGeometry.springPoints(from: SceneVec3(start), to: SceneVec3(end), coils: coil.coils, radius: coil.radius, samplesPerCoil: 12),
-                                              radius: coil.wire, sides: 6)
-            let materials = node.geometry?.materials ?? []
-            node.geometry = Scene3DAssets.geometry(from: mesh)
-            node.geometry?.materials = materials
+            // The coil's mesh is rebuilt only when one of its ends has moved.
+            let unmoved = coilEnds[id].map { simd_length($0.0 - start) < 1e-5 && simd_length($0.1 - end) < 1e-5 } ?? false
+            if !unmoved {
+                coilEnds[id] = (start, end)
+                let mesh = SceneGeometry.tubeMesh(path: SceneGeometry.springPoints(from: SceneVec3(start), to: SceneVec3(end), coils: coil.coils, radius: coil.radius, samplesPerCoil: 12),
+                                                  radius: coil.wire, sides: 6)
+                let materials = node.geometry?.materials ?? []
+                node.geometry = Scene3DAssets.geometry(from: mesh)
+                node.geometry?.materials = materials
+            }
             if coil.stiffness > 0, dt > 0 {
                 // A stiff spring driven through SceneKit's solver gains energy (it sees
                 // positions a frame late), so the hanging body is integrated here instead:
@@ -1535,10 +1893,12 @@ final class Scene3DController: NSObject {
             // While parts are flying apart the frame follows them closely.
             fitCountdown = now < refitUntil ? 0.05 : 0.25
             refit()
+            followFocus()
             refreshed = true
         }
         updateCamera(dt: wall)
         updateLabels(refresh: refreshed)
+        publishCameraState()
 
         plotCountdown -= wall
         if plotCountdown <= 0, !plotSources.isEmpty {
@@ -1591,8 +1951,7 @@ final class Scene3DController: NSObject {
         contentHalfHeight = (maximum.y - minimum.y) / 2
         if !hasFit {
             hasFit = true
-            shownCenter = lookCenter
-            shownDistance = targetDistance
+            pose = wholePose
             placeCamera()
         }
         shadowNode.isHidden = isSimulation
@@ -1604,15 +1963,16 @@ final class Scene3DController: NSObject {
     private var boundsLow = simd_float3(-1, -1, -1)
     private var boundsHigh = simd_float3(1, 1, 1)
 
+    /// The direction from the model to the camera for the whole-model view turned to `azimuth`.
     private func cameraDirection(azimuth: Double) -> simd_float3 {
-        simd_float3(Float(sin(azimuth) * cos(elevation)), Float(sin(elevation)), Float(cos(azimuth) * cos(elevation)))
+        simd_float3(SceneCameraPose.direction(azimuth: azimuth, elevation: baseElevation))
     }
 
     /// Where the camera looks: the middle of the model and its label chips together.
     private var lookCenter: simd_float3 {
         if isSimulation { return fitCenter + simd_float3(0, labels.isEmpty ? 0 : labelHeadroom / 2, 0) }
         guard let frame = framedBox else { return fitCenter }
-        let toCamera = layoutDirection
+        let toCamera = wholeDirection
         var right = simd_cross(simd_float3(0, 1, 0), toCamera)
         right = simd_length(right) > 1e-5 ? simd_normalize(right) : simd_float3(1, 0, 0)
         let up = simd_cross(toCamera, right)
@@ -1623,7 +1983,7 @@ final class Scene3DController: NSObject {
     /// The model's box joined with the chips' box, in the camera plane, relative to the model's middle.
     private var framedBox: (low: SceneVec2, high: SceneVec2)? {
         guard let chips = chipExtent, !labels.isEmpty else { return nil }
-        let toCamera = layoutDirection
+        let toCamera = wholeDirection
         var right = simd_cross(simd_float3(0, 1, 0), toCamera)
         right = simd_length(right) > 1e-5 ? simd_normalize(right) : simd_float3(1, 0, 0)
         let up = simd_cross(toCamera, right)
@@ -1665,7 +2025,7 @@ final class Scene3DController: NSObject {
             return (fitRadius + labelHeadroom * 0.5) / sin(min(halfVertical, atan(tanHorizontal))) * 1.05
         }
         var needed: Float = 0.1
-        let angles = autoRotate && !userTookCamera ? [baseAzimuth - 0.3, baseAzimuth, baseAzimuth + 0.3] : [azimuth]
+        let angles = autoRotate ? [baseAzimuth - Self.wholeSway, baseAzimuth, baseAzimuth + Self.wholeSway] : [baseAzimuth]
         for angle in angles {
             let toCamera = cameraDirection(azimuth: angle)
             let right = simd_normalize(simd_cross(simd_float3(0, 1, 0), toCamera))
@@ -1686,35 +2046,902 @@ final class Scene3DController: NSObject {
         return needed * 1.1
     }
 
+    private var lens: SceneLens { SceneLens(fieldOfView: Double(Self.fieldOfView), aspect: Double(viewportAspect)) }
+
+    /// The whole model, framed from the opening view.
+    private var wholePose: SceneCameraPose {
+        SceneCameraPose(center: SceneVec3(lookCenter), azimuth: baseAzimuth, elevation: baseElevation, distance: Double(targetDistance))
+    }
+
+    /// The turn the camera is drawn at: the pose's, plus the gentle sway.
+    private var displayedAzimuth: Double { pose.azimuth + (autoRotate ? swayAmount * sin(swayPhase) : 0) }
+
+    /// The view as drawn right now.
+    var displayedPose: SceneCameraPose {
+        SceneCameraPose(center: pose.center, azimuth: displayedAzimuth, elevation: pose.elevation, distance: pose.distance)
+    }
+
+    /// True while the camera is easing somewhere.
+    var isCameraMoving: Bool { cameraMove != nil }
+
     private func updateCamera(dt: Double) {
-        guard !userTookCamera, !cameraPinned else { return }
-        if autoRotate {
-            // A slow sway either side of the opening view, so the model never ends up edge-on.
-            swayPhase += dt * 0.42
-            azimuth = baseAzimuth + 0.3 * sin(swayPhase)
+        // A slow sway either side of the view, so the model never looks frozen. It stops while the person holds the camera.
+        if autoRotate, cameraMode != .user, cameraMode != .pinned { swayPhase += dt * 0.42 }
+        if let move = cameraMove {
+            let progress = move.duration <= 1e-6 ? 1 : (now - move.start) / move.duration
+            let eased = SceneEasing.easeInOut(progress)
+            // Going back to the whole model follows it if it is still being built.
+            let target = move.then == .whole ? wholePose : move.to
+            var next = SceneCameraPose.interpolate(move.from, target, eased)
+            next.azimuth = move.from.azimuth + (SceneCameraPose.shortestTurn(from: move.from.azimuth, to: target.azimuth) + move.turn) * eased
+            pose = next
+            swayAmount = move.toSway * eased
+            if progress >= 1 {
+                cameraMove = nil
+                cameraMode = move.then
+                if move.then == .whole { baseAzimuth = pose.azimuth }
+            }
+        } else if cameraMode == .whole {
+            let target = wholePose
+            let blend = min(dt * 4, 1)
+            pose.center += (target.center - pose.center) * blend
+            pose.distance += (target.distance - pose.distance) * blend
+            pose.azimuth = target.azimuth
+            pose.elevation = target.elevation
+            swayAmount = Self.wholeSway
         }
-        let blend = Float(min(dt * 4, 1))
-        shownCenter += (lookCenter - shownCenter) * blend
-        shownDistance += (targetDistance - shownDistance) * blend
         placeCamera()
     }
 
     private func placeCamera() {
-        cameraNode.simdPosition = shownCenter + cameraDirection(azimuth: azimuth) * shownDistance
-        cameraNode.simdLook(at: shownCenter)
+        // The camera's frame is set outright: right, up, and back along the line of sight.
+        // (`look(at:)` turns the node the shortest way from wherever it was, which lets the
+        // horizon tilt a little more with every move.)
+        let shown = displayedPose
+        let direction = shown.direction
+        let (right, up) = SceneCameraPose.basis(direction: direction)
+        cameraNode.simdTransform = simd_float4x4(columns: (simd_float4(simd_float3(right), 0), simd_float4(simd_float3(up), 0),
+                                                           simd_float4(simd_float3(direction), 0), simd_float4(simd_float3(shown.position), 1)))
     }
 
-    /// Sets the turntable angle (radians) and stops auto-rotation; used for repeatable snapshots.
+    /// Eases the camera to `target` (ease in, ease out). The sway is folded into the start so nothing jumps.
+    private func startMove(to target: SceneCameraPose, duration: Double, sway: Double, then: CameraMode, turn: Double = 0) {
+        var from = pose
+        from.azimuth = displayedAzimuth
+        pose = from
+        swayAmount = 0
+        cameraMove = CameraMove(from: from, to: target, start: now, duration: max(duration, 0), toSway: sway, turn: turn, then: then)
+        if duration <= 1e-6 { updateCamera(dt: 0) }
+        publishCameraState()
+    }
+
+    /// Long enough to feel calm, short enough not to drag: longer for a bigger change of view.
+    private func moveDuration(to target: SceneCameraPose) -> Double {
+        0.85 + 0.6 * min(displayedPose.difference(from: target, scale: Double(max(fitRadius, 0.05))), 1.6)
+    }
+
+    private func publishCameraState() {
+        let away = (cameraMove?.then ?? cameraMode) != .whole
+        if model.canRecenter != away { model.canRecenter = away }
+    }
+
+    /// Sets the turntable angle (radians) and stops auto-rotation; used for repeatable snapshots of the whole model.
     func freezeCamera(azimuth: Double? = nil, elevation: Double? = nil) {
-        if let azimuth { self.azimuth = azimuth; baseAzimuth = azimuth }
-        if let elevation { self.elevation = elevation }
+        if let azimuth { baseAzimuth = azimuth }
+        if let elevation { baseElevation = elevation }
         autoRotate = false
+        cameraMove = nil
+        cameraMode = .whole
         refit()
-        shownCenter = lookCenter
-        shownDistance = targetDistance
+        pose = wholePose
         placeCamera()
         updateLabels()
+        publishCameraState()
     }
+
+    // MARK: Parts by id
+
+    /// The parts a line names, forgiving how a model writes them: the exact id, a different case,
+    /// the last piece of a dotted id (`turbine` for `j.turbine`), a label's own id, or the label's words.
+    private func resolve(_ ids: [String]) -> [String] {
+        var result: [String] = []
+        for raw in ids {
+            var found: String?
+            let lowered = raw.lowercased()
+            if nodes[raw] != nil {
+                found = raw
+            } else if let target = labelIDs[raw], nodes[target] != nil {
+                found = target
+            } else if let exact = order.first(where: { nodes[$0] != nil && $0.lowercased() == lowered }) {
+                found = exact
+            } else if let piece = order.filter({ nodes[$0] != nil && $0.lowercased().hasSuffix("." + lowered) }).min(by: { $0.count < $1.count }) {
+                found = piece
+            } else if let named = order.first(where: { nodes[$0] != nil && (labelTexts[$0] ?? parts[$0]?.label ?? parts[$0]?.name)?.lowercased() == lowered }) {
+                found = named
+            } else {
+                found = SceneSubjectMatcher.match(sentence: raw.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: ".", with: " "), parts: subjectCandidates, limit: 1).first
+            }
+            if let found, !result.contains(found) { result.append(found) }
+        }
+        return result
+    }
+
+    /// The parts a sentence or a request could be about: everything with a label or a name, and every top-level part.
+    var subjectCandidates: [SceneSubjectCandidate] {
+        order.compactMap { id in
+            guard nodes[id] != nil, !id.hasPrefix("_"), !id.hasSuffix("._bulk"), let part = parts[id] else { return nil }
+            if case .text = part.shape { return nil }
+            let label = labelTexts[id] ?? part.label
+            if label == nil, flows[id] != nil || flows[part.parent ?? ""] != nil { return nil }
+            guard label != nil || part.name != nil || !id.contains(".") else { return nil }
+            return SceneSubjectCandidate(id: id, label: label, name: part.name)
+        }
+    }
+
+    private func isDescendant(_ id: String, of ancestor: String) -> Bool {
+        guard let top = nodes[ancestor] else { return false }
+        var current = nodes[id]?.parent
+        while let node = current {
+            if node === top { return true }
+            current = node.parent
+        }
+        return false
+    }
+
+    /// The part and the parts it hangs from, nearest first.
+    private func lineage(of id: String) -> [String] {
+        var result: [String] = []
+        var current = nodes[id]
+        while let node = current {
+            if let name = node.name, parts[name] != nil { result.append(name) }
+            current = node.parent
+        }
+        return result.isEmpty ? [id] : result
+    }
+
+    private func isEffectivelyHidden(_ id: String) -> Bool {
+        if hiddenIDs.isEmpty { return false }
+        return lineage(of: id).contains(where: hiddenIDs.contains)
+    }
+
+    private func isEffectivelyGhosted(_ id: String) -> Bool {
+        if ghosts.isEmpty { return false }
+        if lineage(of: id).contains(where: { ghosts[$0] != nil }) { return true }
+        // A group is ghosted when every solid piece of it is (`ghost others` ghosts piece by piece).
+        guard let node = nodes[id], node.geometry == nil else { return false }
+        var pieces = 0, ghosted = 0
+        node.enumerateHierarchy { child, _ in
+            guard child.geometry != nil, let name = child.name, parts[name] != nil else { return }
+            pieces += 1
+            if ghosts[name] != nil { ghosted += 1 }
+        }
+        return pieces > 0 && ghosted == pieces
+    }
+
+    /// How see-through a part is drawn, 0…1, counting what it hangs from.
+    private func effectiveOpacity(_ id: String) -> Double {
+        var opacity = 1.0
+        for name in lineage(of: id) {
+            if hiddenIDs.contains(name) { return 0 }
+            opacity *= min(parts[name]?.opacity ?? 1, ghosts[name]?.opacity ?? 1)
+        }
+        return opacity
+    }
+
+    private func bounds(ofParts ids: [String]) -> SceneBox? {
+        var box: SceneBox?
+        for id in ids {
+            guard let node = nodes[id], let (low, high) = tightBounds(of: node) else { continue }
+            let own = SceneBox(low: SceneVec3(low), high: SceneVec3(high))
+            box = box.map { $0.union(own) } ?? own
+        }
+        return box
+    }
+
+    private var modelBox: SceneBox { SceneBox(low: SceneVec3(boundsLow), high: SceneVec3(boundsHigh)) }
+
+    /// Parts with a shape of their own (not groups, not floating text).
+    private var solidPartIDs: [String] {
+        order.filter { id in
+            guard let node = nodes[id], node.geometry != nil, let part = parts[id] else { return false }
+            if case .text = part.shape { return false }
+            return true
+        } + nodes.keys.filter { $0.hasSuffix("._bulk") }.sorted()
+    }
+
+    // MARK: Looking at a part
+
+    /// The part a geometry node belongs to.
+    private func partID(owning node: SCNNode) -> String? {
+        var current: SCNNode? = node
+        while let candidate = current {
+            if let name = candidate.name {
+                if name.hasPrefix("_") { return nil }
+                if parts[name] != nil { return name }
+            }
+            current = candidate.parent
+        }
+        return nil
+    }
+
+    private var hitTestRenderer: SCNRenderer?
+    private var hasUnpreparedGeometry = true
+
+    /// SceneKit only answers "what does this line hit" for geometry it has prepared for drawing.
+    /// A part that was just added (or a scene that is built off screen and never drawn) is prepared here first.
+    private func prepareForHitTesting() {
+        // What was moved this turn of the run loop is hit where it is now, not where it was last drawn.
+        SCNTransaction.flush()
+        guard hasUnpreparedGeometry else { return }
+        hasUnpreparedGeometry = false
+        let renderer: SCNRenderer
+        if let existing = offscreenRenderer ?? hitTestRenderer {
+            renderer = existing
+        } else {
+            renderer = SCNRenderer(device: nil, options: nil)
+            renderer.scene = scene
+            hitTestRenderer = renderer
+        }
+        _ = renderer.prepare(contentRoot, shouldAbortBlock: nil)
+    }
+
+    /// How much of `box` is hidden from `eye` (0 clear … 1 hidden) by parts other than `targets`,
+    /// and which parts do the hiding. Asks SceneKit what a few lines of sight really hit, so hollow
+    /// shells and cutaways count for what they are.
+    private func sightBlockage(from eye: SceneVec3, to box: SceneBox, targets: [String], direction: SceneVec3) -> (amount: Double, blockers: [String]) {
+        let (right, up) = SceneCameraPose.basis(direction: direction)
+        let size = box.size
+        let across = (abs(right.x) * size.x + abs(right.y) * size.y + abs(right.z) * size.z) * 0.2
+        let along = (abs(up.x) * size.x + abs(up.y) * size.y + abs(up.z) * size.z) * 0.2
+        var samples = [box.center, box.center + right * across, box.center - right * across, box.center + up * along, box.center - up * along]
+        let targetNodes = targets.compactMap { nodes[$0] }
+        // The middle of a part's box is often thin air (a curved pipe, a ring of blades), so a few
+        // points that are on the part itself are looked at as well.
+        var anchors: [SceneVec3] = []
+        for node in targetNodes {
+            node.enumerateHierarchy { child, _ in
+                guard let geometry = child.geometry, let name = child.name, !name.hasPrefix("_"), let part = parts[name] else { return }
+                if case .text = part.shape { return }
+                if case .tube(let path, _, _) = part.shape, !path.isEmpty {
+                    anchors.append(SceneVec3(child.simdConvertPosition(simd_float3(path[path.count / 2]), to: nil)))
+                } else {
+                    let (low, high) = bulkBoxes[name].map { (SCNVector3($0.low), SCNVector3($0.high)) } ?? geometry.boundingBox
+                    anchors.append(SceneVec3(child.simdConvertPosition((simd_float3(low) + simd_float3(high)) / 2, to: nil)))
+                }
+            }
+        }
+        if anchors.count > 5 {
+            let stride = Double(anchors.count - 1) / 4
+            anchors = (0..<5).map { anchors[Int((Double($0) * stride).rounded())] }
+        }
+        samples += anchors
+        func isTarget(_ node: SCNNode) -> Bool {
+            var current: SCNNode? = node
+            while let candidate = current {
+                if targetNodes.contains(where: { $0 === candidate }) { return true }
+                current = candidate.parent
+            }
+            return false
+        }
+        var total = 0.0
+        var counted = 0
+        var weights: [String: Double] = [:]
+        let start = simd_float3(eye)
+        let reach = Float(box.radius) * 0.6
+        prepareForHitTesting()
+        for sample in samples {
+            // The line of sight runs on a little past the point, to where it meets the part.
+            let toward = simd_float3(sample) - start
+            let length = simd_length(toward)
+            guard length > 1e-6 else { continue }
+            let end = simd_float3(sample) + toward / length * reach
+            let hits = contentRoot.hitTestWithSegment(from: SCNVector3(start), to: SCNVector3(end),
+                                                      options: [SCNHitTestOption.backFaceCulling.rawValue: false,
+                                                                SCNHitTestOption.searchMode.rawValue: SCNHitTestSearchMode.all.rawValue])
+                .sorted { simd_length(simd_float3($0.worldCoordinates) - start) < simd_length(simd_float3($1.worldCoordinates) - start) }
+            var blocked = 0.0
+            var seen: Set<String> = []
+            var inFront: [(id: String, weight: Double)] = []
+            var reachedSubject = false
+            for hit in hits {
+                // What is behind the subject's own front surface is not in front of it.
+                if isTarget(hit.node) {
+                    reachedSubject = true
+                    break
+                }
+                guard let id = partID(owning: hit.node), seen.insert(id).inserted, let part = parts[id] else { continue }
+                if case .text = part.shape { continue }
+                if flows[part.parent ?? ""] != nil { continue }
+                let opacity = effectiveOpacity(id)
+                let weight = opacity >= 0.85 ? 1 : opacity * 0.5
+                blocked += weight
+                inFront.append((id, weight))
+            }
+            // A line that never meets the subject says nothing about whether the subject can be seen.
+            guard reachedSubject else { continue }
+            counted += 1
+            for entry in inFront where entry.weight >= 0.3 { weights[entry.id, default: 0] += entry.weight }
+            total += min(blocked, 1)
+        }
+        guard counted > 0 else { return (0, []) }
+        // Worth ghosting: what stands in front of a good half of the subject, not a blade that crosses one line of sight.
+        let main = weights.filter { $0.value >= Double(counted) * 0.5 }
+        return (total / Double(counted), main.keys.sorted { (main[$0] ?? 0) > (main[$1] ?? 0) })
+    }
+
+    /// The view that shows `box` best: the usual 3/4 view unless something stands in front of the
+    /// subject, in which case the clearest of a handful of other sides. `blockers` are the parts
+    /// still in the way from there (worth ghosting), when the subject is mostly hidden from everywhere.
+    private func bestView(of box: SceneBox, targets: [String], fill: Double) -> (pose: SceneCameraPose, blockers: [String]) {
+        let lens = self.lens
+        let candidates = SceneFraming.candidateDirections(azimuth: baseAzimuth, elevation: baseElevation)
+        var poses: [SceneCameraPose] = [], blocked: [Double] = [], found: [[String]] = [], edgeOn: [Double] = []
+        for candidate in candidates {
+            let direction = SceneCameraPose.direction(azimuth: candidate.azimuth, elevation: candidate.elevation)
+            let view = SceneFraming.pose(framing: box, direction: direction, lens: lens, fill: fill)
+            let sight = sightBlockage(from: view.position, to: box, targets: targets, direction: direction)
+            poses.append(view)
+            blocked.append(sight.amount)
+            found.append(sight.blockers)
+            edgeOn.append(SceneFraming.edgeOnPenalty(for: box, direction: direction))
+            if poses.count == 1, sight.amount < 0.05, edgeOn[0] < 0.05 { break }
+        }
+        var index = SceneFraming.chooseDirection(blocked: blocked, extra: edgeOn)
+        // The view sways a little either side of where it rests. A side that is only clear dead on
+        // (the edge of a wall just out of the way) is not clear: look again from both ends of the sway.
+        for _ in 0..<3 where blocked[index] <= 0.45 && candidates.count == poses.count {
+            var worst = blocked[index]
+            for offset in [-Self.focusSway, Self.focusSway] {
+                let direction = SceneCameraPose.direction(azimuth: candidates[index].azimuth + offset, elevation: candidates[index].elevation)
+                let view = SceneCameraPose(center: poses[index].center, direction: direction, distance: poses[index].distance)
+                worst = max(worst, sightBlockage(from: view.position, to: box, targets: targets, direction: direction).amount)
+            }
+            guard worst > 0.45 else { break }
+            blocked[index] = worst
+            index = SceneFraming.chooseDirection(blocked: blocked, extra: edgeOn)
+        }
+        if ProcessInfo.processInfo.environment["TEACHY_SCENE_DEBUG"] != nil {
+            print("🎥 view of \(targets): blocked \(blocked.map { String(format: "%.2f", $0) }) → candidate \(index)")
+        }
+        return (poses[index], blocked[index] > 0.4 ? found[index] : [])
+    }
+
+    /// Who a line is treated as coming from. Lines the engine wrote for the narration are held back while the person steers.
+    private func origin(of c: SceneCommand) -> CommandOrigin {
+        if commandOrigin == .replay { return .replay }
+        return c.flag("auto") ? .narration : commandOrigin
+    }
+
+    /// `focus id[,id] zoom=tight|medium|wide dur=`: ease the camera onto those parts.
+    private func focus(_ c: SceneCommand) {
+        guard directsCamera else { return }
+        let ids = resolve(c.targetIDs).filter { !isEffectivelyHidden($0) }
+        guard !ids.isEmpty, let box = bounds(ofParts: ids) else { return }
+        if origin(of: c) == .narration, gesturePause.isPaused(now: now) { return }
+        let zoomWord = c.string("zoom") ?? c.words.first(where: { !$0.quoted && ["tight", "medium", "wide", "close", "far"].contains($0.text.lowercased()) })?.text
+        let zoom = SceneZoom(script: zoomWord)
+        clearHighlights()
+        restoreAutoGhosts()
+        var (target, blockers) = bestView(of: box, targets: ids, fill: zoom.fill)
+        // A focus never stands further back than the view of the whole model.
+        target.distance = min(target.distance, Double(targetDistance))
+        // Something the subject sits inside is in the way from every side: make it see-through.
+        if !c.flag("solid") {
+            for id in blockers where ghosts[id] == nil { setGhost(id, opacity: 0.14, auto: true) }
+        }
+        focusIDs = ids
+        focusBox = box
+        labelRowsDecidedFor = ""
+        let duration = c.number("dur", "t").map { min(max($0, 0), 10) } ?? moveDuration(to: target)
+        startMove(to: target, duration: duration, sway: Self.focusSway, then: .focus)
+        policy.noteMove(now: now, sentence: c.cue)
+        if c.flag("auto") {
+            for id in ids { if let node = nodes[id] { flash(node, times: 2) } }
+        }
+    }
+
+    /// The camera is resting on parts that have since moved (an exploded view, a part on a crank):
+    /// it follows, but only when they have moved a fair way, so a spinning fan does not make it fidget.
+    private func followFocus() {
+        guard cameraMode == .focus, cameraMove == nil, !focusIDs.isEmpty, let old = focusBox, let box = bounds(ofParts: focusIDs) else { return }
+        let shift = simd_length(box.center - old.center), growth = abs(box.radius - old.radius)
+        guard shift > old.radius * 0.3 || growth > old.radius * 0.3 else { return }
+        if gesturePause.isPaused(now: now) { return }
+        focusBox = box
+        let fill = SceneProjectionFill.current(old, pose: pose, lens: lens)
+        var target = SceneFraming.pose(framing: box, direction: pose.direction, lens: lens, fill: fill)
+        target.azimuth = pose.azimuth
+        target.elevation = pose.elevation
+        startMove(to: target, duration: 0.9, sway: Self.focusSway, then: .focus)
+    }
+
+    /// `frame all`: back to the whole model. `frame id…` is a wide focus.
+    private func frame(_ c: SceneCommand) {
+        guard directsCamera else { return }
+        if !c.names("all"), !resolve(c.targetIDs).isEmpty {
+            var wide = c
+            if wide.args["zoom"] == nil { wide.args["zoom"] = "wide" }
+            focus(wide)
+            return
+        }
+        if origin(of: c) == .narration, gesturePause.isPaused(now: now) { return }
+        clearHighlights()
+        restoreAutoGhosts()
+        focusIDs = []
+        focusBox = nil
+        labelRowsDecidedFor = ""
+        guard cameraMode != .whole || cameraMove != nil else { return }
+        let target = wholePose
+        let duration = c.number("dur", "t").map { min(max($0, 0), 10) } ?? moveDuration(to: target)
+        startMove(to: target, duration: duration, sway: autoRotate ? Self.wholeSway : 0, then: .whole)
+        policy.noteMove(now: now, sentence: c.cue)
+    }
+
+    /// `orbit id deg=120 dur=4`: a slow arc round a part (no id, or `all`: round the whole model).
+    private func orbitCamera(_ c: SceneCommand) {
+        guard directsCamera else { return }
+        if origin(of: c) == .narration, gesturePause.isPaused(now: now) { return }
+        let degrees = c.number("deg", "degrees", "angle") ?? 120
+        let turn = min(max(degrees, -720), 720) * Double.pi / 180
+        let duration = c.number("dur", "t").map { min(max($0, 0), 20) } ?? max(3, abs(degrees) / 40)
+        let ids = c.names("all") ? [] : resolve(c.targetIDs).filter { !isEffectivelyHidden($0) }
+        if !ids.isEmpty, let box = bounds(ofParts: ids) {
+            var target = cameraMove?.to ?? pose
+            if focusIDs != ids {
+                clearHighlights()
+                restoreAutoGhosts()
+                let view = bestView(of: box, targets: ids, fill: SceneZoom.medium.fill)
+                target = view.pose
+                for id in view.blockers where ghosts[id] == nil { setGhost(id, opacity: 0.14, auto: true) }
+                focusIDs = ids
+                focusBox = box
+                labelRowsDecidedFor = ""
+            }
+            startMove(to: target, duration: duration, sway: 0, then: .focus, turn: turn)
+        } else if !focusIDs.isEmpty, !c.names("all") {
+            startMove(to: cameraMove?.to ?? pose, duration: duration, sway: 0, then: .focus, turn: turn)
+        } else {
+            focusIDs = []
+            focusBox = nil
+            labelRowsDecidedFor = ""
+            startMove(to: wholePose, duration: duration, sway: autoRotate ? Self.wholeSway : 0, then: .whole, turn: turn)
+        }
+        policy.noteMove(now: now, sentence: c.cue)
+    }
+
+    // MARK: Ghosting, hiding, highlighting
+
+    private func fade(_ node: SCNNode, to opacity: Double) {
+        if isHeadless {
+            node.opacity = CGFloat(opacity)
+        } else {
+            node.removeAction(forKey: "fade")
+            node.runAction(.fadeOpacity(to: CGFloat(opacity), duration: 0.35), forKey: "fade")
+        }
+    }
+
+    /// A see-through part must not hide what is inside it, so it stops writing depth and is drawn after solid parts.
+    private func setSolid(_ root: SCNNode, _ solid: Bool) {
+        root.enumerateHierarchy { child, _ in
+            guard let geometry = child.geometry, let name = child.name, !name.hasPrefix("_") else { return }
+            let opaque = (parts[name]?.opacity ?? 1) >= 0.999
+            for material in geometry.materials { material.writesToDepthBuffer = solid && opaque }
+            child.renderingOrder = solid && opaque ? 0 : 10
+        }
+    }
+
+    /// Makes a part see-through (`opacity` nil: solid again). A ghost the script asked for is not undone by an automatic one.
+    private func setGhost(_ id: String, opacity: Double?, auto: Bool) {
+        guard let node = nodes[id] else { return }
+        let base = parts[id]?.opacity ?? 1
+        if let opacity {
+            if let existing = ghosts[id], !existing.auto, auto { return }
+            ghosts[id] = Ghost(opacity: opacity, auto: auto)
+            fade(node, to: hiddenIDs.contains(id) ? 0 : min(base, opacity))
+            setSolid(node, false)
+        } else {
+            guard ghosts[id] != nil else { return }
+            ghosts[id] = nil
+            fade(node, to: hiddenIDs.contains(id) ? 0 : base)
+            setSolid(node, true)
+        }
+        labelRowsDecidedFor = ""
+    }
+
+    private func restoreAutoGhosts() {
+        for (id, ghost) in ghosts where ghost.auto { setGhost(id, opacity: nil, auto: true) }
+    }
+
+    /// `ghost id id… opacity=0.15`, `ghost others` (everything but the focused parts), `ghost none`.
+    private func ghost(_ c: SceneCommand) {
+        guard directsCamera else { return }
+        if c.names("none") {
+            for id in Array(ghosts.keys) { setGhost(id, opacity: nil, auto: false) }
+            return
+        }
+        let opacity = min(max(c.number("opacity", "alpha", "to") ?? 0.14, 0.03), 1)
+        var ids = resolve(c.targetIDs)
+        if c.names("others") || c.names("other") || c.names("rest") || c.names("all") {
+            let keep = ids.isEmpty ? focusIDs : ids
+            ids = solidPartIDs.filter { id in
+                !keep.contains { id == $0 || isDescendant(id, of: $0) || isDescendant($0, of: id) }
+            }
+        }
+        for id in ids { setGhost(id, opacity: opacity >= 0.999 ? nil : opacity, auto: false) }
+    }
+
+    private func setHidden(_ id: String, _ hidden: Bool) {
+        guard let node = nodes[id] else { return }
+        if hidden { hiddenIDs.insert(id) } else { hiddenIDs.remove(id) }
+        fade(node, to: hidden ? 0 : min(parts[id]?.opacity ?? 1, ghosts[id]?.opacity ?? 1))
+        labelBoxes = [:]
+        labelRowsDecidedFor = ""
+        fitCountdown = 0
+    }
+
+    /// `highlight id color=yellow`: a soft glow that breathes on the part being talked about.
+    /// It clears on the next `focus` or `frame`, or with `highlight none`.
+    private func highlight(_ c: SceneCommand) {
+        guard directsCamera else { return }
+        let ids = resolve(c.targetIDs)
+        if c.names("none") || ids.isEmpty {
+            clearHighlights()
+            return
+        }
+        let color = (c.color() ?? SceneColor(hex: 0xFFC53D)).with(alpha: 1).nsColor
+        for id in ids {
+            guard let node = nodes[id], highlights[id] == nil else { continue }
+            let materials = borrowEmission(of: node)
+            for material in materials { material.emission.contents = color }
+            highlights[id] = Highlight(materials: materials, start: now)
+        }
+        updateFlashes(now: now)
+    }
+
+    private func clearHighlights() {
+        guard !highlights.isEmpty else { return }
+        let all = highlights.values.flatMap(\.materials)
+        highlights = [:]
+        returnEmission(of: all)
+    }
+
+    /// Parts that glow right now.
+    var highlightedIDs: [String] { highlights.keys.sorted() }
+    /// Parts that are see-through right now.
+    var ghostedIDs: [String] { ghosts.keys.sorted() }
+    var hiddenPartIDs: [String] { hiddenIDs.sorted() }
+
+    // MARK: Detail on demand
+
+    private func detailSubject(_ id: String) -> SceneDetailSubject {
+        var subject = SceneDetailSubject(id: id, source: sources[id], macro: macroOf[id])
+        subject.parent = parts[id]?.parent
+        subject.children = order.compactMap { child in parts[child]?.parent == id ? sources[child] : nil }
+        if let geometry = nodes[id]?.geometry {
+            let (low, high) = geometry.boundingBox
+            subject.localSize = SceneVec3(simd_float3(high) - simd_float3(low))
+        }
+        return subject
+    }
+
+    /// `detail id`: a richer sub-assembly for the commonest ready-made parts. Anything else: nothing happens.
+    private func detail(_ c: SceneCommand) {
+        guard directsCamera else { return }
+        for id in resolve(c.targetIDs) where !detailed.contains(id) {
+            let commands = SceneDetail.commands(for: detailSubject(id))
+            guard !commands.isEmpty else { continue }
+            detailed.insert(id)
+            for var command in commands {
+                command.cue = c.cue
+                apply(command)
+            }
+        }
+    }
+
+    /// True when `detail id` has added its pieces.
+    func isDetailed(_ id: String) -> Bool { detailed.contains(id) }
+
+    // MARK: Many small pieces
+
+    /// Hundreds of identical unnamed pieces (a membrane's lipids) become one node: one draw per
+    /// colour instead of one per piece. They keep counting as parts, but cannot be addressed one by one.
+    private func mergeBulkPieces(under groupID: String) {
+        bulkGeometries = [:]
+        guard let group = nodes[groupID] else { return }
+        let pieces = group.childNodes.filter { child in
+            guard let name = child.name, let part = parts[name], child.childNodes.isEmpty, child.geometry != nil else { return false }
+            return part.label == nil && part.name == nil && labels[name] == nil && spins[name] == nil && beats[name] == nil
+                && child.physicsBody == nil && part.opacity >= 0.999
+        }
+        guard pieces.count >= 60 else { return }
+        let holder = SCNNode()
+        var low = simd_float3(repeating: .greatestFiniteMagnitude), high = simd_float3(repeating: -.greatestFiniteMagnitude)
+        for piece in pieces {
+            piece.removeAllActions()
+            piece.opacity = 1
+            if let geometry = piece.geometry {
+                let (minimum, maximum) = geometry.boundingBox
+                let a = simd_float3(minimum), b = simd_float3(maximum)
+                for corner in 0..<8 {
+                    let point = piece.simdTransform * simd_float4(corner & 1 == 0 ? a.x : b.x, corner & 2 == 0 ? a.y : b.y, corner & 4 == 0 ? a.z : b.z, 1)
+                    low = simd_min(low, simd_float3(point.x, point.y, point.z))
+                    high = simd_max(high, simd_float3(point.x, point.y, point.z))
+                }
+            }
+            holder.addChildNode(piece)
+        }
+        let merged = holder.flattenedClone()
+        let id = groupID + "._bulk"
+        merged.name = id
+        // The pieces shared their materials; the merged node gets its own so a glow or a ghost touches nothing else.
+        if let geometry = merged.geometry { geometry.materials = geometry.materials.map { $0.copy() as? SCNMaterial ?? $0 } }
+        for piece in pieces {
+            if let name = piece.name { nodes[name] = nil }
+        }
+        group.addChildNode(merged)
+        if !isHeadless {
+            merged.opacity = 0
+            merged.runAction(.fadeIn(duration: 0.28))
+        }
+        var part = ScenePart(id: id, shape: .group, color: .ink)
+        part.parent = groupID
+        part.isTappable = false
+        nodes[id] = merged
+        hasUnpreparedGeometry = true
+        bulkBoxes[id] = (low, high)
+        parts[id] = part
+        baseOrientation[id] = merged.simdOrientation
+    }
+
+    // MARK: The camera directing itself
+
+    /// Asks for an automatic move onto `ids` for sentence `sentence` (empty: back to the whole model).
+    /// The move happens when the calm-movement rules allow it; it is written as a `focus … auto` or
+    /// `frame all auto` line through `onDirectorCommand`, so it is recorded and replayed like any other.
+    /// `after`: seconds to hold the present view first (the opening sentence shows the whole model for a moment before going in).
+    func requestAutoFocus(_ ids: [String], sentence: Int?, wholeIfEmpty: Bool = true, after delay: Double = 0) {
+        guard directsCamera, commandOrigin != .replay else { return }
+        pendingAuto = PendingAuto(ids: ids, sentence: sentence, notBefore: now + max(delay, 0), expires: now + max(delay, 0) + 4, wholeIfEmpty: wholeIfEmpty)
+        processPendingAuto()
+    }
+
+    private func processPendingAuto() {
+        guard let pending = pendingAuto else { return }
+        if now > pending.expires || !hasFit || now < pending.notBefore - 1e-9 {
+            if now > pending.expires { pendingAuto = nil }
+            return
+        }
+        var ids = resolve(pending.ids).filter { !isEffectivelyHidden($0) }
+        var box = ids.isEmpty ? nil : bounds(ofParts: ids)
+        // Parts that are most of the model are the model.
+        if let found = box, found.radius > Double(fitRadius) * 0.9 { box = nil }
+        // So are parts that a focus would not bring noticeably closer than the whole-model view already is.
+        // (Unless they are hidden in that view: then going to them is what uncovers them.)
+        if let found = box, SceneFraming.distance(for: found, direction: SceneVec3(wholeDirection), lens: lens, fill: SceneZoom.medium.fill) > Double(targetDistance) * 0.92 {
+            let view = wholePose
+            if sightBlockage(from: view.position, to: found, targets: ids, direction: view.direction).amount < 0.45 { box = nil }
+        }
+        let named = ids.first
+        if ProcessInfo.processInfo.environment["TEACHY_SCENE_DEBUG"] != nil {
+            print("🎥 sentence \(pending.sentence.map(String.init) ?? "-") asked for \(pending.ids) → \(ids) \(box == nil ? "(the whole model)" : "")")
+        }
+        if box == nil { ids = [] }
+        let whole = ids.isEmpty
+        if whole, !pending.wholeIfEmpty {
+            pendingAuto = nil
+            return
+        }
+        let headed = cameraMove?.to ?? pose
+        let framed: Bool
+        if whole {
+            framed = (cameraMove?.then ?? cameraMode) == .whole
+        } else if let box {
+            // In view at a sensible size, and not hidden behind something.
+            framed = focusIDs == ids || (SceneFraming.isWellFramed(box, pose: headed, lens: lens, zoom: .medium)
+                && sightBlockage(from: headed.position, to: box, targets: ids, direction: headed.direction).amount < 0.45)
+        } else {
+            framed = true
+        }
+        switch policy.decide(now: now, sentence: pending.sentence, alreadyFramed: framed, paused: gesturePause.isPaused(now: now)) {
+        case .move:
+            pendingAuto = nil
+            emitDirector(whole ? "frame all auto" : "focus \(ids.joined(separator: ",")) zoom=medium auto", cue: pending.sentence, origin: .narration)
+        case .wait:
+            break
+        case .skipFramed:
+            pendingAuto = nil
+            // Already in view: a blink on the part says "this one" without moving.
+            if focusIDs != ids || whole, let named, bounds(ofParts: [named]).map({ $0.radius < Double(fitRadius) * 0.9 }) ?? false {
+                emitDirector("pulse \(named) times=2 auto", cue: pending.sentence, origin: .narration)
+            }
+        case .skipSentence, .skipPaused:
+            pendingAuto = nil
+        }
+    }
+
+    private func emitDirector(_ line: String, cue: Int? = nil, origin: CommandOrigin) {
+        guard var command = SceneScriptParser.parse(line).first else { return }
+        command.cue = cue
+        let previous = commandOrigin
+        if previous != .replay { commandOrigin = origin }
+        if let onDirectorCommand { onDirectorCommand(command) } else { apply(command) }
+        commandOrigin = previous
+    }
+
+    /// Recenter (the button, or Escape): the whole model again, and the camera directs itself again.
+    func recenter() {
+        gesturePause.resume()
+        emitDirector("frame all", origin: .person)
+    }
+
+    // MARK: The person's hands on the camera
+
+    /// The camera is the person's from now on: whatever move was running stops where it is.
+    private func takeCamera() {
+        guard cameraMode != .user || cameraMove != nil else { return }
+        pose.azimuth = displayedAzimuth
+        swayAmount = 0
+        cameraMove = nil
+        cameraMode = .user
+        pendingAuto = nil
+        publishCameraState()
+    }
+
+    private func userBeganDrag() {
+        gesturePause.began(now: now)
+        takeCamera()
+    }
+
+    private func userEndedDrag() {
+        gesturePause.ended(now: now)
+    }
+
+    /// Drag: turn the model. Points of mouse travel.
+    private func userOrbit(dx: CGFloat, dy: CGFloat) {
+        takeCamera()
+        gesturePause.touched(now: now)
+        pose = SceneFraming.turn(pose, azimuth: -Double(dx) * 0.008, elevation: -Double(dy) * 0.008)
+        placeCamera()
+    }
+
+    private var zoomLimits: SceneFraming.ZoomLimits {
+        SceneFraming.zoomLimits(model: modelBox, wholeDistance: Double(targetDistance), pose: pose, lens: lens, surfaceAhead: nil)
+    }
+
+    /// Option-drag, right-drag or two fingers: slide the model with the hand.
+    private func userPan(dx: CGFloat, dy: CGFloat) {
+        takeCamera()
+        gesturePause.touched(now: now)
+        let size = viewportSize ?? view.bounds.size
+        let delta = SceneVec2(Double(dx) / max(Double(size.width) / 2, 1), Double(dy) / max(Double(size.height) / 2, 1))
+        pose = SceneFraming.pan(pose, by: delta, lens: lens, limits: zoomLimits)
+        placeCamera()
+    }
+
+    /// Wheel or pinch: zoom toward the point under the cursor, never through the model and never out of sight of it.
+    private func userZoom(by factor: CGFloat, at point: CGPoint) {
+        takeCamera()
+        gesturePause.touched(now: now)
+        let size = viewportSize ?? view.bounds.size
+        let cursor = SceneVec2((Double(point.x) - Double(size.width) / 2) / max(Double(size.width) / 2, 1),
+                               (Double(point.y) - Double(size.height) / 2) / max(Double(size.height) / 2, 1))
+        var surfaceAhead: Double?
+        if factor > 1 {
+            // The first solid thing between the camera and what it looks at.
+            prepareForHitTesting()
+            let eye = simd_float3(pose.position)
+            let hits = contentRoot.hitTestWithSegment(from: SCNVector3(eye), to: SCNVector3(simd_float3(pose.center)),
+                                                      options: [SCNHitTestOption.backFaceCulling.rawValue: false,
+                                                                SCNHitTestOption.searchMode.rawValue: SCNHitTestSearchMode.all.rawValue])
+            for hit in hits {
+                guard let id = partID(owning: hit.node), effectiveOpacity(id) >= 0.5 else { continue }
+                let distance = Double(simd_length(simd_float3(hit.worldCoordinates) - eye))
+                surfaceAhead = min(surfaceAhead ?? distance, distance)
+            }
+        }
+        let limits = SceneFraming.zoomLimits(model: modelBox, wholeDistance: Double(targetDistance), pose: pose, lens: lens, surfaceAhead: surfaceAhead)
+        pose = SceneFraming.zoom(pose, by: Double(factor), toward: cursor, lens: lens, limits: limits)
+        placeCamera()
+    }
+
+    // MARK: Describing and measuring the view
+
+    /// The model on screen in words, for a refine request.
+    var liveState: SceneLiveState {
+        var state = SceneLiveState(title: model.title.isEmpty ? nil : model.title)
+        let candidates = subjectCandidates
+        var boxes: [(id: String, box: SceneBox)] = []
+        for candidate in candidates {
+            if let box = bounds(ofParts: [candidate.id]) { boxes.append((candidate.id, box)) }
+        }
+        // Shells that can hide things: parts with a shape of their own.
+        let shells = boxes.filter { nodes[$0.id]?.geometry != nil }
+        func colour(of id: String) -> String? {
+            guard let part = parts[id] else { return nil }
+            if case .group = part.shape {
+                // A ready-made part is the colour of its biggest piece.
+                let child = order.first { parts[$0]?.parent == id && nodes[$0]?.geometry != nil && !$0.hasSuffix(".hub") }
+                return child.flatMap { parts[$0]?.color.nearestName }
+            }
+            return part.color.nearestName
+        }
+        let labelled = candidates.filter { $0.label != nil }, others = candidates.filter { $0.label == nil }
+        for candidate in labelled + others {
+            let id = candidate.id
+            var part = SceneLivePart(id: id, title: candidate.label ?? candidate.name, colour: colour(of: id))
+            if let box = boxes.first(where: { $0.id == id })?.box {
+                part.inside = SceneContainment.containers(of: id, subject: box, among: shells).first { !isDescendant(id, of: $0) && !isDescendant($0, of: id) }
+            }
+            part.isGhosted = ghosts[id] != nil
+            part.isHidden = hiddenIDs.contains(id)
+            part.canDetail = !detailed.contains(id) && SceneDetail.kind(of: detailSubject(id)) != nil
+            state.parts.append(part)
+        }
+        state.focus = focusIDs
+        state.isExploded = explodedOffsets.values.contains { simd_length($0) > 1e-4 }
+        return state
+    }
+
+    /// Where the given parts land in the picture right now, measured with the real camera node.
+    func projectedBounds(ofParts ids: [String]) -> SceneProjection? {
+        guard let box = bounds(ofParts: resolve(ids)) else { return nil }
+        let lens = self.lens
+        var low = SceneVec2(repeating: .greatestFiniteMagnitude), high = SceneVec2(repeating: -.greatestFiniteMagnitude)
+        var behind = false
+        for corner in box.corners {
+            let local = cameraNode.simdConvertPosition(simd_float3(corner), from: nil)
+            let depth = Double(-local.z)
+            if depth <= 1e-6 { behind = true }
+            let safe = max(depth, 1e-9)
+            let ndc = SceneVec2(Double(local.x) / (safe * lens.tanHorizontal), Double(local.y) / (safe * lens.tanVertical))
+            low = simd_min(low, ndc)
+            high = simd_max(high, ndc)
+        }
+        let widthShare = (high.x - low.x) / 2 * (lens.aspect >= 1 ? lens.aspect : 1)
+        let heightShare = (high.y - low.y) / 2 * (lens.aspect >= 1 ? 1 : 1 / lens.aspect)
+        return SceneProjection(low: low, high: high, behindCamera: behind, fill: max(widthShare, heightShare))
+    }
+
+    /// The world-space box round the given parts right now.
+    func boundingBox(ofParts ids: [String]) -> SceneBox? { bounds(ofParts: resolve(ids)) }
+
+    /// How hidden the given parts are from the camera right now (0 clear … 1 hidden).
+    func occlusion(ofParts ids: [String]) -> Double {
+        let resolved = resolve(ids)
+        guard let box = bounds(ofParts: resolved) else { return 0 }
+        let shown = displayedPose
+        return sightBlockage(from: shown.position, to: box, targets: resolved, direction: shown.direction).amount
+    }
+
+    /// Label chips that are showing, and where each is in the picture (−1…1), for checking they stay in view.
+    var visibleLabels: [(part: String, ndc: SceneVec2)] {
+        let lens = self.lens
+        return labels.values.filter { !$0.chip.isHidden }.sorted { $0.index < $1.index }.map { label in
+            let local = cameraNode.simdConvertPosition(label.chip.simdWorldPosition, from: nil)
+            let depth = max(Double(-local.z), 1e-9)
+            return (label.partID, SceneVec2(Double(local.x) / (depth * lens.tanHorizontal), Double(local.y) / (depth * lens.tanVertical)))
+        }
+    }
+
+    /// The distance from the camera to the nearest solid surface straight ahead, as a share of the model's radius.
+    /// Near zero means the camera is inside or against geometry.
+    var clearanceAhead: Double {
+        let shown = displayedPose
+        let eye = simd_float3(shown.position)
+        prepareForHitTesting()
+        let hits = contentRoot.hitTestWithSegment(from: SCNVector3(eye), to: SCNVector3(simd_float3(shown.center)),
+                                                  options: [SCNHitTestOption.backFaceCulling.rawValue: false,
+                                                            SCNHitTestOption.searchMode.rawValue: SCNHitTestSearchMode.all.rawValue])
+        var nearest = shown.distance
+        for hit in hits {
+            guard let id = partID(owning: hit.node), effectiveOpacity(id) >= 0.5 else { continue }
+            nearest = min(nearest, Double(simd_length(simd_float3(hit.worldCoordinates) - eye)))
+        }
+        return nearest / Double(max(fitRadius, 0.05))
+    }
+
+    /// The model's radius (for scaling test thresholds).
+    var modelRadius: Double { Double(fitRadius) }
 
     /// Renders the scene off-screen at twice the view's size.
     func snapshot() -> NSImage {

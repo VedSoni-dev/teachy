@@ -13,6 +13,8 @@ swiftc -O -parse-as-library \
   leanring-buddy/Scene/SceneMacros.swift \
   leanring-buddy/Scene/SceneReplayLog.swift \
   leanring-buddy/Scene/SceneScriptPrompt.swift \
+  leanring-buddy/Scene/SceneCamera.swift \
+  leanring-buddy/Scene/SceneRefine.swift \
   scripts/tests/scene_tests.swift \
   -o "$OUT/scene_tests"
 "$OUT/scene_tests"

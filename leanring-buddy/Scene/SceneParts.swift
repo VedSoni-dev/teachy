@@ -934,6 +934,8 @@ enum SceneRouter {
             return current == .scene3d && c.args["at"] != nil ? .scene3d : .card
         case .slider, .plot:
             return .scene3d
+        case .highlight where c.isPartHighlight:
+            return .scene3d
         default:
             switch c.verb.family {
             case .overlay: return .overlay

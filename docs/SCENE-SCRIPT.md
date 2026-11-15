@@ -4,7 +4,8 @@ Teachy's drawing engine does not ask the model for code or JSON. The model strea
 
 - Compact prompts the model sees: `leanring-buddy/Scene/SceneScriptPrompt.swift` (`system` for explaining a thing, `annotateSystem` for marking up the screen)
 - Parser: `SceneScriptParser.swift`. Part library: `SceneParts.swift`. Whole objects: `SceneMacros.swift`. Maths: `SceneGeometry.swift`. Label chips: `SceneLabelLayout.swift`
-- Voice turn to drawing: `Core/SceneDirector.swift` (`show`, `annotate`, `stop`)
+- The camera that directs itself: `SceneCamera.swift` (framing maths, calm-movement rules, which parts a sentence is about) and `SceneRefine.swift` (refine or redraw, the refine prompt, `detail`), both pure
+- Voice turn to drawing: `Core/SceneDirector.swift` (`show`, `refine`, `annotate`, `stop`)
 - Try it without a model: `TEACHY_SCENE_DEMO=turbofan Teachy.app/Contents/MacOS/Teachy` (samples: turbofan, dna, gears, pendulum, card, overlay, piston, solar, bounce, board, spring). `TEACHY_SCENE_DEMO_SCRIPT=/path/file` shows any script file.
 
 ## Line format
@@ -82,7 +83,7 @@ Lines go to the most recent `card`. A second `card` with a new id opens a second
 
 ### 3D model (a transparent window you can turn)
 
-`scene3d id title="…"` opens it. Y is up. Units are whatever the script likes: the camera fits the model. The model sways gently until the person drags it. Clicking a part calls `onPartTapped(id, label)`.
+`scene3d id title="…"` opens it. Y is up. Units are whatever the script likes: the camera fits the model, then follows the narration (see "The camera" below). Clicking a part calls `onPartTapped(id, label)`; double-clicking one puts the camera on it.
 
 Shapes:
 
@@ -148,8 +149,57 @@ spin partId rpm= axis=            move partId to=x,y,z dur=2 loop     (or by=)
 pulse partId                      explode [groupId] axis=x dist=1     (dist=0 puts it back)
 beat partId bpm=60 amount=0.08    (a quick squeeze, then rest: a heart, a pulsing cell)
 orbit partId around=otherId r= period= tilt=
-camera to=x,y,z look=x,y,z dur=   hide id / show id / remove id / clear
+camera to=x,y,z look=x,y,z dur=   remove id / clear
 ```
+
+### The camera
+
+```
+focus id[,id…] zoom=tight|medium|wide dur=     ease onto those parts (their combined box, with room round it)
+frame all                                       back to the whole model (frame id… is a wide focus)
+orbit id deg=120 dur=4                          a slow arc round a part (orbit all: round the model)
+ghost id id… opacity=0.14 / ghost others / ghost none      see-through, to show what is inside (alias: cutaway)
+hide id id… / show id id… / show all            show all also undoes every ghost
+highlight id color=yellow / highlight none      a soft glow that breathes; cleared by the next focus or frame
+detail id                                       a richer sub-assembly with its own labels (see below)
+```
+
+`zoom` is the share of the picture's shorter side the parts fill: tight 66%, medium 50%, wide 34%. `orbit` with `around=`, `period=` or `r=` is still a planet's orbit; `highlight` with `from=`/`to=` is still a swipe on the screen.
+
+**Where it looks from.** A focus keeps the opening 3/4 view when the part can be seen from there. Otherwise it tries a handful of other sides (a little left and right, higher, further round) and takes the clearest, asking SceneKit what a few lines of sight to the part really hit (so a cutaway counts as open and a shell as closed). A flat part is not shown edge on. If the part is hidden from every side, what stands in front of it is ghosted until the camera moves on.
+
+**It follows the narration.** When a sentence starts and none of its own lines moves the camera, the engine works out what the sentence is about: the parts its lines label, else the parts they pulse, spin, move or highlight, else the one or two parts they create, else the parts whose label, name or id words are in the sentence (`SceneSubjectMatcher`: case and plurals ignored, the longest label wins, little and general words pick nothing). It then eases onto them at medium zoom. Rules:
+
+| Rule | Value |
+|---|---|
+| Ease in, ease out | every move; 0.85–1.8 s depending on how far |
+| Dwell | a move starts no sooner than 1.2 s after the one before (`SceneCameraPolicy.minimumDwell`) |
+| One move per sentence | always |
+| Already in view | a subject that is all in the picture, about the right size and not hidden gets a blink instead of a move |
+| Opening sentence | shows the whole model for 1.3 s; if it has 8 or more words and singles out a part, the camera then goes in on it |
+| No subject | eases back to the whole model |
+| End of the narration | the whole model. A `frame all` on a last sentence that labels a part of its own is kept for the end, so the part is shown while it is talked about |
+| The person is steering | nothing moves the camera until they have been idle 5 s (`gesturePause.idleResume`); never during a gesture |
+
+Lines the engine writes itself (`focus … auto`, `frame all auto`, `pulse … auto`, a double-click's `focus`, Recenter's `frame all`) go into the log like any other, so a replay or a saved video repeats them without working anything out again. `SceneSession.directsCamera = false` switches all of this off (the camera then only frames the whole model, as it used to).
+
+**The person's hands.** Drag turns the model; option-drag, right-drag or two fingers on a trackpad slide it; the mouse wheel, a pinch, or Command with two fingers zooms toward the cursor; double-click a part to focus it; double-click empty space, Escape or the Recenter button (shown whenever the view is not the default) goes back to the whole model and lets the camera direct itself again. Zoom stops short of the first solid surface ahead and at three times the whole-model distance, and the model cannot be slid out of the picture. A single click on a part is reported after the double-click wait (at most 0.3 s).
+
+**Labels when zoomed.** Chips are laid out toward the edges of the picture and keep the same size at every zoom. A chip is hidden when its part is hidden, ghosted or out of the picture; the focused part always keeps its own.
+
+**`detail id`** adds finer pieces and names them. It does something for: a `fan` (splitter blades, blade roots, shaft), a group of fan stages such as a jet's `compressor` or `turbine` (still stator vanes between the stages, rotor blades, disc, shaft), a `gear` (hub, axle, key, pitch circle), a `piston` (rings, wrist pin, every piece named), a `wheel` (brake disc, caliper, nuts), a board `comp` (legs, pin 1), a heart chamber (its valve) and `dna` (backbone and base pair named). On anything else it does nothing.
+
+**Big scenes.** Hundreds of identical unnamed pieces made by one whole-object line (a membrane's lipids) share low-detail geometry and are merged into one node (`<id>._bulk`), one draw per colour. Past `Scene3DController.maximumNodes` (3200), small unnamed pieces stop being added; named parts always are.
+
+### Refining instead of redrawing
+
+When a 3D model is up and `SceneDirector.show(_:)` gets a request about it, nothing is drawn again. `SceneRefineClassifier` (pure) decides: camera words ("zoom", "inside", "rotate", "explode", "go back"…), a part asked about by colour, a part of the model named, or a short request about "it" refine; a request to draw something, "instead", or a thing this model does not have is a new drawing; when nothing ties the request to the model, a new drawing. `SceneDirector.refine` then
+
+1. moves the camera at once when the request says plainly where to look (`SceneRefineClassifier.instantScript`: the named part, or the whole model for "go back"),
+2. sends the model `SceneRefinePrompt.system` with the scene in words (`Scene3DController.liveState`: each part's id, name, colour, what it sits inside, whether `detail` has something to add, what is ghosted or hidden, where the camera is, whether it is exploded),
+3. applies the answer to the live scene through `SceneSession.beginRefinement`. Only camera, visibility, label, motion and `say` lines and a few small shapes are let through (`SceneRefinePrompt.allows`); anything that would rebuild the model is dropped. The lines are added to the same log.
+
+A tap on a part is a refinement too: the camera goes to the part and highlights it at once, and the model says one or two sentences about it. (Before, a tap went out through `onFollowUpQuestion` and the drawing was drawn again. Follow-up chips still go out that way.) `SceneDirector.refinesInPlace = false` restores the old behaviour.
 
 Scripted speeds above 240 rpm (150 for pistons) are capped so the motion can be seen.
 
@@ -224,6 +274,7 @@ scene.speechEnded()
 
 ## Replay, video and history
 
+- **Camera in replays.** Camera moves, ghosting, hiding, highlights and `detail` are ordinary log lines, so `replay()` and the video exporter reproduce them; the automatic ones were written into the log when they happened. The camera's own gestures by hand (drag, wheel, pinch) are not recorded; a double-click and Recenter are.
 - **Video.** `scene.exportMP4(to:)` (or `SceneVideoExporter.export(log:narration:to:options:)`) writes an H.264 MP4, 1920×1080 at 30 fps by default. Nothing is captured from the screen: the log is played into a headless scene (`SceneAnchor.headless`) and each frame is drawn in-process, the 3D model by an `SCNRenderer` whose clock is the frame number, cards and controls by `ImageRenderer`, marks by `SceneOverlayView` with a frozen clock. The same log gives the same video. Measured on this Mac (14 Nov 2026): 2.2 s of 1080p video of a labelled turbofan with a card rendered in 1.0 s.
 - **Voice in the video.** The exporter muxes an AAC track when the session was given the narration: `SceneDirector.shared.appendNarrationAudio(pcm16, sampleRate:)` (mono 16-bit PCM, as the realtime voice produces it). Chunks are laid on the scene's clock where they arrive. Nothing in the app forwards that audio yet, so videos are silent until the voice does.
 - **History.** Each finished `show` drawing is saved to `~/.teachy/drawings/<yyyy-MM-dd>-<id>/`: `meta.json` (title, question, date, length), `scene.json` (the log), `thumb.png`, `narration.pcm` when there is a voice, and `video.mp4` the first time it is exported. The newest 200 are kept. `SceneHistory.shared.entries`, `replay(id)`, `export(id) async throws -> URL`, `delete(id)`. `SceneHistoryStore` is the plain file half.
@@ -233,6 +284,7 @@ scene.speechEnded()
 
 - `scripts/tests/run_scene_tests.sh`: parser, fuzzing, geometry, part library, scheduler, replay log.
 - `scripts/tests/run_scene2_tests.sh`: whole-object macros, label layout, explode and label-number fixes, narration sequencing, screenshot coordinates, narration audio, summaries, quality score, photo picking, history store (pure); then, in-process with windows off every display: speech-synced building and barge-in on a live session, real mouse events into the 3D view and a slider, MP4 export, history and the Drawings card, photos. `--network` also fetches real photos.
-- `scripts/eval/run_scene_eval.sh`: twenty prompts through `TeachyAIRouter`, one call each, with latency and a crude quality score (`SceneQuality`: parse rate, part count, uses-macros, label count, bounding-box sanity). `--score DIR` scores saved answers again without model calls. Answers are saved so they can be opened with `TEACHY_SCENE_DEMO_SCRIPT`.
+- `scripts/tests/run_scene3_tests.sh`: the self-directing camera. Pure: subject matcher, refine classifier, framing maths, choice of side with made-up occluders, dwell and skip rules, the gesture pause on an injected clock, the new verbs, `detail`, log round trip. In-process: focus, orbit, ghost, highlight and detail on a real model off screen; the camera following a narration; refining in place; a recorded scene replayed frame for frame and exported; real NSEvents (drag, option-drag, wheel, trackpad scroll, pinch, double-click, click, Escape) into a window placed off every display; merged pieces and the node budget. `--perf FILE…` prints frame times.
+- `scripts/eval/run_scene_eval.sh`: twelve prompts through `TeachyAIRouter`, one call each, with latency and a crude quality score (`SceneQuality`), then what the camera does with each answer (played off screen with a stand-in voice: is the camera on the sentence's part, is the part fully in view at 20–75% of the shorter side, is it hidden, are the labels in the picture), then six refine cases through `SceneDirector` with their latency. `--score DIR` measures saved answers again without model calls, `--no-direct` with the camera as it used to be, `--shots a,b` writes a picture per sentence to `$TMPDIR/teachy-scene3/shots/<scene>/NN.png`.
 - `scripts/eval/run_annotate_eval.sh`: ten made-up screenshots with a known target each; a hit is the model's first mark landing on the target.
 - `scripts/tests/scene2/render/main.swift`: renders script files to PNG without the app.

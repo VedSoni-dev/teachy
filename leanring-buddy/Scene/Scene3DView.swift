@@ -80,6 +80,36 @@ enum Scene3DAssets {
         return geometry
     }
 
+    /// Geometry for one of hundreds of identical small pieces (a membrane's lipids): few segments,
+    /// and one object shared by every piece of the same shape and colour, so they can be merged
+    /// into a single draw. `cache` lives for one build.
+    static func bulkGeometry(for part: ScenePart, cache: inout [String: SCNGeometry]) -> SCNGeometry? {
+        let shapeKey: String
+        switch part.shape {
+        case .sphere(let radius): shapeKey = "s|\(radius)"
+        case .cylinder(let radius, let height): shapeKey = "c|\(radius)|\(height)"
+        default: return geometry(for: part)
+        }
+        let key = shapeKey + "|\(part.color.r),\(part.color.g),\(part.color.b)|\(part.opacity)|\(part.material.rawValue)"
+        if let cached = cache[key] { return cached }
+        let geometry: SCNGeometry
+        switch part.shape {
+        case .sphere(let radius):
+            let sphere = SCNSphere(radius: radius)
+            sphere.segmentCount = 14
+            geometry = sphere
+        case .cylinder(let radius, let height):
+            let cylinder = SCNCylinder(radius: radius, height: height)
+            cylinder.radialSegmentCount = 8
+            geometry = cylinder
+        default:
+            return self.geometry(for: part)
+        }
+        geometry.materials = [material(color: part.color, opacity: part.opacity, kind: part.material)]
+        cache[key] = geometry
+        return geometry
+    }
+
     static func geometry(from mesh: SceneMesh) -> SCNGeometry? {
         guard !mesh.positions.isEmpty, !mesh.indices.isEmpty else { return nil }
         let vertices = SCNGeometrySource(vertices: mesh.positions.map { SCNVector3($0) })
@@ -259,6 +289,25 @@ struct Scene3DView: View {
                             .overlay(SceneWindowDragHandle())
                     }
                     Spacer()
+                    if model.canRecenter {
+                        // The view is zoomed on a part or was turned by hand: one click back to the whole model.
+                        Button(action: { controller.recenter() }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "scope")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text("Recenter")
+                                    .font(SceneStyle.body(12))
+                            }
+                            .foregroundColor(SceneStyle.ink.opacity(0.8))
+                            .padding(.horizontal, 9)
+                            .frame(height: 22)
+                            .background(Capsule().fill(SceneStyle.paper.opacity(0.92)))
+                            .overlay(Capsule().stroke(SceneStyle.ink.opacity(0.45), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Show the whole model again (Esc)")
+                        .transition(.opacity)
+                    }
                     Button(action: onClose) {
                         Image(systemName: "xmark")
                             .font(.system(size: 10, weight: .bold))

@@ -34,7 +34,8 @@ enum SceneScriptPrompt {
     Ready-made parts: gear id teeth= r= / gear id teeth= mesh=otherGear angle=deg (placed and coupled for you) / chain id a=gearA b=gearB / fan id blades= r= axis= rpm= / helix id turns= r= h= / spring id from= to= coils= / piston id bore= stroke= rpm= / wheel id r= spokes= axis= / flow id pts=x,y,z;x,y,z color=sky (arrows moving along a path) / board id size=w,d then comp id on=boardId at=x,z size=w,d label="USB port" (ports, chips and pin headers are styled from the name) / axes id
     Shapes, for everything else: box id at=x,y,z size=w,h,d / sphere id r= / cyl id r= h= axis=x|y|z (or from=x,y,z to=x,y,z) / cone id r= r2= h= / torus id r= r2= / capsule id r= h= / tube id pts=x,y,z;x,y,z r= smooth / lathe id pts=r,y;r,y;r,y axis=x sweep=250 (a profile spun round the axis; sweep under 360 is a cutaway) / extrude id pts=x,y;x,y;x,y depth= / arrow3 id from= to= / text3 id at= text="…" / group id
     Any part takes: at= rot=x,y,z color= opacity= parent=id rpm= label="Name" n=1. Label the 3-6 parts that matter and number them with n= in the order you explain them.
-    Motion (the id is the part that moves; rpm 5-120): spin partId rpm= axis= / move partId to=x,y,z dur=2 loop / pulse partId / beat partId bpm= / explode [objId] axis=y dist=1 / orbit partId around=otherId period= / camera to=x,y,z look=x,y,z
+    Motion (the id is the part that moves; rpm 5-120): spin partId rpm= axis= / move partId to=x,y,z dur=2 loop / pulse partId / beat partId bpm= / explode [objId] axis=y dist=1 / orbit partId around=otherId period=
+    Camera: it frames the whole model, then moves by itself to the part each sentence labels or names, so usually write nothing. To direct it: focus partId[,partId] zoom=tight|medium|wide / frame all / orbit partId deg=120 / ghost partId (see-through, to show what is inside; ghost others) / show all / highlight partId. For a question about ONE part of a bigger thing, build the whole thing, put focus thatPart right after it, keep the sentences on that part, and end with frame all.
     Simulation: gravity g=9.8 / ground / fixed id at= / body id shape=sphere|box r= mass= at= vel=x,y,z / joint ball id a=fixedId b=bodyId / spring id a=id b=id k= / slider id min= max= value= label="…" bind=gravity (or jointId.length, bodyId.mass, partId.rpm, orbitId.period) / plot id of=bodyId.angle label="…" (also .x .y .speed)
 
     End with 2-3 chip "follow-up question" lines.
@@ -53,6 +54,18 @@ enum SceneScriptPrompt {
     label e on=j.nozzle text="Nozzle" n=5
     chip "Why is the fan so big?"
     chip "What does the turbine do?"
+
+    Example:
+    say 1 "The turbine sits at the back of a jet engine."
+    scene3d t title="A jet engine's turbine"
+    jet j
+    focus j.turbine
+    label a on=j.turbine text="Turbine" n=1
+    say 2 "Hot gas rushes through its blades and spins them."
+    highlight j.turbine
+    say 3 "The shaft carries that spin forward to the fan."
+    frame all
+    label b on=j.fan text="Fan" n=2
 
     Example:
     say 1 "A pendulum swings because gravity pulls the bob back to the middle."
@@ -111,7 +124,7 @@ enum SceneScriptPrompt {
     }
 
     static let followUpPreamble = """
-    (Earlier in this conversation you drew the scene summarised below. If the next request builds on it — "show it in 3D", "what does that part do", "zoom in on…" — draw the same subject again with the same object and piece names, going deeper on what is asked. If it is about something else, ignore this.)
+    (Earlier in this conversation you drew the scene summarised below. If the next request builds on it — "show it in 3D", "compare it with…", "now with the cover off" — draw the same subject again with the same object and piece names, going deeper on what is asked. If it is about something else, ignore this.)
 
     """
 

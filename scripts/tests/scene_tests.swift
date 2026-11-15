@@ -164,13 +164,13 @@ enum SceneTests {
         }
 
         section("prompt examples parse completely") {
-            expect(SceneScriptPrompt.examples.count == 4, "four examples in the prompts (\(SceneScriptPrompt.examples.count))")
+            expect(SceneScriptPrompt.examples.count == 5, "five examples in the prompts (\(SceneScriptPrompt.examples.count))")
             for example in SceneScriptPrompt.examples {
                 let parser = SceneScriptParser()
                 _ = parser.feed(example) + parser.finish()
                 expect(parser.stats.parseRate == 1, "example parses 100%: \(parser.rejections)")
             }
-            expect(SceneScriptPrompt.system.count < 5_600, "prompt stays compact (\(SceneScriptPrompt.system.count) chars)")
+            expect(SceneScriptPrompt.system.count < 6_000, "prompt stays compact (\(SceneScriptPrompt.system.count) chars)")
         }
 
         section("fuzz: garbage and truncation never crash, good lines survive") {

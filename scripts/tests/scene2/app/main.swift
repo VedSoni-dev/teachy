@@ -197,6 +197,9 @@ func mouse() async {
         }
         let controller = window.controller
         let view = controller.view
+        // A click now waits a moment to see whether it is half of a double-click (which focuses the
+        // part instead of asking about it). These checks look at plain clicks, so the wait is turned off.
+        view.tapDelay = 0
         // The window is off every display, so SceneKit never draws it and the parts' fade-in never
         // runs (a part at opacity 0 cannot be hit). Drawing a few frames in-process runs it.
         let pump = SCNRenderer(device: nil, options: nil)

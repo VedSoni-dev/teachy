@@ -45,6 +45,11 @@ struct SceneCueScheduler {
     var isEmpty: Bool { queue.isEmpty }
     var pendingCount: Int { queue.count }
 
+    /// True while a line of sentence `cue` is still waiting to be drawn.
+    func hasPending(cue: Int) -> Bool {
+        queue.contains { $0.command.cue == cue && $0.command.verb != .say }
+    }
+
     mutating func enqueue(_ command: SceneCommand, now: Double) {
         queue.append((command, now))
     }

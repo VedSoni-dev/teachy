@@ -32,6 +32,8 @@ enum SceneVerb: String, CaseIterable, Codable {
     case jet, engine, rocket, bridge, heart, eye, motor, battery, membrane, protein, planet, pendulum, chain, pins
     // motion
     case spin, move, pulse, explode, camera, orbit, beat
+    // the camera directing itself, and what it shows (3D)
+    case focus, frame, ghost, detail
     // simulation
     case body, fixed, ground, joint, force, impulse, gravity, mesh, slider, plot
 
@@ -50,7 +52,9 @@ enum SceneVerb: String, CaseIterable, Codable {
         "arrow3d": .arrow3, "text3d": .text3, "label3": .text3,
         "blades": .fan, "rotor": .fan, "propeller": .fan, "coil": .spring,
         "component": .comp, "part": .comp, "pcb": .board, "plate": .board, "axis": .axes,
-        "rotate": .spin, "animate": .move, "translate": .move, "blink": .pulse, "cutaway": .explode,
+        "rotate": .spin, "animate": .move, "translate": .move, "blink": .pulse,
+        "cutaway": .ghost, "xray": .ghost, "fade": .ghost, "transparent": .ghost, "zoom": .focus, "lookat": .focus, "zoomin": .focus,
+        "reframe": .frame, "fit": .frame, "zoomout": .frame, "recenter": .frame, "expand": .detail, "unhide": .show, "glow": .highlight,
         "cam": .camera, "couple": .mesh, "coupling": .mesh, "floor": .ground,
         "delete": .remove, "anchor": .fixed, "push": .impulse,
         "turbofan": .jet, "jetengine": .jet, "turbojet": .jet, "suspensionbridge": .bridge,
@@ -236,6 +240,51 @@ struct SceneCommand: Equatable, Codable {
         return [source]
     }
 
+    /// Words that are options of a camera or visibility verb, never part ids.
+    static let targetKeywords: Set<String> = ["all", "others", "other", "everything", "rest", "none", "tight", "medium", "wide", "auto", "hold", "reset", "model", "whole"]
+
+    /// The part ids a camera or visibility verb names: `focus a,b`, `ghost a b c`, `hide a, b`.
+    var targetIDs: [String] {
+        var raw: [String] = hasExplicitID ? [id] : []
+        raw += words.filter { !$0.quoted }.map(\.text)
+        if let named = string("on", "ids", "parts", "target", "part") { raw.append(named) }
+        var seen: Set<String> = []
+        return raw.flatMap { $0.split(separator: ",") }.map(String.init)
+            .filter { !$0.isEmpty && !Self.targetKeywords.contains($0.lowercased()) && seen.insert($0).inserted }
+    }
+
+    /// True for the bare word (or id) `word`: `frame all`, `ghost others`.
+    func names(_ word: String) -> Bool {
+        (hasExplicitID && id.lowercased() == word) || words.contains { !$0.quoted && $0.text.lowercased() == word } || args[word] != nil
+    }
+
+    /// `orbit turbine deg=120` swings the camera round a part; `orbit earth around=sun period=8` is a planet.
+    var isCameraOrbit: Bool {
+        guard verb == .orbit else { return false }
+        if args["deg"] != nil || args["degrees"] != nil { return true }
+        return ["around", "about", "center", "period", "r", "tilt", "phase", "part", "body", "of"].allSatisfy { args[$0] == nil }
+    }
+
+    /// A 3D `highlight partId` (glow), as opposed to the on-screen `highlight from=x,y to=x,y`.
+    var isPartHighlight: Bool {
+        verb == .highlight && args["from"] == nil && args["to"] == nil && args["at"] == nil && args["box"] == nil
+    }
+
+    /// Verbs that move the 3D camera.
+    var movesCamera: Bool {
+        switch verb {
+        case .focus, .frame, .camera: return true
+        case .orbit: return isCameraOrbit
+        default: return false
+        }
+    }
+
+    /// Verbs that only change how the model that is already there is shown.
+    var directsView: Bool {
+        if movesCamera || isPartHighlight { return true }
+        return verb == .ghost || verb == .detail
+    }
+
     /// Canonical one-line form, so a recorded scene can be saved as plain script.
     var scriptLine: String {
         var parts: [String] = []
@@ -388,6 +437,19 @@ struct SceneColor: Equatable, Codable {
             return base.mixed(with: SceneColor(1, 1, 1), amount: 0.45)
         }
         return nil
+    }
+
+    /// The everyday name closest to this colour ("orange"), for describing a part in words.
+    var nearestName: String {
+        let plain = ["red", "orange", "yellow", "green", "teal", "blue", "sky", "purple", "pink", "white", "black", "gray", "silver", "steel", "gold", "copper", "brown", "cream"]
+        var best = "gray"
+        var bestDistance = Double.greatestFiniteMagnitude
+        for name in plain {
+            guard let other = SceneColor.named[name] else { continue }
+            let distance = (r - other.r) * (r - other.r) + (g - other.g) * (g - other.g) + (b - other.b) * (b - other.b)
+            if distance < bestDistance { bestDistance = distance; best = name }
+        }
+        return best
     }
 
     /// A stable palette colour for an id.

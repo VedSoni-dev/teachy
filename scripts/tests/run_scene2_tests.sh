@@ -16,7 +16,7 @@ S=leanring-buddy/Scene
 swiftc -O -parse-as-library \
   $S/SceneCommand.swift $S/SceneScriptParser.swift $S/SceneGeometry.swift $S/SceneParts.swift $S/SceneMacros.swift \
   $S/SceneReplayLog.swift $S/SceneScriptPrompt.swift $S/SceneLabelLayout.swift $S/SceneNarration.swift $S/SceneQuality.swift \
-  $S/ScenePhotoPicker.swift $S/SceneHistoryStore.swift \
+  $S/ScenePhotoPicker.swift $S/SceneHistoryStore.swift $S/SceneCamera.swift $S/SceneRefine.swift \
   scripts/tests/scene2/pure/scene2_tests.swift \
   -o "$OUT/scene2_tests"
 "$OUT/scene2_tests"
