@@ -323,6 +323,16 @@ final class CompanionManager: ObservableObject {
             self?.submitSyntheticCompanionRequest(text)
         }
         VoiceModeController.shared.onBargeIn = { [weak self] in self?.currentResponseTask?.cancel() }
+        // Walkthroughs speak through the same voice and look at the screen under the cursor.
+        WalkthroughCenter.shared.speak = { [weak self] line in
+            guard let self else { return }
+            await self.speechSynthesizer.finishStream()
+            try? await self.speechSynthesizer.speakText(line)
+        }
+        WalkthroughCenter.shared.captureScreen = {
+            guard let shot = try? await CompanionScreenCaptureUtility.captureAllScreensAsJPEG().first(where: { $0.isCursorScreen }) else { return nil }
+            return (shot.imageData, shot.screenshotWidthInPixels, shot.screenshotHeightInPixels, shot.displayFrame)
+        }
         // Eagerly touch the Claude API so its TLS warmup handshake completes
         // well before the onboarding demo fires at ~40s into the video.
         _ = claudeAPI
@@ -893,6 +903,19 @@ final class CompanionManager: ObservableObject {
 
         let guidedTaskSection = guidedTaskPromptSection()
         let languageSection = "\n\n" + TeachySettingsStorage.replyLanguagePromptSentence()
+        // What Teachy knows about the app or site in front, and any walkthrough in progress.
+        let appSkillText = SkillLibrary.shared.promptSection(
+            frontmostBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            browserTabContext: currentBrowserTabContext
+        )
+        let walkthroughText = WalkthroughCenter.shared.promptSection()
+        let skillAndWalkthroughSection = (appSkillText.isEmpty ? "" : "\n\n" + appSkillText)
+            + (walkthroughText.isEmpty ? "" : "\n\n" + walkthroughText)
+        let walkRule = """
+
+
+        - When they ask HOW to do something in an app or on a site and would rather do it themselves ("show me how to…", "walk me through…", "where do I change…") and it takes more than one click, add [WALK: the goal in one plain sentence, with every detail they gave] at the end and SAY one short line that you'll walk them through it. Teachy then takes over: it works out the steps, rings each control on screen, and moves on by itself when they click it. Do not list the steps yourself and do not add [POINT:] in the same reply. If it is one click away, just point. If they want it done for them, that is [JOB:] or [DO:], not [WALK:]. [WALK:] replaces [GUIDE:]: never use [GUIDE:].
+        """
 
         // What Teachy remembers about this person (PROFILE.md / VOLATILE.md, editable by
         // them). Without this the model "remembered" facts that never came back to it.
@@ -945,7 +968,7 @@ final class CompanionManager: ObservableObject {
         - Never say "simply", "certainly", "I'd be happy to help", or "great question".
         - Don't read code aloud — say what it does in plain words.
         - If something's confusing, empathize in half a breath, then give the next move.\(brainSection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)
-        \(guidedTaskSection)\(interpreterModeSection)\(languageSection)
+        \(guidedTaskSection)\(interpreterModeSection)\(skillAndWalkthroughSection)\(walkRule)\(languageSection)
 
         You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
         - Compound direct commands are fine ("close all my tabs and open Figma") — emit one [DO:] tag per action, in order. They execute as one sequence.
@@ -971,6 +994,12 @@ final class CompanionManager: ObservableObject {
 
     /// Every transcript goes through the one general voice turn.
     private func routeVoiceTranscript(_ transcript: String) {
+        // "next", "back", "I'm stuck", "stop" belong to a running walkthrough.
+        if WalkthroughCenter.shared.handleSpoken(transcript) {
+            voiceState = .idle
+            scheduleTransientHideIfNeeded()
+            return
+        }
         sendCompanionChatResponse(transcript: transcript)
     }
 
@@ -1178,7 +1207,18 @@ final class CompanionManager: ObservableObject {
                     }
                 }
 
-                let parseResult = Self.parsePointingCoordinates(from: SceneDirector.extractShowRequest(from: replyWithoutWriteTag).text)
+                // [WALK: …] starts a step-by-step walkthrough: Teachy rings each control and
+                // moves on when they click it.
+                let (replyWithoutWalkTag, walkGoal) = VoiceTag.extract("WALK", from: replyWithoutWriteTag)
+                if let walkGoal {
+                    let cursorShot = screenCaptures.first(where: { $0.isCursorScreen })
+                    WalkthroughCenter.shared.start(
+                        goal: walkGoal,
+                        screenshot: cursorShot.map { ($0.imageData, $0.screenshotWidthInPixels, $0.screenshotHeightInPixels, $0.displayFrame) }
+                    )
+                }
+
+                let parseResult = Self.parsePointingCoordinates(from: SceneDirector.extractShowRequest(from: replyWithoutWalkTag).text)
                 // Strip [REMEMBER: ...] tags before this ever reaches speech/history; the
                 // facts go straight into the Brain (PROFILE.md "About me").
                 let (spokenTextWithoutMemoryTags, rememberedFacts) = CompanionRememberTagParser.extractFactsAndStrip(from: parseResult.spokenText)
