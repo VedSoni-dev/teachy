@@ -925,6 +925,7 @@ final class CompanionManager: ObservableObject {
         - When a picture would explain it better than words — how a machine or a body part works, what a real object looks like inside, a concept, a comparison, numbers worth charting, or they say "show me" / "draw" / "in 3D" — add [SHOW: what to draw, in a few words] at the end and keep what you SAY to one sentence. Teachy then draws it for them: a 3D model they can turn and click, a diagram card, or a chart. Don't use [SHOW:] for questions about what's on their screen right now; point instead.
         - When they want it DONE, do it rather than explain it: [DO:] for a single native command, [JOB:] for real multi-step work, [GUIDE:] when they'd rather click through it themselves with you walking them through each step. If it's unclear whether they want you to do it, answer, then offer in one short line ("want me to just do it?").
         - When they want real multi-step work DONE for them — research something on the web, sort or rename files, build or change something, anything across several apps or their connected services — add [JOB: the whole task in one clear sentence, with every detail they gave] and SAY one short line that you're on it. A job runs in the background, shows its plan, and asks them before anything risky. Don't use [JOB:] for a single native command (that's [DO:]) or when they'd rather do it themselves with you guiding (that's [GUIDE:]).
+        \(WritingPrompt.voicePromptRule)
         - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.
 
         How you sound (spoken aloud):
@@ -1145,7 +1146,18 @@ final class CompanionManager: ObservableObject {
                     )
                 }
 
-                let parseResult = Self.parsePointingCoordinates(from: SceneDirector.extractShowRequest(from: replyWithoutJobTag).text)
+                // [WRITE: …] drafts text from what's on screen, in their voice, and types it
+                // into the field they have focused.
+                let (replyWithoutWriteTag, writeInstruction) = VoiceTag.extract("WRITE", from: replyWithoutJobTag)
+                if let writeInstruction {
+                    Task { @MainActor [weak self] in
+                        let outcome = await ScreenAwareWriter.shared.writeAndInsert(instruction: writeInstruction, screenshots: labeledImages)
+                        await self?.speechSynthesizer.finishStream()
+                        self?.speakErrorMessage(outcome.spokenLine)
+                    }
+                }
+
+                let parseResult = Self.parsePointingCoordinates(from: SceneDirector.extractShowRequest(from: replyWithoutWriteTag).text)
                 // Strip [REMEMBER: ...] tags before this ever reaches speech/history; the
                 // facts go straight into the Brain (PROFILE.md "About me").
                 let (spokenTextWithoutMemoryTags, rememberedFacts) = CompanionRememberTagParser.extractFactsAndStrip(from: parseResult.spokenText)

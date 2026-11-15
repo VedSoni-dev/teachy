@@ -424,6 +424,8 @@ struct DictationSettingsSection: View {
                 isOn: $settings.dictationCleanupEnabled
             )
 
+            DictationSpeedRows()
+
             SettingsDivider()
 
             DictationShortcutPickerRow()
@@ -843,5 +845,25 @@ struct AdvancedSettingsSection: View {
             return "That key is missing the Text to Speech permission. Turn it on in ElevenLabs, under API Keys."
         }
         return "That key doesn't seem valid. Check it and try again."
+    }
+}
+
+
+/// Dictation speed switches (keys documented in Dictation/DictationSpeedPolicy.swift).
+private struct DictationSpeedRows: View {
+    @AppStorage("teachyDictationLiveInsertionEnabled") private var typesAsYouSpeak = true
+    @AppStorage("teachyDictationSpeedMode") private var speedMode = "speed"
+
+    var body: some View {
+        SettingsToggleRow(
+            title: "Type while I'm speaking",
+            caption: "Words appear in the field as you say them, then get corrected when you let go. Turn off if an app handles it badly.",
+            isOn: $typesAsYouSpeak
+        )
+        SettingsToggleRow(
+            title: "Speed first",
+            caption: "Finish with the on-device text right away and fix it up after. Off waits for the most accurate transcript before typing.",
+            isOn: Binding(get: { speedMode != "accuracy" }, set: { speedMode = $0 ? "speed" : "accuracy" })
+        )
     }
 }
