@@ -6,9 +6,10 @@
 //  whatever field has the caret. Double-tap Fn+Control for hands-free, double-tap
 //  again to stop, Escape to cancel.
 //
-//  Flow: hotkey tap -> state machine -> record (live on-device text in the pill)
-//  -> publik transcription (on-device text as fallback) -> faithful cleanup ->
-//  insert -> local backup -> watch the field for 20 s to learn corrected words.
+//  Flow: hotkey tap -> state machine -> record -> DictationSession (live typing,
+//  publik transcription with on-device text as fallback, faithful cleanup,
+//  insert or in-place correction, local backup) -> watch the field for 20 s to
+//  learn corrected words. This file owns the hotkey, the microphone and the pill.
 //
 
 import AppKit
@@ -84,6 +85,7 @@ final class DictationController {
     private let correctionWatcher = DictationCorrectionWatcher()
 
     private var phase: Phase = .idle
+    private var session: DictationSession?
     private var hasStarted = false
     private var readinessSubscription: AnyCancellable?
     private var permissionTimer: Timer?
@@ -107,6 +109,23 @@ final class DictationController {
         recorder.onLevel = { [weak self] level in
             Task { @MainActor in self?.pill.model.level = level }
         }
+        // The main queue keeps these in the order they happened.
+        recorder.onSegmentText = { [weak self] index, text, isFinal in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, self.phase == .recording else { return }
+                    self.session?.segmentTextChanged(index: index, text: text, isFinal: isFinal)
+                }
+            }
+        }
+        recorder.onAudioFrame = { [weak self] rms, seconds in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, self.phase == .recording else { return }
+                    self.session?.audioFrame(rms: rms, seconds: seconds)
+                }
+            }
+        }
         monitor.onEvent = { [weak self] event, time in
             self?.handle(event, at: time)
         }
@@ -123,6 +142,8 @@ final class DictationController {
         deadlineTimer?.invalidate()
         maximumLengthTimer?.invalidate()
         monitor.stop()
+        session?.cancel()
+        session = nil
         recorder.cancel()
         pill.hide()
         machine.reset()
@@ -189,7 +210,8 @@ final class DictationController {
         do {
             try recorder.start(
                 contextualStrings: DictationDictionary.shared.words,
-                useOnDeviceSpeech: SFSpeechRecognizer.authorizationStatus() == .authorized
+                useOnDeviceSpeech: SFSpeechRecognizer.authorizationStatus() == .authorized,
+                languageCode: TeachySettingsStorage.dictationLanguageCode()
             )
         } catch {
             print("⚠️ Dictation: couldn't start the microphone: \(error.localizedDescription)")
@@ -197,6 +219,9 @@ final class DictationController {
             return
         }
 
+        // Created after the microphone starts, so the focused field is read once
+        // and the first words go where the caret is now.
+        session = DictationSession(mode: DictationSpeedMode.current(), recorder: recorder, correctionWatcher: correctionWatcher)
         phase = .recording
         pill.show(.dictating)
         maximumLengthTimer?.invalidate()
@@ -211,94 +236,43 @@ final class DictationController {
 
     private func enterHandsFree() {
         guard phase == .recording else { return }
+        session?.isHandsFree = true
         pill.model.mode = .handsFree
     }
 
     private func cancelRecording() {
         guard phase == .recording else { return }
         maximumLengthTimer?.invalidate()
+        session?.cancel()
+        session = nil
         recorder.cancel()
         phase = .idle
         pill.hide()
     }
 
     private func finishRecording() {
-        guard phase == .recording else { return }
+        guard phase == .recording, let session else { return }
         maximumLengthTimer?.invalidate()
         phase = .processing
 
         let pcm = recorder.stop()
-        let liveText = recorder.liveText
-        if DictationSilenceGate().shouldDiscard(pcm16: pcm, sampleRate: DictationAudioFormat.sampleRate, liveText: liveText) {
-            recorder.cancel()
-            phase = .idle
-            pill.hide()
-            return
+        session.onWaiting = { [weak self] in
+            self?.pill.show(.working)
         }
-
-        pill.show(.working)
-        Task { @MainActor in
-            await self.transcribeCleanAndInsert(pcm: pcm)
+        // In speed mode this fires as soon as the on-device text is complete in
+        // the field; the session then reconciles with publik in the background
+        // while the next dictation can already start.
+        session.onFinishedForUser = { [weak self, weak session] notice in
+            guard let self, let session, self.session === session else { return }
+            self.session = nil
             self.phase = .idle
-        }
-    }
-
-    // MARK: - Transcribe, clean, insert
-
-    private func transcribeCleanAndInsert(pcm: Data) async {
-        let recorder = self.recorder
-        let dictionaryPrompt = DictationDictionary.shared.transcriptionPrompt
-
-        let transcript = await DictationPipeline.transcribe(pcm16: pcm, dictionaryPrompt: dictionaryPrompt, language: TeachySettingsStorage.dictationLanguageCode()) {
-            await recorder.finalLiveText(timeout: 2)
-        }
-        recorder.cancel()
-
-        guard !DictationSilenceGate.isEmptyTranscript(transcript.text, dictionaryPrompt: dictionaryPrompt) else {
-            pill.hide()
-            return
-        }
-
-        let cleaned = TeachySettingsStorage.dictationCleanupEnabled()
-            ? await DictationPipeline.cleanUp(raw: transcript.text)
-            : DictationPipeline.Cleaned(text: transcript.text, usedCleanup: false, milliseconds: 0)
-
-        // The app in front now is where the text goes (it may have changed
-        // while the person was speaking).
-        let bundleIdentifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        let textToInsert = DictationInsertionRules.textToInsert(cleaned.text, bundleIdentifier: bundleIdentifier)
-        guard !textToInsert.isEmpty else {
-            pill.hide()
-            return
-        }
-
-        let outcome = await DictationTextInserter.insert(textToInsert)
-
-        DictationHistoryLog.shared.append(DictationHistoryLog.Entry(
-            appBundleIdentifier: bundleIdentifier,
-            raw: transcript.text,
-            cleaned: cleaned.text,
-            transcriber: transcript.source,
-            insertion: outcome.historyLabel
-        ))
-        print("🎙️ Dictation: \(transcript.source) \(transcript.milliseconds) ms, cleanup \(cleaned.usedCleanup ? "\(cleaned.milliseconds) ms" : "not used"), inserted via \(outcome.historyLabel)")
-
-        switch outcome {
-        case .accessibility(let element, let baseline, let insertedRange):
-            pill.hide()
-            if let baseline, let insertedRange {
-                correctionWatcher.watch(element: element, baseline: baseline, insertedRange: insertedRange)
+            if let notice {
+                self.pill.flash(notice)
+            } else {
+                self.pill.hide()
             }
-        case .pasted:
-            pill.hide()
-        case .copiedToClipboard:
-            pill.flash("Copied")
-        case .failed:
-            // Nothing is lost: the text is in the backup file, and now on the clipboard.
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(textToInsert, forType: .string)
-            pill.flash("Copied")
         }
+        session.finish(lastSegmentPCM: pcm)
     }
 }
 

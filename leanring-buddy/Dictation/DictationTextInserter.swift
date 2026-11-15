@@ -5,6 +5,9 @@
 //  Puts dictated text into the focused field of the app in front.
 //  1. Accessibility: set the focused element's selected text (inserts at the caret
 //     or replaces the selection), then re-read the field to check it changed.
+//     The paste below happens only when the field showed no change at all for the
+//     whole (bounded) wait, so the text can't land twice. Apps that ignore the
+//     Accessibility edit are remembered for a week and pasted into directly.
 //  2. Paste: save the clipboard, write the text marked transient and concealed so
 //     clipboard managers skip it, press Command+V using the key that types "v" in
 //     the current keyboard layout, then put the old clipboard back.
@@ -59,8 +62,10 @@ enum DictationTextInserter {
             copyToClipboard(text)
             return .copiedToClipboard
         case .textField:
+            let bundleIdentifier = frontmostApp?.bundleIdentifier
             if let focusedElement, isSelectedTextSettable,
-               let outcome = await insertWithAccessibility(text, into: focusedElement) {
+               !DictationInsertRouteMemory().ignoresAccessibilityInsert(bundleIdentifier: bundleIdentifier),
+               let outcome = await insertWithAccessibility(text, into: focusedElement, bundleIdentifier: bundleIdentifier) {
                 return outcome
             }
             return await paste(text) ? .pasted : .failed
@@ -89,67 +94,56 @@ enum DictationTextInserter {
         return value as? String
     }
 
-    private static func isSettable(_ element: AXUIElement, _ attribute: String) -> Bool {
+    static func isSettable(_ element: AXUIElement, _ attribute: String) -> Bool {
         var settable: DarwinBoolean = false
         return AXUIElementIsAttributeSettable(element, attribute as CFString, &settable) == .success && settable.boolValue
     }
 
-    private static func characterCount(_ element: AXUIElement) -> Int? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &value) == .success else {
-            return nil
+    /// One checked Accessibility insertion into `field`. Never pastes.
+    static func insertWithAccessibilityOnly(_ text: String, into field: DictationAXField) async -> DictationVerifiedInsert.Outcome {
+        await DictationVerifiedInsert.insert(text, into: field) { milliseconds in
+            try? await Task.sleep(nanoseconds: UInt64(milliseconds) * 1_000_000)
         }
-        return (value as? NSNumber)?.intValue
     }
 
-    private static func selectedRange(_ element: AXUIElement) -> NSRange? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
-              let value, CFGetTypeID(value) == AXValueGetTypeID()
-        else { return nil }
-        var range = CFRange()
-        guard AXValueGetValue(value as! AXValue, .cfRange, &range), range.location >= 0, range.length >= 0 else { return nil }
-        return NSRange(location: range.location, length: range.length)
+    /// The focused element as an editable field, when dictation can type into it
+    /// through Accessibility: a text field whose selected text can be set, in an
+    /// app that is not known to ignore such edits, and not a password field.
+    static func focusedEditableField() -> DictationAXField? {
+        guard let frontmostApp = NSWorkspace.shared.frontmostApplication, let element = focusedElement() else { return nil }
+        guard isSettable(element, kAXSelectedTextAttribute) else { return nil }
+        if stringAttribute(element, kAXSubroleAttribute) == (kAXSecureTextFieldSubrole as String) { return nil }
+        if DictationInsertionRules.isTerminal(bundleIdentifier: frontmostApp.bundleIdentifier) { return nil }
+        if DictationInsertRouteMemory().ignoresAccessibilityInsert(bundleIdentifier: frontmostApp.bundleIdentifier) { return nil }
+        return DictationAXField(element: element, bundleIdentifier: frontmostApp.bundleIdentifier)
     }
 
-    /// Returns nil when the insertion can't be confirmed, so the caller pastes.
-    /// Many Chromium and Electron fields accept the call and change nothing.
-    private static func insertWithAccessibility(_ text: String, into element: AXUIElement) async -> DictationInsertionOutcome? {
-        let valueBefore = stringAttribute(element, kAXValueAttribute)
-        let countBefore = characterCount(element)
-        let rangeBefore = selectedRange(element)
-        // Without a way to read the field back there is no way to check the
-        // insertion, and guessing wrong means the text lands twice or not at all.
-        guard valueBefore != nil || countBefore != nil else { return nil }
+    /// Paste, for callers that already know Accessibility can't be used here.
+    static func pasteOnly(_ text: String) async -> DictationInsertionOutcome {
+        guard !text.isEmpty else { return .failed }
+        return await paste(text) ? .pasted : .failed
+    }
 
-        guard AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString) == .success else {
+    /// Returns nil only when pasting cannot double the text: the field showed no
+    /// change at all for the whole wait, or nothing about it could be read (and
+    /// then no insertion was tried). A field that changed in any way counts as
+    /// inserted, checked or not.
+    private static func insertWithAccessibility(
+        _ text: String, into element: AXUIElement, bundleIdentifier: String?
+    ) async -> DictationInsertionOutcome? {
+        let field = DictationAXField(element: element, bundleIdentifier: bundleIdentifier)
+        switch await insertWithAccessibilityOnly(text, into: field) {
+        case .inserted(let value, let range):
+            return .accessibility(element: element, baseline: value, insertedRange: range)
+        case .changedUnverified:
+            print("⚠️ Dictation: the field changed but the insertion couldn't be checked; not pasting")
+            return .accessibility(element: element, baseline: nil, insertedRange: nil)
+        case .noEffect:
+            DictationInsertRouteMemory().markIgnoresAccessibilityInsert(bundleIdentifier: bundleIdentifier)
+            return nil
+        case .cannotCheck:
             return nil
         }
-
-        // Some fields trim the trailing space, so the check looks for the words.
-        let needle = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let insertedLength = (text as NSString).length
-        for attempt in 0..<4 {
-            if attempt > 0 { try? await Task.sleep(nanoseconds: 60_000_000) }
-            if let valueBefore {
-                guard let valueAfter = stringAttribute(element, kAXValueAttribute),
-                      valueAfter != valueBefore, valueAfter.contains(needle)
-                else { continue }
-                var insertedRange: NSRange?
-                let after = valueAfter as NSString
-                if let rangeBefore, rangeBefore.location + insertedLength <= after.length,
-                   after.substring(with: NSRange(location: rangeBefore.location, length: insertedLength)) == text {
-                    insertedRange = NSRange(location: rangeBefore.location, length: insertedLength)
-                } else {
-                    let found = after.range(of: needle, options: .backwards)
-                    if found.location != NSNotFound { insertedRange = found }
-                }
-                return .accessibility(element: element, baseline: valueAfter, insertedRange: insertedRange)
-            } else if let countBefore, let countAfter = characterCount(element), countAfter != countBefore {
-                return .accessibility(element: element, baseline: nil, insertedRange: nil)
-            }
-        }
-        return nil
     }
 
     // MARK: - Clipboard
@@ -269,6 +263,55 @@ enum DictationTextInserter {
                     withCommand: character(keyCode, modifiers: commandModifierState)
                 )
             }
+        }
+    }
+}
+
+/// A focused text element, read and edited through Accessibility.
+nonisolated final class DictationAXField: DictationEditableField, @unchecked Sendable {
+    let element: AXUIElement
+    let bundleIdentifier: String?
+
+    init(element: AXUIElement, bundleIdentifier: String?) {
+        self.element = element
+        self.bundleIdentifier = bundleIdentifier
+    }
+
+    func value() -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success else { return nil }
+        return value as? String
+    }
+
+    func characterCount() -> Int? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &value) == .success else {
+            return nil
+        }
+        return (value as? NSNumber)?.intValue
+    }
+
+    func selectedRange() -> NSRange? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXValueGetTypeID()
+        else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(value as! AXValue, .cfRange, &range), range.location >= 0, range.length >= 0 else { return nil }
+        return NSRange(location: range.location, length: range.length)
+    }
+
+    func setSelectedRange(_ range: NSRange) -> Bool {
+        var cfRange = CFRange(location: range.location, length: range.length)
+        guard let value = AXValueCreate(.cfRange, &cfRange) else { return false }
+        return AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, value) == .success
+    }
+
+    func setSelectedText(_ text: String) -> DictationFieldSetResult {
+        switch AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString) {
+        case .success: return .accepted
+        case .cannotComplete: return .timedOut
+        default: return .refused
         }
     }
 }

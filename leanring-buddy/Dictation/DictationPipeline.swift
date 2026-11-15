@@ -88,9 +88,13 @@ enum DictationPipeline {
     }
 
     /// One cleanup call. Anything that goes wrong returns the transcript unchanged.
-    static func cleanUp(raw: String) async -> Cleaned {
+    /// `skipWhenAlreadyClean` (speed mode) saves the call, about 1.3 s, when the
+    /// transcript has no filler sounds and is already punctuated.
+    static func cleanUp(raw: String, skipWhenAlreadyClean: Bool = false) async -> Cleaned {
         let start = Date()
-        guard !DictationCleanup.shouldSkip(raw: raw) else {
+        guard !DictationCleanup.shouldSkip(raw: raw),
+              !(skipWhenAlreadyClean && DictationCleanupSkip.looksAlreadyClean(raw))
+        else {
             return Cleaned(text: DictationCleanup.finalText(raw: raw, modelOutput: nil).text, usedCleanup: false, milliseconds: 0)
         }
         var modelOutput: String?

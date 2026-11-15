@@ -3,8 +3,9 @@
 //  leanring-buddy
 //
 //  The small "Dictating" pill under the notch. A non-activating panel that never
-//  takes focus or clicks, so the field being dictated into keeps the caret. The
-//  live on-device text is shown here only; it is never typed into the field.
+//  takes focus or clicks, so the field being dictated into keeps the caret. It
+//  always shows the live on-device text; in speed mode DictationSession also
+//  types the stable words into the field.
 //
 
 import AppKit

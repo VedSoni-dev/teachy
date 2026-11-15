@@ -4,6 +4,10 @@
 //
 //  Records the microphone for one dictation: keeps 16 kHz mono PCM for the final
 //  publik transcription and feeds Apple's on-device recognizer for the live text.
+//  A dictation is a list of segments. A short one has a single segment; a long
+//  hands-free one is cut at pauses (`cutSegment`) so each sentence-sized piece can
+//  be transcribed and typed while the person keeps talking. Each segment has its
+//  own audio and its own on-device text and confidence.
 //  Uses its own AVAudioEngine so the Control+Option push-to-talk engine in
 //  BuddyDictationManager is never touched. The audio tap runs on an audio thread,
 //  so this type is nonisolated and guards its state with a lock.
@@ -21,8 +25,33 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
 
     /// Called from background threads with the live on-device text so far.
     var onLiveText: (@Sendable (String) -> Void)?
+    /// Called from background threads when one segment's on-device text changes.
+    var onSegmentText: (@Sendable (_ segment: Int, _ text: String, _ isFinal: Bool) -> Void)?
     /// Called from the audio thread with the loudness of the last buffer, 0...1.
     var onLevel: (@Sendable (Double) -> Void)?
+    /// Called from the audio thread with the loudness and length (seconds) of each buffer.
+    var onAudioFrame: (@Sendable (_ rms: Double, _ seconds: Double) -> Void)?
+
+    /// The on-device recognizer's text for one segment.
+    struct OnDeviceResult: Sendable {
+        var text: String
+        /// Per-word confidence, 0...1. Empty until the recognizer has finished.
+        var confidences: [Double]
+        var isFinal: Bool
+    }
+
+    private struct SegmentState {
+        var committedText = ""
+        var currentText = ""
+        var confidences: [Double] = []
+        var isFinal = false
+        /// The recognition request allowed to write to this segment.
+        var requestToken = 0
+        var heardSomethingInRequest = false
+        var requestStartedAt = Date()
+
+        var text: String { DictationAudioRecorder.join(committedText, currentText) }
+    }
 
     private let lock = NSLock()
     private let targetFormat = AVAudioFormat(
@@ -40,29 +69,87 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
 
     private var speechRecognizer: SFSpeechRecognizer?
     private var contextualStrings: [String] = []
+    /// The request the microphone is feeding now (the active segment's).
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
-    /// Bumped whenever a recognition request is replaced, so late callbacks are ignored.
-    private var recognitionGeneration = 0
-    private var committedText = ""
-    private var currentSegmentText = ""
-    private var heardSomethingInSegment = false
-    private var segmentStartedAt = Date()
-    private var hasFinalText = false
+    /// Every recognition task still running, by request token.
+    private var recognitionTasks: [Int: SFSpeechRecognitionTask] = [:]
+    private var nextRequestToken = 1
+    /// Bumped by `start` and `cancel` so callbacks from an older dictation are ignored.
+    private var sessionGeneration = 0
+    private var segments: [SegmentState] = [SegmentState()]
+    private var usesOnDeviceSpeech = false
 
+    /// All segments' on-device text, in order.
     var liveText: String {
         lock.lock()
         defer { lock.unlock() }
-        return Self.join(committedText, currentSegmentText)
+        return segments.reduce("") { Self.join($0, $1.text) }
+    }
+
+    var activeSegmentIndex: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return segments.count - 1
     }
 
     private var isLiveTextFinal: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return hasFinalText
+        return segments.allSatisfy(\.isFinal)
     }
 
-    private static func join(_ first: String, _ second: String) -> String {
+    func onDeviceResult(forSegment index: Int) -> OnDeviceResult {
+        lock.lock()
+        defer { lock.unlock() }
+        guard segments.indices.contains(index) else { return OnDeviceResult(text: "", confidences: [], isFinal: true) }
+        let segment = segments[index]
+        return OnDeviceResult(text: segment.text, confidences: segment.confidences, isFinal: segment.isFinal)
+    }
+
+    /// One segment's on-device text once its recognizer has finished, or whatever
+    /// it had after `timeout` seconds.
+    func finalOnDeviceResult(forSegment index: Int, timeout: TimeInterval) async -> OnDeviceResult {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if onDeviceResult(forSegment: index).isFinal { break }
+            try? await Task.sleep(nanoseconds: 15_000_000)
+        }
+        return onDeviceResult(forSegment: index)
+    }
+
+    /// The audio of the active segment so far, without stopping anything.
+    func pcmSnapshot() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return pcm
+    }
+
+    /// Closes the active segment in the middle of a dictation and starts the next
+    /// one. Returns the closed segment's index and audio. Its on-device text
+    /// becomes final a moment later (`finalOnDeviceResult`).
+    func cutSegment() -> (index: Int, pcm: Data)? {
+        lock.lock()
+        guard isRecording else {
+            lock.unlock()
+            return nil
+        }
+        let index = segments.count - 1
+        let recorded = pcm
+        pcm = Data()
+        let request = recognitionRequest
+        recognitionRequest = nil
+        if request == nil { segments[index].isFinal = true }
+        segments.append(SegmentState())
+        if !usesOnDeviceSpeech { segments[index + 1].isFinal = true }
+        let shouldRecognize = usesOnDeviceSpeech
+        lock.unlock()
+
+        request?.endAudio()
+        if shouldRecognize { startRecognitionRequest() }
+        return (index, recorded)
+    }
+
+    fileprivate static func join(_ first: String, _ second: String) -> String {
         if first.isEmpty { return second }
         if second.isEmpty { return first }
         return first + " " + second
@@ -72,7 +159,9 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
 
     /// `useOnDeviceSpeech` is false when Speech Recognition isn't granted; the
     /// recording still works, there is just no live text.
-    func start(contextualStrings: [String], useOnDeviceSpeech: Bool) throws {
+    /// `languageCode` is the dictation language from Settings ("es", "de"…), or nil
+    /// to follow the Mac's language.
+    func start(contextualStrings: [String], useOnDeviceSpeech: Bool, languageCode: String? = nil) throws {
         cancel()
 
         let engine = AVAudioEngine()
@@ -88,20 +177,20 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
         pcm = Data()
         converter = nil
         converterInputFormat = nil
-        committedText = ""
-        currentSegmentText = ""
-        hasFinalText = false
+        segments = [SegmentState()]
+        sessionGeneration += 1
         isRecording = true
+        usesOnDeviceSpeech = useOnDeviceSpeech
         self.contextualStrings = contextualStrings
         self.engine = engine
         lock.unlock()
 
         if useOnDeviceSpeech {
-            speechRecognizer = Self.makeSpeechRecognizer()
-            startRecognitionSegment()
+            speechRecognizer = Self.makeSpeechRecognizer(languageCode: languageCode)
+            startRecognitionRequest()
         } else {
             lock.lock()
-            hasFinalText = true
+            segments[0].isFinal = true
             lock.unlock()
         }
 
@@ -117,7 +206,7 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
         }
     }
 
-    /// Stops the microphone and returns the 16 kHz mono PCM recorded.
+    /// Stops the microphone and returns the 16 kHz mono PCM of the active (last) segment.
     func stop() -> Data {
         lock.lock()
         let engine = self.engine
@@ -126,7 +215,8 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
         let recorded = pcm
         pcm = Data()
         let request = recognitionRequest
-        if request == nil { hasFinalText = true }
+        recognitionRequest = nil
+        if request == nil { segments[segments.count - 1].isFinal = true }
         lock.unlock()
 
         engine?.inputNode.removeTap(onBus: 0)
@@ -142,16 +232,16 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
         self.engine = nil
         isRecording = false
         pcm = Data()
-        recognitionGeneration += 1
-        let task = recognitionTask
-        recognitionTask = nil
+        sessionGeneration += 1
+        let tasks = Array(recognitionTasks.values)
+        recognitionTasks = [:]
         recognitionRequest = nil
-        hasFinalText = true
+        for index in segments.indices { segments[index].isFinal = true }
         lock.unlock()
 
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
-        task?.cancel()
+        tasks.forEach { $0.cancel() }
     }
 
     /// The on-device text once the recognizer has finished, or whatever it had
@@ -180,7 +270,9 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
         lock.lock()
         if isRecording { pcm.append(chunk) }
         lock.unlock()
-        onLevel?(DictationSilenceGate.rms(pcm16: chunk))
+        let level = DictationSilenceGate.rms(pcm16: chunk)
+        onLevel?(level)
+        onAudioFrame?(level, DictationSilenceGate.seconds(pcm16ByteCount: chunk.count, sampleRate: DictationAudioFormat.sampleRate))
     }
 
     /// Only called from the audio thread, so the converter needs no lock.
@@ -214,19 +306,34 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
 
     // MARK: - On-device live text
 
-    private static func makeSpeechRecognizer() -> SFSpeechRecognizer? {
-        for locale in [Locale.autoupdatingCurrent, Locale(identifier: "en-US")] {
+    /// The recognizer for the chosen dictation language when the Mac can run it on
+    /// the device, else the Mac's own language, else US English.
+    private static func makeSpeechRecognizer(languageCode: String?) -> SFSpeechRecognizer? {
+        var locales: [Locale] = []
+        if let languageCode, !languageCode.isEmpty {
+            let current = Locale.autoupdatingCurrent
+            if current.language.languageCode?.identifier == languageCode {
+                locales.append(current)
+            } else if let match = SFSpeechRecognizer.supportedLocales()
+                .filter({ $0.language.languageCode?.identifier == languageCode })
+                .sorted(by: { $0.identifier < $1.identifier }).first {
+                locales.append(match)
+            }
+        }
+        locales += [Locale.autoupdatingCurrent, Locale(identifier: "en-US")]
+        for locale in locales {
             if let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable { return recognizer }
         }
         return nil
     }
 
-    /// The recognizer ends a request after a pause. Hands-free dictation can run
-    /// for minutes, so each ended segment is kept and a new one started.
-    private func startRecognitionSegment() {
+    /// Starts a recognition request for the active segment. The recognizer ends a
+    /// request after a pause; hands-free dictation can run for minutes, so an
+    /// ended request's text is kept and a new one started for the same segment.
+    private func startRecognitionRequest() {
         guard let speechRecognizer else {
             lock.lock()
-            hasFinalText = true
+            for index in segments.indices { segments[index].isFinal = true }
             lock.unlock()
             return
         }
@@ -238,51 +345,65 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
 
         lock.lock()
         request.contextualStrings = contextualStrings
-        recognitionGeneration += 1
-        let generation = recognitionGeneration
+        let generation = sessionGeneration
+        let token = nextRequestToken
+        nextRequestToken += 1
+        let segmentIndex = segments.count - 1
+        segments[segmentIndex].requestToken = token
+        segments[segmentIndex].currentText = ""
+        segments[segmentIndex].heardSomethingInRequest = false
+        segments[segmentIndex].requestStartedAt = Date()
         recognitionRequest = request
-        currentSegmentText = ""
-        heardSomethingInSegment = false
-        segmentStartedAt = Date()
         lock.unlock()
 
         let task = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-            self?.handleRecognition(result: result, error: error, generation: generation)
+            self?.handleRecognition(result: result, error: error, generation: generation, segmentIndex: segmentIndex, token: token)
         }
         lock.lock()
-        if generation == recognitionGeneration { recognitionTask = task }
+        if generation == sessionGeneration { recognitionTasks[token] = task }
         lock.unlock()
     }
 
-    private func handleRecognition(result: SFSpeechRecognitionResult?, error: Error?, generation: Int) {
+    private func handleRecognition(result: SFSpeechRecognitionResult?, error: Error?, generation: Int, segmentIndex: Int, token: Int) {
         lock.lock()
-        guard generation == recognitionGeneration else {
+        guard generation == sessionGeneration, segments.indices.contains(segmentIndex),
+              segments[segmentIndex].requestToken == token, !segments[segmentIndex].isFinal
+        else {
             lock.unlock()
             return
         }
         if let result {
-            currentSegmentText = result.bestTranscription.formattedString
-            if !currentSegmentText.isEmpty { heardSomethingInSegment = true }
+            segments[segmentIndex].currentText = result.bestTranscription.formattedString
+            if !segments[segmentIndex].currentText.isEmpty { segments[segmentIndex].heardSomethingInRequest = true }
         }
-        let segmentEnded = result?.isFinal == true || error != nil
+        let requestEnded = result?.isFinal == true || error != nil
         var shouldRestart = false
-        if segmentEnded {
-            committedText = Self.join(committedText, currentSegmentText)
-            currentSegmentText = ""
-            recognitionRequest = nil
-            recognitionTask = nil
+        if requestEnded {
+            if let result {
+                segments[segmentIndex].confidences += result.bestTranscription.segments.map { Double($0.confidence) }
+            }
+            segments[segmentIndex].committedText = segments[segmentIndex].text
+            segments[segmentIndex].currentText = ""
+            recognitionTasks.removeValue(forKey: token)
+            let isActiveSegment = segmentIndex == segments.count - 1
+            if isActiveSegment { recognitionRequest = nil }
             // A recognizer that fails straight away must not restart in a loop, so
-            // restart only if this segment heard something or lasted a while.
-            if isRecording && (heardSomethingInSegment || Date().timeIntervalSince(segmentStartedAt) > 1) {
+            // restart only if this request heard something or lasted a while.
+            let segment = segments[segmentIndex]
+            if isActiveSegment && isRecording
+                && (segment.heardSomethingInRequest || Date().timeIntervalSince(segment.requestStartedAt) > 1) {
                 shouldRestart = true
             } else {
-                hasFinalText = true
+                segments[segmentIndex].isFinal = true
             }
         }
-        let text = Self.join(committedText, currentSegmentText)
+        let segmentText = segments[segmentIndex].text
+        let segmentIsFinal = segments[segmentIndex].isFinal
+        let text = segments.reduce("") { Self.join($0, $1.text) }
         lock.unlock()
 
         onLiveText?(text)
-        if shouldRestart { startRecognitionSegment() }
+        onSegmentText?(segmentIndex, segmentText, segmentIsFinal)
+        if shouldRestart { startRecognitionRequest() }
     }
 }
