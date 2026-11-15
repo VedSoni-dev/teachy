@@ -178,6 +178,10 @@ struct ClickyNotchRootView: View {
         )
         .animation(.smooth, value: gestureProgress)
         .preferredColorScheme(.dark)
+        // Drop a file on the notch to attach it to the conversation.
+        .attachmentDropTarget(cornerRadius: 24, showsHighlight: notchManager.isExpanded) { isOver in
+            if isOver, !notchManager.isExpanded { notchManager.expand() }
+        }
     }
 
     private var gestureScale: CGFloat {

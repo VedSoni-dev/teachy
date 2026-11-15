@@ -20,6 +20,27 @@ struct NotchHomeTabView: View {
         VStack(alignment: .leading, spacing: 14) {
             pushToTalkInstructions
 
+            HStack(spacing: 8) {
+                Button {
+                    ChatWindowController.shared.show()
+                } label: {
+                    Label("Open chat window", systemImage: "bubble.left.and.bubble.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.white.opacity(0.1)))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+
+                Text("or press control + command + A · drop files on the notch to attach them")
+                    .font(.system(size: 10))
+                    .foregroundColor(DS.Colors.textTertiary)
+            }
+
+            AttachmentChipsView(compact: true)
+
             PublikAccountSection()
 
             settingsHeader

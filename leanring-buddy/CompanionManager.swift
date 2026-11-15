@@ -970,6 +970,7 @@ final class CompanionManager: ObservableObject {
 
         currentResponseTask = Task {
             voiceState = .processing
+            ChatTimeline.shared.userAsked(transcript)
 
             let screenCaptures: [CompanionScreenCapture]
             let mouseOutlineContext: CompanionMouseOutlineContext?
@@ -1085,7 +1086,7 @@ final class CompanionManager: ObservableObject {
                 }
             }
 
-            let labeledImages = await buildLabeledAnnotatedImages(
+            var labeledImages = await buildLabeledAnnotatedImages(
                 screenCaptures: screenCaptures,
                 mouseOutlineContext: mouseOutlineContext
             )
@@ -1094,6 +1095,11 @@ final class CompanionManager: ObservableObject {
             if let spatialContextLabel = mouseOutlineContext?.spatialContextLabel {
                 transcriptWithSpatialHint += "\n\n[\(spatialContextLabel) — the user circled this region on screen while asking.]"
             }
+
+            // Attached files, or the document/page in front when the question is about it.
+            let documentContext = await DocumentTurnContext.forVoiceTurn(question: transcript)
+            if !documentContext.text.isEmpty { transcriptWithSpatialHint += "\n\n" + documentContext.text }
+            labeledImages += documentContext.images
 
             let historyForAPI = conversationHistory.map { entry in
                 (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
@@ -1118,11 +1124,15 @@ final class CompanionManager: ObservableObject {
                     conversationHistory: historyForAPI,
                     userPrompt: transcriptWithSpatialHint,
                     job: .voice,
-                    onTextChunk: { accumulatedText in streamingSpeech.feed(accumulatedText) }
+                    onTextChunk: { accumulatedText in
+                        streamingSpeech.feed(accumulatedText)
+                        ChatTimeline.shared.streamingReply(text: accumulatedText, isFinal: false)
+                    }
                 )
 
                 guard !Task.isCancelled else { return }
                 streamingSpeech.finish(fullResponseText)
+                ChatTimeline.shared.streamingReply(text: fullResponseText, isFinal: true)
 
                 // [SHOW: …] starts a drawing right away, while the sentence is still being spoken.
                 if let showRequest = SceneDirector.extractShowRequest(from: fullResponseText).request {
