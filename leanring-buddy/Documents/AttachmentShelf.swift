@@ -1,0 +1,456 @@
+//
+//  AttachmentShelf.swift
+//  leanring-buddy
+//
+//  The files the person has given Teachy for the current conversation: up to
+//  five, added by dropping them on the notch or the chat window (or with the
+//  paperclip), shown as chips, and handed to the model with the next question.
+//
+//  Three parts:
+//    AttachmentShelf        the list (`AttachmentShelf.shared`)
+//    AttachmentChipsView    the chips
+//    .attachmentDropTarget  a view modifier that accepts dropped files and images
+//
+
+import AppKit
+import Combine
+import SwiftUI
+import UniformTypeIdentifiers
+
+// MARK: - The list
+
+/// One attached file and how far reading it has got.
+struct AttachmentItem: Identifiable {
+    enum State {
+        case reading
+        case ready(ReadDocument)
+        case failed(String)
+    }
+
+    let id: UUID
+    var title: String
+    var url: URL?
+    var kind: DocumentKind?
+    var state: State
+
+    var document: ReadDocument? {
+        if case .ready(let document) = state { return document }
+        return nil
+    }
+
+    /// The small line under the name: "30 pages", "Reading…", or what went wrong.
+    var detail: String {
+        switch state {
+        case .reading: return "Reading…"
+        case .ready(let document): return document.sizeDescription + (document.isTruncated ? ", partly read" : "")
+        case .failed(let message): return message
+        }
+    }
+
+    /// The first sentence of `detail`, for the chip. The whole message is its tooltip.
+    var shortDetail: String {
+        guard isFailed, let end = detail.range(of: ". ") else { return detail }
+        return String(detail[..<end.lowerBound]) + "."
+    }
+
+    var isFailed: Bool {
+        if case .failed = state { return true }
+        return false
+    }
+}
+
+enum AttachmentAddOutcome: Equatable {
+    case added
+    /// The same file is already attached.
+    case alreadyAttached
+    /// Five files are attached already.
+    case full
+}
+
+/// The rules for what may join the list. Pure, so it is tested without files.
+nonisolated enum AttachmentRules {
+    static let maximumCount = 5
+
+    /// Two URLs that are the same file compare equal after this.
+    static func key(for url: URL) -> String {
+        url.isFileURL ? url.resolvingSymlinksInPath().standardizedFileURL.path : url.absoluteString
+    }
+
+    static func outcome(adding url: URL, to existing: [URL], maximumCount: Int = maximumCount) -> AttachmentAddOutcome {
+        let newKey = key(for: url)
+        if existing.contains(where: { key(for: $0) == newKey }) { return .alreadyAttached }
+        if existing.count >= maximumCount { return .full }
+        return .added
+    }
+}
+
+@MainActor
+final class AttachmentShelf: ObservableObject {
+    static let shared = AttachmentShelf()
+
+    @Published private(set) var items: [AttachmentItem] = []
+    /// A short message for the person ("Up to 5 files at a time."). Cleared on the next change.
+    @Published private(set) var notice: String?
+
+    private let reader: @Sendable (URL) async throws -> ReadDocument
+    private var readTasks: [UUID: Task<Void, Never>] = [:]
+
+    init(reader: @escaping @Sendable (URL) async throws -> ReadDocument = { try await DocumentReader.read(url: $0) }) {
+        self.reader = reader
+    }
+
+    var isEmpty: Bool { items.isEmpty }
+    var documents: [ReadDocument] { items.compactMap(\.document) }
+    var isReading: Bool { items.contains { if case .reading = $0.state { return true } else { return false } } }
+
+    // MARK: Adding and removing
+
+    @discardableResult
+    func add(url: URL) -> AttachmentAddOutcome {
+        let outcome = AttachmentRules.outcome(adding: url, to: items.compactMap(\.url))
+        switch outcome {
+        case .alreadyAttached:
+            notice = "\(url.lastPathComponent) is already attached."
+            return outcome
+        case .full:
+            notice = "Up to \(AttachmentRules.maximumCount) files at a time. Remove one first."
+            return outcome
+        case .added:
+            notice = nil
+        }
+        let fileExtension = url.pathExtension.lowercased()
+        let item = AttachmentItem(
+            id: UUID(), title: url.lastPathComponent, url: url,
+            kind: DocumentReader.kind(forExtension: fileExtension, url: url), state: .reading
+        )
+        items.append(item)
+        startReading(item.id) { [reader] in try await reader(url) }
+        return .added
+    }
+
+    func add(urls: [URL]) {
+        for url in urls { add(url: url) }
+    }
+
+    /// An image with no file behind it (dragged from a browser, pasted).
+    @discardableResult
+    func add(imageData: Data, title: String = "Image") -> AttachmentAddOutcome {
+        guard items.count < AttachmentRules.maximumCount else {
+            notice = "Up to \(AttachmentRules.maximumCount) files at a time. Remove one first."
+            return .full
+        }
+        notice = nil
+        let item = AttachmentItem(id: UUID(), title: title, url: nil, kind: .image, state: .reading)
+        items.append(item)
+        startReading(item.id) { try await DocumentReader.readImage(data: imageData, title: title) }
+        return .added
+    }
+
+    /// A document that is already read (the front app's page, for example).
+    @discardableResult
+    func add(document: ReadDocument) -> AttachmentAddOutcome {
+        if let url = document.sourceURL {
+            let outcome = AttachmentRules.outcome(adding: url, to: items.compactMap(\.url))
+            guard outcome == .added else { return outcome }
+        } else if items.count >= AttachmentRules.maximumCount {
+            return .full
+        }
+        items.append(AttachmentItem(id: UUID(), title: document.title, url: document.sourceURL, kind: document.kind, state: .ready(document)))
+        return .added
+    }
+
+    func remove(id: UUID) {
+        readTasks[id]?.cancel()
+        readTasks[id] = nil
+        items.removeAll { $0.id == id }
+        notice = nil
+    }
+
+    func clear() {
+        readTasks.values.forEach { $0.cancel() }
+        readTasks = [:]
+        items = []
+        notice = nil
+    }
+
+    private func startReading(_ id: UUID, _ read: @escaping @Sendable () async throws -> ReadDocument) {
+        readTasks[id] = Task { [weak self] in
+            let state: AttachmentItem.State
+            do {
+                let document = try await read()
+                state = .ready(document)
+            } catch {
+                state = .failed((error as? LocalizedError)?.errorDescription ?? "Couldn't read this file.")
+            }
+            guard !Task.isCancelled, let self, let position = self.items.firstIndex(where: { $0.id == id }) else { return }
+            self.items[position].state = state
+            if case .ready(let document) = state {
+                self.items[position].kind = document.kind
+                if document.sourceURL == nil { self.items[position].title = document.title }
+            }
+            self.readTasks[id] = nil
+        }
+    }
+
+    /// Waits until nothing is still being read, or until `timeout` seconds pass.
+    func waitUntilRead(timeout: TimeInterval = 6) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while isReading, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 60_000_000)
+        }
+    }
+
+    // MARK: For the model
+
+    /// What to add to the next question: the documents' text (whole, or the parts
+    /// that match the question; see DocumentContext) and any attached pictures.
+    /// Files still being read are left out; `waitUntilRead()` first if you can wait.
+    func contextForNextTurn(
+        question: String,
+        budgetCharacters: Int = DocumentContext.defaultBudgetCharacters
+    ) -> (text: String, images: [(data: Data, label: String)]) {
+        Self.context(question: question, documents: documents, budgetCharacters: budgetCharacters)
+    }
+
+    nonisolated static let maximumImages = 3
+
+    nonisolated static func context(
+        question: String,
+        documents: [ReadDocument],
+        budgetCharacters: Int
+    ) -> (text: String, images: [(data: Data, label: String)]) {
+        guard !documents.isEmpty else { return ("", []) }
+        let text = DocumentContext.build(for: question, documents: documents, budgetCharacters: budgetCharacters)
+        let images = documents.compactMap { document -> (data: Data, label: String)? in
+            guard let data = document.imageData else { return nil }
+            return (data, "attached picture \"\(document.title)\" (given by the person, not their screen)")
+        }
+        return (text, Array(images.prefix(maximumImages)))
+    }
+}
+
+// MARK: - Chips
+
+/// The attached files as a row of chips. `compact` is for the notch panel;
+/// the regular size is for the chat window.
+struct AttachmentChipsView: View {
+    @ObservedObject var shelf: AttachmentShelf
+    var compact: Bool
+
+    /// `shelf: nil` means `AttachmentShelf.shared`.
+    init(shelf: AttachmentShelf? = nil, compact: Bool = false) {
+        self.shelf = shelf ?? .shared
+        self.compact = compact
+    }
+
+    var body: some View {
+        if !shelf.items.isEmpty || shelf.notice != nil {
+            VStack(alignment: .leading, spacing: 6) {
+                if !shelf.items.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: compact ? 6 : 8) {
+                            ForEach(shelf.items) { item in
+                                AttachmentChip(item: item, compact: compact) { shelf.remove(id: item.id) }
+                            }
+                        }
+                        .padding(.vertical, 1)
+                    }
+                }
+                if let notice = shelf.notice {
+                    Text(notice)
+                        .font(.system(size: compact ? 10.5 : 12))
+                        .foregroundColor(DS.Colors.warningText)
+                }
+            }
+        }
+    }
+}
+
+struct AttachmentChip: View {
+    let item: AttachmentItem
+    var compact: Bool
+    let onRemove: () -> Void
+    @State private var isHovering = false
+
+    private var iconName: String {
+        if item.isFailed { return "exclamationmark.triangle.fill" }
+        switch item.kind {
+        case .pdf: return "doc.richtext.fill"
+        case .image: return "photo.fill"
+        case .csv: return "tablecells.fill"
+        case .code, .json: return "chevron.left.forwardslash.chevron.right"
+        case .webPage, .html: return "globe"
+        case .markdown, .text, .richText, .none: return "doc.text.fill"
+        }
+    }
+
+    private var iconTint: Color {
+        if item.isFailed { return DS.Colors.warning }
+        switch item.kind {
+        case .pdf: return Color(hex: "#FF6B6B")
+        case .image: return Color(hex: "#C792EA")
+        case .csv: return DS.Colors.success
+        case .code, .json: return DS.Colors.codeText
+        case .webPage, .html: return DS.Colors.blue400
+        default: return DS.Colors.textSecondary
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: compact ? 6 : 9) {
+            ZStack {
+                RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous)
+                    .fill(iconTint.opacity(0.16))
+                if case .reading = item.state {
+                    ProgressView().controlSize(.small).scaleEffect(compact ? 0.55 : 0.7)
+                } else if case .ready(let document) = item.state, let data = document.imageData, let image = NSImage(data: data) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: compact ? 22 : 32, height: compact ? 22 : 32)
+                } else {
+                    Image(systemName: iconName)
+                        .font(.system(size: compact ? 10 : 13, weight: .semibold))
+                        .foregroundColor(iconTint)
+                }
+            }
+            .frame(width: compact ? 22 : 32, height: compact ? 22 : 32)
+            .clipShape(RoundedRectangle(cornerRadius: compact ? 5 : 7, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.title)
+                    .font(.system(size: compact ? 11 : 13, weight: .medium))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if !compact || item.isFailed {
+                    Text(item.shortDetail)
+                        .font(.system(size: compact ? 9.5 : 11))
+                        .foregroundColor(item.isFailed ? DS.Colors.warningText : DS.Colors.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: item.isFailed ? (compact ? 220 : 280) : (compact ? 130 : 180), alignment: .leading)
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: compact ? 7.5 : 9, weight: .bold))
+                    .foregroundColor(isHovering ? DS.Colors.textPrimary : DS.Colors.textTertiary)
+                    .frame(width: compact ? 14 : 18, height: compact ? 14 : 18)
+                    .background(Circle().fill(Color.white.opacity(isHovering ? 0.14 : 0.07)))
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .accessibilityLabel("Remove \(item.title)")
+        }
+        .padding(.leading, compact ? 5 : 6)
+        .padding(.trailing, compact ? 6 : 9)
+        .padding(.vertical, compact ? 4 : 6)
+        .background(
+            RoundedRectangle(cornerRadius: compact ? 9 : 12, style: .continuous)
+                .fill(Color.white.opacity(0.055))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: compact ? 9 : 12, style: .continuous)
+                .stroke(item.isFailed ? DS.Colors.warning.opacity(0.45) : Color.white.opacity(0.09), lineWidth: 0.75)
+        )
+        .onHover { isHovering = $0 }
+        .help(item.isFailed ? item.detail : (item.url?.path ?? item.title))
+    }
+}
+
+// MARK: - Drop target
+
+extension View {
+    /// Accepts files and images dropped on this view and attaches them.
+    /// While something is dragged over it, a "Drop to attach" highlight is shown
+    /// and `onTargetedChange` is called (the notch uses it to open itself).
+    func attachmentDropTarget(
+        shelf: AttachmentShelf? = nil,
+        cornerRadius: CGFloat = 14,
+        showsHighlight: Bool = true,
+        onTargetedChange: ((Bool) -> Void)? = nil
+    ) -> some View {
+        modifier(AttachmentDropModifier(
+            shelf: shelf ?? .shared, cornerRadius: cornerRadius, showsHighlight: showsHighlight, onTargetedChange: onTargetedChange
+        ))
+    }
+}
+
+struct AttachmentDropModifier: ViewModifier {
+    let shelf: AttachmentShelf
+    var cornerRadius: CGFloat
+    var showsHighlight: Bool
+    var onTargetedChange: ((Bool) -> Void)?
+    @State private var isTargeted = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if isTargeted && showsHighlight {
+                    AttachmentDropHighlight(cornerRadius: cornerRadius)
+                        .transition(.opacity)
+                        .allowsHitTesting(false)
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: isTargeted)
+            .onDrop(of: [.fileURL, .image], isTargeted: $isTargeted) { providers in
+                AttachmentDropHandler.handle(providers, shelf: shelf)
+            }
+            .onChange(of: isTargeted) { _, targeted in onTargetedChange?(targeted) }
+    }
+}
+
+/// What is shown over a drop target while a file is held above it.
+struct AttachmentDropHighlight: View {
+    var cornerRadius: CGFloat = 14
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(Color.black.opacity(0.62))
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(DS.Colors.blue500.opacity(0.14))
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(DS.Colors.blue400, style: StrokeStyle(lineWidth: 1.5, dash: [7, 5]))
+                .padding(6)
+            VStack(spacing: 8) {
+                Image(systemName: "arrow.down.doc.fill")
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundColor(DS.Colors.blue400)
+                Text("Drop to ask about it")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(DS.Colors.textPrimary)
+                Text("PDF, text, code, tables, Word, images. Up to \(AttachmentRules.maximumCount).")
+                    .font(.system(size: 12))
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(16)
+        }
+    }
+}
+
+enum AttachmentDropHandler {
+    /// Returns true when at least one dropped item is something that can be attached.
+    static func handle(_ providers: [NSItemProvider], shelf: AttachmentShelf) -> Bool {
+        var accepted = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                accepted = true
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url, url.isFileURL else { return }
+                    Task { @MainActor in shelf.add(url: url) }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                accepted = true
+                let suggestedName = provider.suggestedName ?? "Image"
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data else { return }
+                    Task { @MainActor in shelf.add(imageData: data, title: suggestedName) }
+                }
+            }
+        }
+        return accepted
+    }
+}
