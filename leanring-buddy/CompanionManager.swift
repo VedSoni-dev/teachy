@@ -781,6 +781,7 @@ final class CompanionManager: ObservableObject {
             // keep running until the user starts a new agent task.
             currentResponseTask?.cancel()
             speechSynthesizer.stopPlayback()
+            SceneDirector.shared.stop()
             clearDetectedElementLocation()
             clearActiveScreenDrawInstruction()
             mouseOutlineTracker.startTracking()
@@ -956,7 +957,7 @@ final class CompanionManager: ObservableObject {
           in the same reply. If you can't confidently identify a specific, pointable target (vague
           references like "that tab" without a clear match), describe it in words instead — don't
           say "here" with nothing backing it, that's worse than not pointing at all.
-        - When a picture would explain it better than words — how a machine or a body part works, what a real object looks like inside, a concept, a comparison, numbers worth charting, or they say "show me" / "draw" / "in 3D" — add [SHOW: what to draw, in a few words] at the end and keep what you SAY to one sentence. Teachy then draws it for them: a 3D model they can turn and click, a diagram card, or a chart. Don't use [SHOW:] for questions about what's on their screen right now; point instead.
+        \(SceneDirector.voicePromptRules)
         - When they want it DONE, do it rather than explain it: [DO:] for a single native command, [JOB:] for real multi-step work, [GUIDE:] when they'd rather click through it themselves with you walking them through each step. If it's unclear whether they want you to do it, answer, then offer in one short line ("want me to just do it?").
         - When they want real multi-step work DONE for them — research something on the web, sort or rename files, build or change something, anything across several apps or their connected services — add [JOB: the whole task in one clear sentence, with every detail they gave] and SAY one short line that you're on it. A job runs in the background, shows its plan, and asks them before anything risky. Don't use [JOB:] for a single native command (that's [DO:]) or when they'd rather do it themselves with you guiding (that's [GUIDE:]).
         \(WritingPrompt.voicePromptRule)
@@ -1007,6 +1008,7 @@ final class CompanionManager: ObservableObject {
     private func sendCompanionChatResponse(transcript: String) {
         currentResponseTask?.cancel()
         speechSynthesizer.stopPlayback()
+        SceneDirector.shared.stop()
 
         currentResponseTask = Task {
             voiceState = .processing
@@ -1174,12 +1176,22 @@ final class CompanionManager: ObservableObject {
                 streamingSpeech.finish(fullResponseText)
                 ChatTimeline.shared.streamingReply(text: fullResponseText, isFinal: true)
 
-                // [SHOW: …] starts a drawing right away, while the sentence is still being spoken.
+                // [SHOW: …] draws and explains something aloud while it builds; [MARK: …] draws on
+                // what is on their screen right now. The drawing narrates itself in Teachy's voice.
+                SceneDirector.shared.onFollowUpQuestion = { [weak self] question in
+                    self?.submitSyntheticCompanionRequest(question)
+                }
+                SceneDirector.shared.speak = { [weak self] sentence in
+                    guard let self else { return }
+                    await self.speechSynthesizer.finishStream()            // let the one-line reply finish
+                    try? await self.speechSynthesizer.speakText(sentence)  // returns when the sentence has played
+                }
+                SceneDirector.shared.cancelSpeech = { [weak self] in self?.speechSynthesizer.stopPlayback() }
                 if let showRequest = SceneDirector.extractShowRequest(from: fullResponseText).request {
-                    SceneDirector.shared.onFollowUpQuestion = { [weak self] question in
-                        self?.submitSyntheticCompanionRequest(question)
-                    }
                     SceneDirector.shared.show(showRequest)
+                } else if let markRequest = SceneDirector.extractMarkRequest(from: fullResponseText).request,
+                          let markCapture = screenCaptures.first(where: { $0.isCursorScreen }) ?? screenCaptures.first {
+                    SceneDirector.shared.annotate(question: markRequest, screenshotJPEG: markCapture.imageData, displayFrame: markCapture.displayFrame)
                 }
 
                 // [JOB: …] hands real multi-step work to a background agent job: it shows its
@@ -1218,7 +1230,7 @@ final class CompanionManager: ObservableObject {
                     )
                 }
 
-                let parseResult = Self.parsePointingCoordinates(from: SceneDirector.extractShowRequest(from: replyWithoutWalkTag).text)
+                let parseResult = Self.parsePointingCoordinates(from: SceneDirector.extractMarkRequest(from: SceneDirector.extractShowRequest(from: replyWithoutWalkTag).text).text)
                 // Strip [REMEMBER: ...] tags before this ever reaches speech/history; the
                 // facts go straight into the Brain (PROFILE.md "About me").
                 let (spokenTextWithoutMemoryTags, rememberedFacts) = CompanionRememberTagParser.extractFactsAndStrip(from: parseResult.spokenText)

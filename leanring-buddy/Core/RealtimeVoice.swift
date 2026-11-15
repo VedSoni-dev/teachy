@@ -264,6 +264,8 @@ final class RealtimeVoice {
                 print("🔊 Realtime voice: first audio \(String(format: "%.2f", Date().timeIntervalSince(current.startedAt))) s after the sentence was sent")
             }
             schedule(pcm16: pcm, for: current)
+            // Lets a saved drawing video carry the narration.
+            SceneDirector.shared.appendNarrationAudio(pcm, sampleRate: 24_000)
         case "response.done":
             guard let current = utterance else { return }
             current.responseDone = true
