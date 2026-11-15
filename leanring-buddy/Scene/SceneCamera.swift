@@ -355,6 +355,17 @@ enum SceneFraming {
         return 0.3 * max(0, 1 - facing / 0.45)
     }
 
+    /// How much a view looks at a part from behind: 0 when the camera is on the side of the part that
+    /// faces out of the model (or the part is near the middle, where no side is "out"), up to 0.4 when
+    /// it looks at the part from straight across the model.
+    static func facingPenalty(direction: SceneVec3, part: SceneVec3, model: SceneBox) -> Double {
+        let outward = part - model.center
+        let offCentre = simd_length(outward) / max(model.radius, 1e-9)
+        guard offCentre > 0.15, simd_length(direction) > 1e-9 else { return 0 }
+        let facing = simd_dot(simd_normalize(direction), simd_normalize(outward))
+        return 0.4 * min(offCentre / 0.6, 1) * max(0, 0.25 - facing) / 1.25
+    }
+
     static func chooseDirection(blocked: [Double], extra: [Double] = [], preference: Double = 0.035) -> Int {
         var best = 0
         var bestCost = Double.greatestFiniteMagnitude

@@ -98,6 +98,34 @@ struct SceneHistoryStore {
     }
 
     /// Newest first.
+    /// Replaces a saved drawing's scene (and picture) with a later version of it: a drawing that was
+    /// refined after it was saved ("zoom in on the turbine", a tapped part). Its title, question and
+    /// date stay; a video made from the older version is deleted so the next export is current.
+    @discardableResult
+    func update(id: String, log: SceneReplayLog, thumbnailPNG: Data?, narration: SceneNarrationAudio = SceneNarrationAudio()) -> SceneHistoryEntry? {
+        guard Self.isValidID(id), log.entries.contains(where: { $0.command.verb != .say }) else { return nil }
+        let folder = folder(for: id)
+        let metaURL = folder.appendingPathComponent("meta.json")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: metaURL), var entry = try? decoder.decode(SceneHistoryEntry.self, from: data) else { return nil }
+        entry.duration = log.duration
+        if !narration.isEmpty { entry.narrationSampleRate = narration.sampleRate }
+        do {
+            try log.encoded().write(to: folder.appendingPathComponent("scene.json"), options: .atomic)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(entry).write(to: metaURL, options: .atomic)
+            if let thumbnailPNG { try thumbnailPNG.write(to: thumbnailURL(for: id), options: .atomic) }
+            if !narration.isEmpty { try narration.data().write(to: folder.appendingPathComponent("narration.pcm"), options: .atomic) }
+            try? FileManager.default.removeItem(at: videoURL(for: id))
+            return entry
+        } catch {
+            return nil
+        }
+    }
+
     func entries() -> [SceneHistoryEntry] {
         guard let folders = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return [] }
         let decoder = JSONDecoder()

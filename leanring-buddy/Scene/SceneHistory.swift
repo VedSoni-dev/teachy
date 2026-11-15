@@ -54,6 +54,14 @@ final class SceneHistory: ObservableObject {
         return entry
     }
 
+    /// Saves a later version of a drawing over the one kept under `id` (see `SceneHistoryStore.update`).
+    @discardableResult
+    func update(id: String, log: SceneReplayLog, thumbnail: NSImage?, narration: SceneNarrationAudio = SceneNarrationAudio()) -> SceneHistoryEntry? {
+        let entry = store.update(id: id, log: log, thumbnailPNG: thumbnail.flatMap(Self.png), narration: narration)
+        if entry != nil { reload() }
+        return entry
+    }
+
     func thumbnail(for id: String) -> NSImage? {
         NSImage(contentsOf: store.thumbnailURL(for: id))
     }
@@ -61,8 +69,12 @@ final class SceneHistory: ObservableObject {
     /// Plays a saved drawing again on screen, with its original timing.
     func replay(_ id: String) {
         guard let log = store.log(for: id) else { return }
+        replayingID = id
         player?(log)
     }
+
+    /// The saved drawing most recently played with `replay(_:)`, so a refinement of it can be saved over it.
+    private(set) var replayingID: String?
 
     /// Renders a saved drawing to `video.mp4` in its folder and returns where it is. A drawing
     /// already rendered is returned at once.

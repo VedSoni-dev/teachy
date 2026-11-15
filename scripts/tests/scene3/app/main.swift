@@ -127,6 +127,7 @@ func runAll() async {
     await replaying()
     await events()
     await bigScenes()
+    await roughEdges()
 
     print("\n\(checks) checks, \(failures) failures")
     if !notes.isEmpty {
@@ -755,12 +756,13 @@ func mouseEvent(_ type: NSEvent.EventType, at point: CGPoint, in window: NSWindo
 /// A scroll-wheel event made the way the system makes them (a CGEvent turned into an NSEvent).
 /// It belongs to no window, so its `locationInWindow` is its screen position: the point is
 /// given in the window's coordinates and placed there.
-func scrollEvent(lines: Int32 = 0, pixelsX: Int32 = 0, pixelsY: Int32 = 0, at windowPoint: CGPoint, command: Bool = false) -> NSEvent? {
+func scrollEvent(lines: Int32 = 0, pixelsX: Int32 = 0, pixelsY: Int32 = 0, at windowPoint: CGPoint, command: Bool = false, shift: Bool = false) -> NSEvent? {
     let precise = pixelsX != 0 || pixelsY != 0
     guard let event = CGEvent(scrollWheelEvent2Source: nil, units: precise ? .pixel : .line, wheelCount: 2, wheel1: precise ? pixelsY : lines, wheel2: pixelsX, wheel3: 0) else { return nil }
     let screenHeight = NSScreen.screens.first?.frame.height ?? 0
     event.location = CGPoint(x: windowPoint.x, y: screenHeight - windowPoint.y)
     if command { event.flags = .maskCommand }
+    if shift { event.flags = .maskShift }
     return NSEvent(cgEvent: event)
 }
 
@@ -879,21 +881,39 @@ func events() async {
             note("a scroll-wheel NSEvent could not be made in this process, so wheel zoom was not exercised with a real event")
         }
 
-        // Trackpad: two fingers slide the view; with Command they zoom.
+        // Trackpad (and Magic Mouse): two fingers zoom toward the cursor, like the wheel; with Shift they slide the view.
         controller.recenter()
         await pause(2.2)
         before = controller.displayedPose
-        if let swipe = scrollEvent(pixelsX: 40, pixelsY: 0, at: inWindow(middle)), swipe.hasPreciseScrollingDeltas {
+        if let swipe = scrollEvent(pixelsX: 0, pixelsY: 60, at: inWindow(cursor)), swipe.hasPreciseScrollingDeltas {
+            let reported = view.convert(swipe.locationInWindow, from: nil)
+            let cursorNDC = SceneVec2((Double(reported.x) - Double(view.bounds.width) / 2) / (Double(view.bounds.width) / 2), (Double(reported.y) - Double(view.bounds.height) / 2) / (Double(view.bounds.height) / 2))
+            let under = before.center + before.basis.right * (cursorNDC.x * lens.tanHorizontal * before.distance) + before.basis.up * (cursorNDC.y * lens.tanVertical * before.distance)
             view.scrollWheel(with: swipe)
             after = controller.displayedPose
-            expect(abs(after.distance - before.distance) < 1e-9 && simd_dot(after.center - before.center, before.basis.right) < -1e-4, "two fingers sideways slide the view (\(simd_dot(after.center - before.center, before.basis.right)))")
+            expect(after.distance < before.distance * 0.7, "two fingers up zoom in, like the wheel (\(before.distance) → \(after.distance))")
+            let landed = SceneFraming.project(under, pose: after, lens: lens).ndc
+            expect(abs(landed.x - cursorNDC.x) < 0.02 && abs(landed.y - cursorNDC.y) < 0.02, "toward the cursor (\(landed) vs \(cursorNDC))")
             before = after
-            if let zoom = scrollEvent(pixelsX: 0, pixelsY: 60, at: inWindow(middle), command: true) {
-                view.scrollWheel(with: zoom)
-                expect(controller.displayedPose.distance < before.distance * 0.9, "with Command held they zoom")
+            if let back = scrollEvent(pixelsX: 0, pixelsY: -60, at: inWindow(cursor)) {
+                view.scrollWheel(with: back)
+                expect(controller.displayedPose.distance > before.distance * 1.4, "and down zoom out")
+            }
+            before = controller.displayedPose
+            if let slide = scrollEvent(pixelsX: 40, pixelsY: 0, at: inWindow(middle), shift: true) {
+                view.scrollWheel(with: slide)
+                after = controller.displayedPose
+                expect(abs(after.distance - before.distance) < 1e-9 && simd_dot(after.center - before.center, before.basis.right) < -1e-4,
+                       "with Shift they slide the view instead (\(simd_dot(after.center - before.center, before.basis.right)))")
+            }
+            before = controller.displayedPose
+            if let wheelSlide = scrollEvent(lines: 3, at: inWindow(middle), shift: true) {
+                view.scrollWheel(with: wheelSlide)
+                after = controller.displayedPose
+                expect(abs(after.distance - before.distance) < 1e-9 && simd_length(after.center - before.center) > 1e-4, "Shift with a mouse wheel slides too")
             }
         } else {
-            note("a precise (trackpad) scroll NSEvent could not be made in this process, so two-finger panning was not exercised with a real event")
+            note("a precise (trackpad) scroll NSEvent could not be made in this process, so two-finger zoom was not exercised with a real event")
         }
 
         // Pinch.
@@ -940,16 +960,34 @@ func events() async {
         await pause(view.tapDelay + 0.25)
         expect(tapped == ["r.stage1"], "then it asks about the part (\(tapped))")
 
-        // Escape resets.
+        // Escape resets. The real path: a click goes through the window as AppKit delivers it, which
+        // gives the model the keyboard; then the key goes through the window to whatever has it.
         expect(controller.cameraMode != .whole, "the view is still on the part")
+        expect(view.needsPanelToBecomeKey && panel.canBecomeKey && (panel as? NSPanel)?.becomesKeyOnlyIfNeeded == true,
+               "the panel takes the keyboard only when the model itself is clicked")
+        expect((panel.styleMask.contains(.nonactivatingPanel)), "and is non-activating, so the person's app stays the active app")
+        panel.makeFirstResponder(nil)
+        panel.sendEvent(mouseEvent(.leftMouseDown, at: spot, in: panel))
+        panel.sendEvent(mouseEvent(.leftMouseUp, at: spot, in: panel))
+        expect(panel.firstResponder === view, "a click on the model, sent through the window, gives the view the keyboard (first responder: \(String(describing: panel.firstResponder)))")
+        if panel.isKeyWindow {
+            print("  the panel became the key window on the click")
+        } else {
+            note("the panel did not become the key window on the click here: this test process may not own a key window at all (activation policy .prohibited, so it never takes the keyboard from the person's real apps). needsPanelToBecomeKey is set, which is what AppKit asks a non-activating panel's clicked view.")
+        }
+        await pause(view.tapDelay + 0.3)
         if let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
                                          context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53) {
-            view.keyDown(with: escape)
+            panel.sendEvent(escape)
             await pause(2.2)
-            expect(controller.cameraMode == .whole && controller.focusIDs.isEmpty && !controller.model.canRecenter, "Escape goes back to the whole model")
+            expect(controller.cameraMode == .whole && controller.focusIDs.isEmpty && !controller.model.canRecenter, "Escape, sent through the window, goes back to the whole model")
         }
-        expect(view.acceptsFirstResponder && panel.canBecomeKey, "the view can take the keyboard (it becomes first responder when clicked)")
-        note("Escape was delivered to the view's keyDown directly. In the app the floating panel has to be the key window for the key to arrive; clicking the model makes the view first responder, but that hand-off was not exercised here (the test window is off every display).")
+        // Escape also arrives as "cancel" when another control in the panel has the keyboard.
+        session.perform("focus r.stage1 dur=0.2")
+        await pause(0.6)
+        view.cancelOperation(nil)
+        await pause(2.2)
+        expect(controller.cameraMode == .whole, "and as cancelOperation")
 
         // Double-click on empty space also goes back.
         view.mouseDown(with: mouseEvent(.leftMouseDown, at: spot, in: panel, clicks: 2))
@@ -1009,6 +1047,102 @@ func bigScenes() async {
         expect((0..<70).allSatisfy { many.node("f\($0)") != nil }, "every named fan is still there")
         expect(many.controller.projectedBounds(ofParts: ["f69"]) != nil || many.node("f69") != nil, "including the last")
         many.session.clear()
+    }
+}
+
+@MainActor
+func roughEdges() async {
+    await section("go back, then a part at the end of the model is seen from its own end") {
+        let stage = Stage(script: turbofan)
+        let controller = stage.controller
+        // Something renders each frame, as in the app, so SceneKit's own moves (explode) run.
+        @MainActor func playRendering(_ seconds: Double) { stage.play(seconds) { _ = controller.renderFrame(size: CGSize(width: 64, height: 48)) } }
+        stage.session.perform("focus j.turbine zoom=tight\nghost j.casing j.nacelle\ndetail j.turbine\nhighlight j.turbine")
+        playRendering(3)
+        stage.session.perform("explode\nframe all")
+        playRendering(3)
+        expect(controller.liveState.isExploded, "exploded")
+        guard let back = SceneRefineClassifier.instantScript(request: "go back", parts: []) else { expect(false, "go back has an instant script"); return }
+        stage.session.perform(back)
+        playRendering(3)
+        expect(!controller.liveState.isExploded && controller.ghostedIDs.isEmpty && controller.highlightedIDs.isEmpty && controller.cameraMode == .whole,
+               "go back puts the model together, solid, unlit, whole (exploded \(controller.liveState.isExploded), ghosts \(controller.ghostedIDs))")
+        expect(!controller.visibleLabels.contains { ["j.turbine.stator1", "j.turbine.s1.blade0", "j.turbine.s1.hub"].contains($0.part) }, "and puts away the labels detail added: \(controller.visibleLabels.map(\.part))")
+        stage.session.perform("focus j.fan zoom=medium\nhighlight j.fan")
+        playRendering(3)
+        let pose = controller.displayedPose
+        guard let fan = controller.boundingBox(ofParts: ["j.fan"]), let whole = controller.boundingBox(ofParts: ["j"]) else { expect(false, "boxes"); return }
+        let outward = simd_normalize(fan.center - whole.center)
+        expect(simd_dot(pose.direction, outward) > 0.1, "the fan is seen from the intake side, not from across the engine (facing \(simd_dot(pose.direction, outward)))")
+        expect(controller.projectedBounds(ofParts: ["j.fan"])?.isInside == true && controller.occlusion(ofParts: ["j.fan"]) < 0.5, "in view and not hidden")
+        writePNG(stage.session.modelWindow?.snapshot(), "fan-after-go-back.png")
+        stage.session.clear()
+    }
+
+    await section("detail labels: put away by frame all and Recenter, back when the part is detailed again") {
+        let stage = Stage(script: turbofan)
+        let controller = stage.controller
+        stage.session.perform("focus j.fan zoom=tight dur=0.3\ndetail j.fan")
+        stage.play(0.8)
+        let added = ["j.fan.hub", "j.fan.dshaft"]
+        expect(added.allSatisfy { part in controller.visibleLabels.contains { $0.part == part } }, "detail's labels show: \(controller.visibleLabels.map(\.part))")
+        stage.session.perform("frame all dur=0.3")
+        stage.play(0.8)
+        expect(!controller.visibleLabels.contains { added.contains($0.part) }, "frame all puts them away")
+        expect(controller.visibleLabels.contains { $0.part == "j.fan" }, "the script's own labels stay")
+        expect(controller.liveState.parts.first { $0.id == "j.fan" }?.canDetail == true, "and the fan is offered for detail again")
+        let nodes = stage.nodeCount
+        stage.session.perform("focus j.fan zoom=tight dur=0.3\ndetail j.fan")
+        stage.play(0.8)
+        expect(added.allSatisfy { part in controller.visibleLabels.contains { $0.part == part } } && stage.nodeCount == nodes, "detailing again shows them again, without adding pieces twice")
+        controller.recenter()
+        stage.play(2)
+        expect(!controller.visibleLabels.contains { added.contains($0.part) }, "Recenter puts them away too")
+        stage.session.clear()
+    }
+
+    await section("leaders on spinning parts stay attached every frame") {
+        let stage = Stage(script: "scene3d f title=\"Fan\"\nfan f r=1 blades=6 rpm=60 label=\"Fan\"\nlabel b on=f.blade0 text=\"A blade\"")
+        let controller = stage.controller
+        @MainActor func leaderEnds(_ id: String) -> (simd_float3, simd_float3)? {
+            guard let leader = controller.scene.rootNode.childNode(withName: "_leader:" + id, recursively: true) else { return nil }
+            return (leader.simdConvertPosition(simd_float3(0, -0.5, 0), to: nil), leader.simdConvertPosition(simd_float3(0, 0.5, 0), to: nil))
+        }
+        var hubDrift: Float = 0, bladeGap: Float = 0
+        var first: simd_float3?
+        stage.play(3) {
+            if let (a, _) = leaderEnds("f") {
+                if first == nil { first = a }
+                hubDrift = max(hubDrift, simd_length(a - first!))
+            }
+            if let (a, b) = leaderEnds("f.blade0"), let blade = stage.node("f.blade0") {
+                // The end nearer the blade must stay on the blade, every frame.
+                let near = simd_length(a - blade.simdWorldPosition) < simd_length(b - blade.simdWorldPosition) ? a : b
+                bladeGap = max(bladeGap, simd_length(near - blade.simdWorldPosition))
+            }
+        }
+        expect(first != nil && hubDrift < 0.02, "the fan's own leader lands on its axle and does not move while it spins (drift \(hubDrift))")
+        expect(bladeGap < 0.45, "a blade's leader goes round with the blade, frame by frame (largest gap \(bladeGap), blade half-length ~0.4)")
+        stage.session.clear()
+    }
+
+    await section("history: a refined drawing is saved over the one it came from") {
+        let folder = work.appendingPathComponent("history-\(UUID().uuidString.prefix(6))", isDirectory: true)
+        let store = SceneHistoryStore(root: folder)
+        var log = SceneReplayLog()
+        for (index, command) in SceneScriptParser.parse(turbofan).enumerated() { log.record(command, at: Double(index) * 0.1) }
+        guard let entry = store.save(log: log, question: "how a turbofan works", thumbnailPNG: Data([1, 2, 3])) else { expect(false, "saved"); return }
+        try? Data([9]).write(to: store.videoURL(for: entry.id))
+        var refined = log
+        for command in SceneScriptParser.parse("focus j.turbine zoom=tight\nghost j.casing\ndetail j.turbine") { refined.record(command, at: 9) }
+        let updated = store.update(id: entry.id, log: refined, thumbnailPNG: Data([4, 5]))
+        expect(updated?.id == entry.id && updated?.question == entry.question, "the same entry and question")
+        expect(store.log(for: entry.id) == refined && abs((updated?.duration ?? 0) - 9) < 1e-9, "with the refined log and its length")
+        expect((try? Data(contentsOf: store.thumbnailURL(for: entry.id))) == Data([4, 5]), "and the refined picture")
+        expect(!FileManager.default.fileExists(atPath: store.videoURL(for: entry.id).path), "a video of the older version is removed")
+        expect(store.entries().count == 1, "no second entry")
+        expect(store.update(id: "nonsense", log: refined, thumbnailPNG: nil) == nil, "an unknown id is refused")
+        try? FileManager.default.removeItem(at: folder)
     }
 }
 

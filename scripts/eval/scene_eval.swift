@@ -496,6 +496,9 @@ enum SceneEval {
             anchor.hostsOverlay = true
         }
         var spoken: [String] = []
+        // What the voice turn would keep in the conversation.
+        var answered: [(question: String, answer: String)] = []
+        director.onRefinementAnswered = { question, answer in answered.append((question, answer)) }
         director.speak = { text in
             spoken.append(text)
             try? await Task.sleep(nanoseconds: UInt64(min(spokenLength(text), 2.6) * 1_000_000_000))
@@ -508,10 +511,18 @@ enum SceneEval {
         let began = CACurrentMediaTime()
         // The headless scene's clock follows the wall clock, so the director's real timing applies.
         let clock = Timer(timeInterval: 1.0 / 30, repeats: true) { _ in
-            MainActor.assumeIsolated { scene.advance(to: CACurrentMediaTime() - began) }
+            MainActor.assumeIsolated {
+                scene.advance(to: CACurrentMediaTime() - began)
+                // A small frame each tick, as the window would draw, so SceneKit's own moves (explode) run in time.
+                _ = scene.modelWindow?.controller.renderFrame(size: CGSize(width: 64, height: 48))
+            }
         }
         RunLoop.main.add(clock, forMode: .common)
         try? await Task.sleep(nanoseconds: 3_000_000_000)
+        // Kept in the Drawings list (a temp folder), as a finished drawing would be, so refinements update it.
+        let saved = SceneHistory.shared.save(log: scene.log, question: "show me how a turbofan works in 3D", thumbnail: nil)
+        director.adoptSavedDrawing(saved?.id)
+        let savedLines = scene.log.entries.count
         guard let controller = scene.modelWindow?.controller else {
             print("refine: no 3D model to refine")
             return
@@ -550,9 +561,15 @@ enum SceneEval {
             let added = scene.log.entries.dropFirst(linesBefore).map(\.command.scriptLine)
             print("            (" + turn.reason + ") lines: " + added.joined(separator: " | "))
             if !spoken.isEmpty { print("            said: " + spoken.joined(separator: " ")) }
+            if let last = answered.last { print("            kept in the conversation: (\"\(last.question)\", \"\(last.answer)\")") }
             writePNG(scene.modelWindow?.snapshot(), to: folder.appendingPathComponent(String(format: "%02d-%@.png", index + 1, refineCase.name)))
         }
         let median = { (values: [Double]) in values.isEmpty ? Double.nan : values.sorted()[values.count / 2] }
+        print("  answers handed to the conversation: \(answered.count) of \(cases.count)")
+        if let id = saved?.id {
+            let kept = SceneHistory.shared.store.log(for: id)?.entries.count ?? 0
+            print("  the saved drawing now has \(kept) lines (\(savedLines) when first saved); entries in the Drawings list: \(SceneHistory.shared.entries.count)")
+        }
         print(String(format: "\nrefine: %d/%d right   camera moved after (median) %.2f s   first model line %.2f s   answer complete %.2f s", passed, cases.count, median(moves), median(firsts), median(totals)))
         print("  pictures: \(folder.path)")
         clock.invalidate()

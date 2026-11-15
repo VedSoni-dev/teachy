@@ -78,6 +78,10 @@ final class Scene3DSCNView: SCNView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    /// The model's panel only becomes key when the person clicks the model itself (it is a
+    /// non-activating panel, so their app stays the active one). From then on Escape reaches
+    /// this view; a click back in their app gives the keyboard back to it.
+    override var needsPanelToBecomeKey: Bool { true }
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
@@ -147,17 +151,20 @@ final class Scene3DSCNView: SCNView {
         dragPans = false
     }
 
-    /// A mouse wheel zooms toward the cursor. Two fingers on a trackpad slide the model
-    /// (with Command held they zoom); a pinch zooms.
+    /// Scrolling zooms toward the cursor, whatever does the scrolling: a mouse wheel, two fingers
+    /// on a trackpad, a Magic Mouse. With Shift held it slides the model instead (so does
+    /// option-drag or right-drag). A pinch zooms too.
     override func scrollWheel(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if event.hasPreciseScrollingDeltas, !event.modifierFlags.contains(.command) {
-            onPan?(event.scrollingDeltaX, -event.scrollingDeltaY)
-        } else {
-            let amount = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY * 0.01 : event.scrollingDeltaY * 0.09
-            guard amount != 0 else { return }
-            onZoom?(CGFloat(exp(Double(max(min(amount, 1.2), -1.2)))), point)
+        if event.modifierFlags.contains(.shift) {
+            // A wheel scrolls by lines, a trackpad by points. (Shift turns a wheel's turn into a sideways scroll.)
+            let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
+            onPan?(event.scrollingDeltaX * scale, -event.scrollingDeltaY * scale)
+            return
         }
+        let amount = event.hasPreciseScrollingDeltas ? event.scrollingDeltaY * 0.01 : event.scrollingDeltaY * 0.09
+        guard amount != 0 else { return }
+        onZoom?(CGFloat(exp(Double(max(min(amount, 1.2), -1.2)))), point)
     }
 
     override func magnify(with event: NSEvent) {
@@ -169,6 +176,9 @@ final class Scene3DSCNView: SCNView {
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { onEscape?() } else { super.keyDown(with: event) }
     }
+
+    /// Escape as AppKit's "cancel" (what it sends when something else in the panel has the keyboard).
+    override func cancelOperation(_ sender: Any?) { onEscape?() }
 }
 
 // MARK: - Controller
@@ -330,6 +340,10 @@ final class Scene3DController: NSObject {
     private var pendingAuto: PendingAuto?
     /// `label a on=j.fan`: the label's own id stands for the part it names.
     private var labelIDs: [String: String] = [:]
+    /// The labels `detail` added, by the part it detailed. They are put away by `frame all` (and so by
+    /// "go back" and Recenter), and come back when the part is detailed again.
+    private var detailLabels: [String: [String]] = [:]
+    private var suppressedLabels: Set<String> = []
     private var bulkGeometries: [String: SCNGeometry] = [:]
     private var bulkBoxes: [String: (low: simd_float3, high: simd_float3)] = [:]
     private var coilEnds: [String: (simd_float3, simd_float3)] = [:]
@@ -503,7 +517,7 @@ final class Scene3DController: NSObject {
         cameraMode = .whole; cameraMove = nil; focusIDs = []; focusBox = nil; pendingAuto = nil
         fitCenter = .zero; fitRadius = 2
         ghosts = [:]; hiddenIDs = []; highlights = [:]; flashes = []; detailed = []; sources = [:]; macroOf = [:]; labelTexts = [:]; bulkBuild = false
-        labelIDs = [:]; bulkGeometries = [:]; bulkBoxes = [:]; coilEnds = [:]; emissionOriginals = [:]
+        labelIDs = [:]; detailLabels = [:]; suppressedLabels = []; bulkGeometries = [:]; bulkBoxes = [:]; coilEnds = [:]; emissionOriginals = [:]
         policy.reset(); gesturePause.resume(); model.canRecenter = false
         shadowNode.isHidden = true
         model.title = ""; model.sliders = []; model.plots = []; model.chips = []; model.tappedLabel = nil
@@ -857,12 +871,44 @@ final class Scene3DController: NSObject {
     /// Where on a part its leader line lands, as an offset from the part's position. Found by
     /// hit-testing at refit rate, because the middle of a part's box is often thin air (a
     /// cable's curve, a hollow casing, a row of hangers).
+    /// Where each leader lands, in the part's own space, so it stays on the part however the part
+    /// moves or turns.
     private var leaderOffsets: [String: simd_float3] = [:]
+
+    /// The axle a part turns on, in world space, when it (or something it hangs from) spins.
+    private func spinAxle(of id: String) -> (origin: simd_float3, axis: simd_float3, spinner: String)? {
+        for name in lineage(of: id) {
+            guard abs(solvedRPM[name] ?? spins[name]?.rpm ?? 0) > 1e-6, let node = nodes[name], let base = baseOrientation[name] else { continue }
+            let local: simd_float3
+            if let explicit = spins[name]?.axis {
+                local = simd_float3(simd_normalize(explicit))
+            } else {
+                local = base.act(simd_float3(parts[name]?.shape.naturalAxis ?? SceneVec3(0, 1, 0)))
+            }
+            let axis = (node.parent ?? contentRoot).simdConvertVector(local, to: nil)
+            guard simd_length(axis) > 1e-6 else { continue }
+            return (node.simdWorldPosition, simd_normalize(axis), name)
+        }
+        return nil
+    }
+
+    /// Where a part's leader lands right now, if it has been worked out.
+    private func leaderLanding(_ id: String) -> simd_float3? {
+        guard let local = leaderOffsets[id], let node = nodes[id] else { return nil }
+        return node.simdConvertPosition(local, to: nil)
+    }
 
     private func leaderAnchor(for id: String, chipEnd: simd_float3, center: simd_float3, halfExtent: simd_float3, refresh: Bool) -> simd_float3 {
         guard let node = nodes[id], !isMovingPart(id) else { return center }
-        let origin = currentPosition(of: id, node: node)
-        if !refresh, let offset = leaderOffsets[id] { return origin + offset }
+        // A part that turns (a fan, a rotor): the leader lands on its axle, which stays put while
+        // the blades go round. Landing on a blade made the line jump every time it was measured again.
+        // A piece of something that turns (one blade of a fan) keeps the spot it was given, in its
+        // own space, so the line goes round with it frame by frame instead of hopping to another blade.
+        let axle = spinAxle(of: id)
+        if let axle, axle.spinner == id {
+            return axle.origin + axle.axis * simd_dot(center - axle.origin, axle.axis)
+        }
+        if let landing = leaderLanding(id), !refresh || axle != nil { return landing }
         // Aim at the nearest piece of the part, then stop where the line first touches it.
         prepareForHitTesting()
         var aim = center
@@ -889,7 +935,7 @@ final class Scene3DController: NSObject {
             // A touch inside the surface, so the line visibly lands on the part.
             anchor = surface + (aim - surface) * 0.12
         }
-        leaderOffsets[id] = anchor - origin
+        leaderOffsets[id] = node.simdConvertPosition(anchor, from: nil)
         return anchor
     }
 
@@ -953,7 +999,7 @@ final class Scene3DController: NSObject {
         for label in labels.values.sorted(by: { $0.index < $1.index }) {
             let id = label.partID
             // A part that is hidden or ghosted keeps no label; neither does one that is out of the picture.
-            var shown = !isEffectivelyHidden(id) && !isEffectivelyGhosted(id)
+            var shown = !isEffectivelyHidden(id) && !isEffectivelyGhosted(id) && !suppressedLabels.contains(id)
             guard shown, let node = nodes[id], let (boxLow, boxHigh) = labelBox(for: id, node: node, refresh: refresh) else {
                 label.chip.isHidden = true
                 label.leader.isHidden = true
@@ -995,7 +1041,7 @@ final class Scene3DController: NSObject {
         var targets: [String: (position: simd_float3, side: SceneLabelLayout.Side)] = [:]
         let items = fixed.map { entry -> SceneLabelLayout.Item in
             // Order chips by where their leader lands (it can be far from the middle of a long part), so leaders don't cross.
-            let landing = leaderOffsets[entry.label.partID].map { currentPosition(of: entry.label.partID, node: nodes[entry.label.partID]!) + $0 } ?? entry.center
+            let landing = leaderLanding(entry.label.partID) ?? entry.center
             return SceneLabelLayout.Item(id: entry.label.partID, anchor: flat(landing), size: entry.size,
                                          side: SceneLabelLayout.Side(script: entry.label.side))
         }
@@ -2383,7 +2429,10 @@ final class Scene3DController: NSObject {
             poses.append(view)
             blocked.append(sight.amount)
             found.append(sight.blockers)
-            edgeOn.append(SceneFraming.edgeOnPenalty(for: box, direction: direction))
+            // A part toward one end of the model is looked at from its own end (a fan from the intake,
+            // a nozzle from behind), not from across the model: its front is the side facing outward.
+            edgeOn.append(SceneFraming.edgeOnPenalty(for: box, direction: direction)
+                + SceneFraming.facingPenalty(direction: direction, part: box.center, model: modelBox))
             if poses.count == 1, sight.amount < 0.05, edgeOn[0] < 0.05 { break }
         }
         var index = SceneFraming.chooseDirection(blocked: blocked, extra: edgeOn)
@@ -2467,6 +2516,8 @@ final class Scene3DController: NSObject {
         if origin(of: c) == .narration, gesturePause.isPaused(now: now) { return }
         clearHighlights()
         restoreAutoGhosts()
+        // The finer pieces stay; their names go, so the whole model is not crowded with them.
+        for labels in detailLabels.values { suppressedLabels.formUnion(labels) }
         focusIDs = []
         focusBox = nil
         labelRowsDecidedFor = ""
@@ -2627,13 +2678,20 @@ final class Scene3DController: NSObject {
     /// `detail id`: a richer sub-assembly for the commonest ready-made parts. Anything else: nothing happens.
     private func detail(_ c: SceneCommand) {
         guard directsCamera else { return }
-        for id in resolve(c.targetIDs) where !detailed.contains(id) {
+        for id in resolve(c.targetIDs) {
+            if detailed.contains(id) {
+                // Detailed before and put away since: its labels come back.
+                for label in detailLabels[id] ?? [] { suppressedLabels.remove(label) }
+                labelRowsDecidedFor = ""
+                continue
+            }
             let commands = SceneDetail.commands(for: detailSubject(id))
             guard !commands.isEmpty else { continue }
             detailed.insert(id)
             for var command in commands {
                 command.cue = c.cue
                 apply(command)
+                if command.verb == .label, let target = command.string("on") { detailLabels[id, default: []].append(target) }
             }
         }
     }
@@ -2874,7 +2932,8 @@ final class Scene3DController: NSObject {
             }
             part.isGhosted = ghosts[id] != nil
             part.isHidden = hiddenIDs.contains(id)
-            part.canDetail = !detailed.contains(id) && SceneDetail.kind(of: detailSubject(id)) != nil
+            part.canDetail = (!detailed.contains(id) && SceneDetail.kind(of: detailSubject(id)) != nil)
+                || (detailLabels[id] ?? []).contains(where: suppressedLabels.contains)
             state.parts.append(part)
         }
         state.focus = focusIDs

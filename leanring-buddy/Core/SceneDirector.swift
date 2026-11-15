@@ -34,8 +34,12 @@ final class SceneDirector {
     var speak: ((String) async -> Void)?
     /// Silences whatever `speak` is saying. Called by `stop()`.
     var cancelSpeech: (() -> Void)?
-    /// Called when the person taps a follow-up chip or a part of a 3D model.
+    /// Called when the person taps a follow-up chip (or, with `refinesInPlace` off, a part of a 3D model).
     var onFollowUpQuestion: ((String) -> Void)?
+    /// A request about the drawing on screen was answered on the drawing itself (a tapped part, or
+    /// "zoom in on the turbine"): what was asked, and the sentences that were spoken in reply. The
+    /// voice turn keeps it in the conversation, so the next question can build on it.
+    var onRefinementAnswered: ((_ question: String, _ spokenAnswer: String) -> Void)?
     /// Seconds between handing a sentence to the voice and showing what it describes
     /// (voices take a moment to produce their first sound).
     var speechLeadTime: TimeInterval = 0.25
@@ -63,6 +67,10 @@ final class SceneDirector {
     private var beganAt = Date()
     private(set) var lastSummary: String?
     private var lastSummaryAt = Date.distantPast
+    /// The saved drawing the scene on screen is, so a refinement can update it rather than add another.
+    private(set) var lastSavedEntryID: String?
+    /// The refinement being answered: its question and the sentences spoken so far (nil when not refining).
+    private var refinementInProgress: (question: String, sentences: [String])?
 
     /// How the most recent `show` or `refine` went, for measuring (seconds from the request).
     struct TurnTiming {
@@ -87,15 +95,22 @@ final class SceneDirector {
             // A tapped part is answered on the drawing itself: the camera goes to it and one or two
             // sentences are spoken about it. (Before, it went out as a new question and the drawing was redrawn.)
             if self.refinesInPlace, self.scene.canRefine {
-                self.refine(Self.partQuestion(label: label, title: nil), tappedPart: id)
+                self.refine(Self.partQuestion(label: label, title: self.scene.log.title), tappedPart: id)
             } else {
                 self.onFollowUpQuestion?(Self.partQuestion(label: label, title: self.scene.log.title))
             }
         }
         scene.photoFetcher = { [photos] query in await photos.photo(for: query) }
-        scene.onSay = { [weak self] index, text in self?.sentenceArrived(index: index, text: text) }
+        scene.onSay = { [weak self] index, text in
+            guard let self else { return }
+            if self.refinementInProgress != nil { self.refinementInProgress?.sentences.append(text) }
+            self.sentenceArrived(index: index, text: text)
+        }
         scene.onFinished = { [weak self] in self?.sceneFinished() }
-        SceneHistory.shared.player = { [weak self] log in self?.replay(log) }
+        SceneHistory.shared.player = { [weak self] log in
+            self?.replay(log)
+            self?.adoptSavedDrawing(SceneHistory.shared.replayingID)
+        }
         SceneHistory.shared.photoFetcher = { [photos] query in await photos.photo(for: query) }
     }
 
@@ -153,6 +168,7 @@ final class SceneDirector {
         }
         let mouse = NSEvent.mouseLocation
         guard let screenFrame = SceneScreenMapping.displayFrame(containing: mouse, among: NSScreen.screens.map(\.frame)) ?? NSScreen.main?.frame else { return }
+        lastSavedEntryID = nil
         let context = Date().timeIntervalSince(lastSummaryAt) < followUpWindow ? lastSummary : nil
         begin(question: request, screenFrame: screenFrame, saves: true, filter: nil)
         lastTurn = TurnTiming(kind: .drawing, request: request, startedAt: Date())
@@ -185,6 +201,7 @@ final class SceneDirector {
         }
         if let instant = turn.instantScript { scene.perform(instant) }
         lastTurn = turn
+        refinementInProgress = (request, [])
         // The drawing stays "recent" for follow-ups while the person keeps working with it.
         if lastSummary != nil { lastSummaryAt = Date() }
         run(body: SceneRefinePrompt.requestBody(request: request, state: state, tappedPart: tappedPart), hasImages: false)
@@ -208,6 +225,7 @@ final class SceneDirector {
     /// Barge-in. The stream and the narration stop and the marks on the screen clear;
     /// a card or 3D model that is already up stays.
     func stop() {
+        reportRefinement()
         generation += 1
         streamTask?.cancel()
         streamTask = nil
@@ -231,6 +249,8 @@ final class SceneDirector {
         let mouse = NSEvent.mouseLocation
         let frame = SceneScreenMapping.displayFrame(containing: mouse, among: NSScreen.screens.map(\.frame)) ?? NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         savesToHistory = false
+        // Played from the Drawings list: which saved drawing it is is not known here, so a refinement of it is not saved over it.
+        lastSavedEntryID = nil
         scene.commandFilter = nil
         var anchor = SceneAnchor.display(frame: frame, timing: .stagger)
         placement?(&anchor)
@@ -336,8 +356,23 @@ final class SceneDirector {
             try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             guard let self, !Task.isCancelled, self.generation == turn else { return }
             self.scene.speechEnded()
+            self.reportRefinement()
         }
         speechTasks.append(task)
+    }
+
+    /// The drawing on screen is the saved drawing `id`: refinements of it are saved over it.
+    func adoptSavedDrawing(_ id: String?) {
+        lastSavedEntryID = id
+    }
+
+    /// Hands a finished (or interrupted) refinement to the conversation, once.
+    private func reportRefinement() {
+        guard let refinement = refinementInProgress else { return }
+        refinementInProgress = nil
+        let answer = refinement.sentences.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !answer.isEmpty else { return }
+        onRefinementAnswered?(refinement.question, answer)
     }
 
     // MARK: History and follow-ups
@@ -345,6 +380,14 @@ final class SceneDirector {
     private func sceneFinished() {
         let log = scene.log
         guard !log.isEmpty else { return }
+        if lastTurn.kind == .refinement {
+            // Without a voice nothing marks the end of the narration: the drawing is done, so is the answer.
+            if speak == nil { reportRefinement() }
+            lastSummary = log.summary
+            lastSummaryAt = Date()
+            saveRefinement()
+            return
+        }
         if savesToHistory {
             lastSummary = log.summary
             lastSummaryAt = Date()
@@ -361,7 +404,22 @@ final class SceneDirector {
                 return
             }
             let thumbnail = SceneVideoExporter.picture(of: self.scene, size: CGSize(width: 640, height: 360))
-            SceneHistory.shared.save(log: log, question: question, thumbnail: thumbnail, narration: self.scene.narration)
+            self.lastSavedEntryID = SceneHistory.shared.save(log: log, question: question, thumbnail: thumbnail, narration: self.scene.narration)?.id
+        }
+    }
+
+    /// The refined drawing replaces the saved one: the log carries the refinement's lines (camera,
+    /// ghosting, detail…) after the original ones, so replaying it ends where the person left it,
+    /// and the picture in the Drawings list shows the refined view.
+    private func saveRefinement() {
+        guard let id = lastSavedEntryID else { return }
+        let turn = generation
+        // After the camera has settled on what was asked for.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            guard let self, self.lastSavedEntryID == id else { return }
+            let log = self.scene.log
+            let thumbnail = self.generation == turn ? SceneVideoExporter.picture(of: self.scene, size: CGSize(width: 640, height: 360)) : nil
+            SceneHistory.shared.update(id: id, log: log, thumbnail: thumbnail, narration: self.scene.narration)
         }
     }
 

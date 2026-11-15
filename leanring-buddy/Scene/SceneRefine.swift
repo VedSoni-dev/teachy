@@ -107,7 +107,8 @@ enum SceneRefineClassifier {
     /// say plainly where to look (the model's own lines then do everything).
     static func instantScript(request: String, parts: [String]) -> String? {
         let lowered = " " + request.lowercased().replacingOccurrences(of: "’", with: "'") + " "
-        if wholePhrases.contains(where: { lowered.contains($0) }) { return "frame all" }
+        // Going back undoes everything that changed how the model is shown, not just where the camera is.
+        if wholePhrases.contains(where: { lowered.contains($0) }) { return "explode dist=0 dur=0.6\nshow all\nhighlight none\nframe all" }
         guard !parts.isEmpty else { return nil }
         let tight = ["zoom", "closer", "close up", "closeup", "close-up", "up close", "magnify", "more detail", "in detail", "bigger"].contains { lowered.contains($0) }
         return "focus \(parts.joined(separator: ",")) zoom=\(tight ? "tight" : "medium")"

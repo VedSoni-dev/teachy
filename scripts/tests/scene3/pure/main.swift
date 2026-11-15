@@ -124,7 +124,10 @@ section("refine classifier: adjust the drawing on screen, or draw a new one") {
 
     expect(SceneRefineClassifier.instantScript(request: "zoom in on the turbine", parts: ["j.turbine"]) == "focus j.turbine zoom=tight", "zoom goes in tight, at once")
     expect(SceneRefineClassifier.instantScript(request: "what does the compressor do", parts: ["j.compressor"]) == "focus j.compressor zoom=medium", "a question about a part goes to it")
-    expect(SceneRefineClassifier.instantScript(request: "go back", parts: []) == "frame all", "go back is the whole model, at once")
+    let back = SceneRefineClassifier.instantScript(request: "go back", parts: []) ?? ""
+    expect(back.hasSuffix("frame all") && back.contains("explode dist=0") && back.contains("show all") && back.contains("highlight none"),
+           "go back is the whole model at once, put back together, solid and unlit: \(back)")
+    expect(SceneScriptParser.parse(back).count == 4, "as four lines that parse")
     expect(SceneRefineClassifier.instantScript(request: "explode it", parts: []) == nil, "nothing to do at once when no place is named")
 }
 
@@ -249,6 +252,17 @@ section("direction: the usual 3/4 view unless something is in the way") {
     expect(SceneFraming.edgeOnPenalty(for: disc, direction: SceneVec3(0, 0, 1)) > 0.25 && SceneFraming.edgeOnPenalty(for: disc, direction: SceneVec3(1, 0, 0)) == 0, "a disc seen edge on is penalised, face on is not")
     expect(SceneFraming.edgeOnPenalty(for: target, direction: SceneVec3(0, 0, 1)) == 0, "a cube has no bad side")
     expect(SceneFraming.chooseDirection(blocked: [0.2, 0, 0], extra: [0.02, 0.29, 0.05]) == 0, "a slightly blocked 3/4 view beats a clear edge-on one")
+
+    // A part at one end of a long model is looked at from its own end.
+    let engine = SceneBox(center: .zero, size: SceneVec3(4, 1.2, 1.2))
+    let intake = SceneVec3(-1.8, 0, 0)
+    let fromFront = SceneCameraPose.direction(azimuth: -0.6, elevation: 0.3), fromAcross = SceneCameraPose.direction(azimuth: 0.5, elevation: 0.3)
+    expect(SceneFraming.facingPenalty(direction: fromFront, part: intake, model: engine) == 0, "seen from its own end: no penalty")
+    expect(SceneFraming.facingPenalty(direction: fromAcross, part: intake, model: engine) > 0.05, "seen from across the model: a penalty (\(SceneFraming.facingPenalty(direction: fromAcross, part: intake, model: engine)))")
+    expect(SceneFraming.facingPenalty(direction: SceneVec3(1, 0, 0), part: intake, model: engine) > SceneFraming.facingPenalty(direction: fromAcross, part: intake, model: engine), "seen from straight behind: more")
+    expect(SceneFraming.facingPenalty(direction: fromAcross, part: SceneVec3(0.1, 0, 0), model: engine) == 0, "a part in the middle has no front")
+    let extra = [fromAcross, SceneVec3(1, 0, 0), fromFront].map { SceneFraming.facingPenalty(direction: $0, part: intake, model: engine) }
+    expect(SceneFraming.chooseDirection(blocked: [0.05, 0, 0], extra: extra) == 2, "between equally clear views, the one facing the part's front wins (\(extra))")
 
     let box = SceneBox(center: .zero, size: SceneVec3(2, 2, 2))
     expect(box.entry(ofSegmentFrom: SceneVec3(-5, 0, 0), to: SceneVec3(5, 0, 0)).map { close($0, 0.4) } ?? false, "a segment enters the box where it should")
