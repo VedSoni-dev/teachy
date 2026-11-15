@@ -7,18 +7,53 @@
 //  macOS AVSpeech neural → NSSpeech.
 //  Streamed replies are spoken sentence by sentence (see "Streaming speech").
 //
+//  Before any reply, `SpokenOutputGate` is asked whether to make sound at all. When the
+//  Mac is muted, or the person is on a call and didn't hold the talk key, the reply is
+//  shown as captions at speaking pace and copied to the clipboard instead.
+//
 
 import AppKit
 import AVFoundation
 import Foundation
+import NaturalLanguage
 
 @MainActor
 final class LocalSpeechSynthesizer: NSObject {
+    // MARK: - What always-on mode needs to know
+
+    /// Posted when any synthesizer starts or stops speaking.
+    static let speakingDidChangeNotification = Notification.Name("TeachySpeakingDidChange")
+    private static let liveInstances = NSHashTable<LocalSpeechSynthesizer>.weakObjects()
+
+    /// True while any synthesizer is speaking (or showing a silent reply's captions).
+    static var isAnySpeaking: Bool {
+        liveInstances.allObjects.contains { $0.isPlaying || $0.isStreamSpeaking }
+    }
+
+    /// Stops every synthesizer at once: the person started talking over Teachy.
+    static func stopAllPlayback() {
+        for instance in liveInstances.allObjects { instance.stopPlayback() }
+    }
+
+    private static var spokenLog: [(at: Date, text: String)] = []
+    private static func noteSpoken(_ text: String) {
+        spokenLog.append((Date(), text))
+        if spokenLog.count > 12 { spokenLog.removeFirst(spokenLog.count - 12) }
+    }
+    /// The sentences spoken in the last `seconds`, to recognise Teachy's own voice coming
+    /// back through the microphone.
+    static func recentlySpokenSentences(within seconds: TimeInterval = 20) -> [String] {
+        let cutoff = Date().addingTimeInterval(-seconds)
+        return spokenLog.filter { $0.at >= cutoff }.map(\.text)
+    }
+
     private let legacySynthesizer: NSSpeechSynthesizer
     private let avSynthesizer = AVSpeechSynthesizer()
     private var audioPlayer: AVAudioPlayer?
 
-    private(set) var isPlaying = false
+    private(set) var isPlaying = false {
+        didSet { if oldValue != isPlaying { NotificationCenter.default.post(name: Self.speakingDidChangeNotification, object: self) } }
+    }
 
     /// Monotonically increasing interruption token — bumped by every
     /// `stopPlayback()` and every new `speakText`. An interrupted speech turn
@@ -44,6 +79,7 @@ final class LocalSpeechSynthesizer: NSObject {
         super.init()
         legacySynthesizer.delegate = self
         avSynthesizer.delegate = self
+        Self.liveInstances.add(self)
         if let voice = Self.preferredNSVoice() {
             legacySynthesizer.setVoice(voice)
         }
@@ -56,7 +92,24 @@ final class LocalSpeechSynthesizer: NSObject {
         stopPlayback()
         playbackGeneration += 1
         let speechGeneration = playbackGeneration
+
+        // Muted Mac, or on a call: show it and copy it instead of playing it.
+        if case .captionsAndClipboard = SpokenOutputGate.shared.decideForNextReply() {
+            let pasteboardChangeCount = NSPasteboard.general.changeCount
+            CaptionPresenter.shared.forceNextReply()
+            var segmenter = StreamingSpeechSegmenter()
+            let sentences = segmenter.finish(accumulated: cleaned)
+            isPlaying = true
+            for sentence in sentences.isEmpty ? [cleaned] : sentences {
+                guard await showSilently(sentence, generation: speechGeneration) else { throw CancellationError() }
+            }
+            isPlaying = false
+            CaptionPresenter.shared.speechEnded()
+            SpokenOutputGate.shared.copyReplyToClipboard(cleaned, ifPasteboardUnchangedSince: pasteboardChangeCount)
+            return
+        }
         isPlaying = true
+        Self.noteSpoken(cleaned)
 
         // Interrupted (stopPlayback bumped the generation) or cancelled while
         // this turn was awaiting something — bail WITHOUT falling through to a
@@ -144,6 +197,24 @@ final class LocalSpeechSynthesizer: NSObject {
         let audioFetch: Task<Data?, Never>?
     }
 
+    /// True when this stream is shown, not spoken (muted Mac, or on a call).
+    private var streamIsSilent = false
+    private var silentStreamText: [String] = []
+    private var pasteboardChangeCountAtStreamStart = 0
+
+    /// Shows one sentence as a caption for about as long as it would take to say.
+    /// Returns false if the reply was interrupted meanwhile.
+    private func showSilently(_ sentence: String, generation: Int) async -> Bool {
+        CaptionPresenter.shared.show(sentence: sentence)
+        let seconds = SpokenOutputDecision.captionSeconds(for: sentence, speed: TeachySettingsStorage.speechSpeed())
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            guard generation == playbackGeneration, !Task.isCancelled else { return false }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return generation == playbackGeneration && !Task.isCancelled
+    }
+
     /// Reads text through the realtime voice, stopping it if the calling task is cancelled.
     private static func speakWithRealtimeVoice(_ text: String) async -> RealtimeVoice.SpeakResult {
         await withTaskCancellationHandler {
@@ -157,7 +228,9 @@ final class LocalSpeechSynthesizer: NSObject {
     private var streamInputEnded = true
     private var streamDrainTask: Task<Void, Never>?
     /// True from the first queued sentence until the last one has been spoken.
-    private(set) var isStreamSpeaking = false
+    private(set) var isStreamSpeaking = false {
+        didSet { if oldValue != isStreamSpeaking { NotificationCenter.default.post(name: Self.speakingDidChangeNotification, object: self) } }
+    }
 
     /// Starts a streamed reply: sentences are spoken as they arrive instead of after
     /// the whole answer. Interrupts anything already playing.
@@ -169,8 +242,16 @@ final class LocalSpeechSynthesizer: NSObject {
         playbackGeneration += 1
         streamGeneration = playbackGeneration
         streamInputEnded = false
-        // The model needs about a second before its first sentence; connect the voice now.
-        RealtimeVoice.shared.prewarm()
+        silentStreamText = []
+        pasteboardChangeCountAtStreamStart = NSPasteboard.general.changeCount
+        if case .captionsAndClipboard = SpokenOutputGate.shared.decideForNextReply() {
+            streamIsSilent = true
+            CaptionPresenter.shared.forceNextReply()
+        } else {
+            streamIsSilent = false
+            // The model needs about a second before its first sentence; connect the voice now.
+            RealtimeVoice.shared.prewarm()
+        }
         return streamGeneration
     }
 
@@ -180,7 +261,7 @@ final class LocalSpeechSynthesizer: NSObject {
         guard streamToken == streamGeneration, streamGeneration == playbackGeneration, !streamInputEnded else { return }
         let cleaned = Self.prepareForSpeech(sentence)
         guard !cleaned.isEmpty else { return }
-        let audioFetch: Task<Data?, Never>? = RealtimeVoice.shared.isAvailable
+        let audioFetch: Task<Data?, Never>? = streamIsSilent || RealtimeVoice.shared.isAvailable
             ? nil
             : Task { await Self.fetchCloudTTSAudio(text: cleaned) }
         streamQueue.append(QueuedSentence(text: cleaned, audioFetch: audioFetch))
@@ -210,11 +291,28 @@ final class LocalSpeechSynthesizer: NSObject {
         }
         while generation == playbackGeneration, !Task.isCancelled {
             guard !streamQueue.isEmpty else {
-                if streamInputEnded { CaptionPresenter.shared.speechEnded(); return }
+                if streamInputEnded {
+                    CaptionPresenter.shared.speechEnded()
+                    if streamIsSilent {
+                        SpokenOutputGate.shared.copyReplyToClipboard(
+                            silentStreamText.joined(separator: " "),
+                            ifPasteboardUnchangedSince: pasteboardChangeCountAtStreamStart
+                        )
+                    }
+                    return
+                }
                 try? await Task.sleep(for: .milliseconds(25))
                 continue
             }
             let next = streamQueue.removeFirst()
+            if streamIsSilent {
+                silentStreamText.append(next.text)
+                isPlaying = true
+                guard await showSilently(next.text, generation: generation) else { return }
+                isPlaying = false
+                continue
+            }
+            Self.noteSpoken(next.text)
             CaptionPresenter.shared.show(sentence: next.text)
             var audioData: Data?
             if let audioFetch = next.audioFetch {
@@ -375,7 +473,7 @@ final class LocalSpeechSynthesizer: NSObject {
     // MARK: - Local neural speech
 
     private func speakWithAVSpeech(_ text: String, speechGeneration: Int) async -> Bool {
-        guard let voice = Self.preferredAVVoice() else { return false }
+        guard let voice = Self.preferredAVVoice(for: text) else { return false }
         // Interrupted before this fallback even started — report handled so
         // the caller doesn't cascade into the legacy voice with stale text.
         guard speechGeneration == playbackGeneration, !Task.isCancelled else { return true }
@@ -405,6 +503,20 @@ final class LocalSpeechSynthesizer: NSObject {
     }
 
     // MARK: - Voice selection
+
+    /// A Mac voice for the language the text is in: the fixed reply language if one is
+    /// set, otherwise whatever the text looks like. English keeps the hand-picked list below.
+    private static func preferredAVVoice(for text: String) -> AVSpeechSynthesisVoice? {
+        let fixed = TeachyReplyLanguages.language(for: TeachySettingsStorage.replyLanguage())
+        let languageCode = fixed?.code ?? NLLanguageRecognizer.dominantLanguage(for: text)?.rawValue ?? "en"
+        if !languageCode.hasPrefix("en") {
+            let identifier = fixed?.localeIdentifier
+                ?? TeachyReplyLanguages.language(for: String(languageCode.prefix(2)))?.localeIdentifier
+                ?? languageCode
+            if let voice = AVSpeechSynthesisVoice(language: identifier) { return voice }
+        }
+        return preferredAVVoice()
+    }
 
     private static func preferredAVVoice() -> AVSpeechSynthesisVoice? {
         let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en") }
