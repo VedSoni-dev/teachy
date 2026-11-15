@@ -29,7 +29,6 @@ final class BackgroundAgentManager: ObservableObject {
     private let proxyURL: URL
     private let toolRegistry = BackgroundAgentToolRegistry()
     let appConnectorManager: AppConnectorManager
-    private var currentJobTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
 
     /// OpenRouter model ID sent on each agent request.
@@ -52,6 +51,7 @@ final class BackgroundAgentManager: ObservableObject {
     - run_applescript: script Mac apps
     - control_app: open, activate, quit or hide an app. control_browser / open_browser_tab: tabs and pages
     - authenticated_fetch / list_browser_sessions: only work if the user switched on browser sign-in access in settings
+    - create_routine / list_routines / pause_routine / delete_routine: work that repeats on a schedule ("every weekday at 9, check my inbox"). Use create_routine when the user asks for something regular.
 
     How to work:
     - Prefer a connected app's own tools when one fits. Otherwise prefer control_app, control_browser and the drive_ tools over AppleScript, and AppleScript over bash for app control.
@@ -92,56 +92,158 @@ final class BackgroundAgentManager: ObservableObject {
 
     // MARK: - Explicit agent jobs (full toolset, plan, card under the notch)
 
-    /// Starts an explicit agent job: the full toolset behind the permission gate, a visible plan,
-    /// a budget (25 steps / 10 minutes by default) and a Stop button. Progress is published on
-    /// `status` / `stepLog` here and as a job in `AgentJobCenter.shared.jobs`.
-    /// Called with what to say when a job started by `runTask` ends (its answer, or why it failed).
+    /// What to say when a job started by `runTask` ends (its answer, or why it failed).
+    /// NOT called for a job that was given `onAnswerSentence`: that job's words all arrive
+    /// through the sentence callback instead, so nothing is spoken twice.
     var onTaskFinished: ((String) -> Void)?
+    /// Called for every explicit job when it ends, spoken or not (for captions, history, badges).
+    var onJobFinished: ((AgentJob, String) -> Void)?
 
+    /// Everything about one job start. Only `transcript` is needed.
+    struct JobLaunch {
+        var transcript: String
+        var screenCaptures: [CompanionScreenCapture] = []
+        var mouseOutlineContext: CompanionMouseOutlineContext?
+        /// Run as this named agent (`~/.teachy/agents/<slug>`). nil = see `picksAgentByName`.
+        var agentSlug: String?
+        /// With no `agentSlug`: run as the agent the request names ("ask Research buddy to…"), else as a plain job.
+        var picksAgentByName = true
+        var routineID: String?
+        /// A routine run: no card, nothing spoken, nobody to ask (anything needing a yes is refused).
+        var isUnattended = false
+        /// Sentences of the answer as they are ready, cleaned for speech. Give this to start speaking early.
+        var onAnswerSentence: ((String) -> Void)?
+        /// The sentences just delivered were not the answer after all (rare): stop speaking them.
+        var onAnswerRetracted: (() -> Void)?
+    }
+
+    /// Starts an explicit agent job: the full toolset behind the permission gate, a visible plan,
+    /// a budget (25 steps / 10 minutes) and a Stop button. It runs alongside any other jobs
+    /// (up to four at once; more wait their turn). Starting one never cancels another.
+    /// Progress is published on `status` / `stepLog` here and as a job in `AgentJobCenter.shared.jobs`.
     func runTask(
         transcript: String,
         screenCaptures: [CompanionScreenCapture] = [],
-        mouseOutlineContext: CompanionMouseOutlineContext? = nil
+        mouseOutlineContext: CompanionMouseOutlineContext? = nil,
+        agentSlug: String? = nil,
+        onAnswerSentence: ((String) -> Void)? = nil,
+        onAnswerRetracted: (() -> Void)? = nil
     ) {
-        currentJobTask?.cancel()
-        currentJobTask = nil
+        var launch = JobLaunch(transcript: transcript)
+        launch.screenCaptures = screenCaptures
+        launch.mouseOutlineContext = mouseOutlineContext
+        launch.agentSlug = agentSlug
+        launch.onAnswerSentence = onAnswerSentence
+        launch.onAnswerRetracted = onAnswerRetracted
         stepLog = []
         status = .reasoning
-
-        currentJobTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                await self.appConnectorManager.refreshConnectors()
-                var request = AgentJobRequest(transcript: transcript, systemPrompt: self.buildSystemPrompt())
-                request.screenCaptures = screenCaptures
-                request.mouseOutlineContext = mouseOutlineContext
-                request.allowedToolNames = nil
-                request.usesPlan = true
-                request.showsCard = true
-                request.onToolStep = { [weak self] step in
-                    self?.stepLog.append(step)
-                }
-                request.onStatus = { [weak self] jobStatus, activity in
-                    guard let self, !jobStatus.isFinished else { return }
-                    self.status = jobStatus == .planning ? .reasoning : .running(toolName: activity)
-                }
-                let result = try await AgentJobRunner.run(request, registry: self.toolRegistry)
-                if !Task.isCancelled {
-                    self.status = .completed(result: result)
-                    self.onTaskFinished?(result)
-                }
-            } catch is CancellationError {
-                self.status = .idle
-            } catch {
-                self.status = .failed(error: error.localizedDescription)
-                self.onTaskFinished?("I couldn't finish that. \(error.localizedDescription)")
-            }
+        Task { [weak self] in
+            _ = await self?.startJob(launch)
         }
     }
 
+    /// Starts a job and returns it once it is under way (after the connectors have been refreshed).
+    @discardableResult
+    func startJob(_ launch: JobLaunch) async -> AgentJob {
+        await appConnectorManager.refreshConnectors()
+
+        var request = AgentJobRequest(transcript: launch.transcript, systemPrompt: buildSystemPrompt())
+        request.screenCaptures = launch.screenCaptures
+        request.mouseOutlineContext = launch.mouseOutlineContext
+        request.allowedToolNames = nil
+        request.usesPlan = true
+        request.showsCard = !launch.isUnattended
+        request.routineID = launch.routineID
+        request.isUnattended = launch.isUnattended
+        if let slug = launch.agentSlug {
+            request.agent = AgentRoster.shared.agent(slug: slug)
+        } else if launch.picksAgentByName, !launch.isUnattended {
+            request.agent = AgentRoster.shared.bestAgent(for: launch.transcript)
+        }
+
+        let speaksBySentence = launch.onAnswerSentence != nil
+        let isSpoken = !launch.isUnattended
+        if isSpoken {
+            request.onAnswerSentence = launch.onAnswerSentence
+            request.onAnswerRetracted = launch.onAnswerRetracted
+            request.onToolStep = { [weak self] step in
+                self?.stepLog.append(step)
+            }
+            request.onStatus = { [weak self] jobStatus, activity in
+                guard let self, !jobStatus.isFinished else { return }
+                self.status = jobStatus == .planning || jobStatus == .queued ? .reasoning : .running(toolName: activity)
+            }
+        }
+        request.onFinished = { [weak self] job, result in
+            guard let self else { return }
+            let spoken: String
+            var wasStreamed = false
+            switch result {
+            case .success(let answer):
+                spoken = answer
+                // A normal answer already went out sentence by sentence; a Stop or hand-back line did not.
+                wasStreamed = job.status == .done
+            case .failure(let error):
+                spoken = "I couldn't finish that. \(error.localizedDescription)"
+            }
+            self.onJobFinished?(job, spoken)
+            guard isSpoken else { return }
+            self.settleStatus(afterJobEndedWith: result, spoken: spoken)
+            if speaksBySentence {
+                if !wasStreamed, !spoken.isEmpty { launch.onAnswerSentence?(spoken) }
+            } else {
+                self.onTaskFinished?(spoken)
+            }
+        }
+        return AgentJobCenter.shared.start(request, registry: toolRegistry)
+    }
+
+    /// `status` describes the explicit jobs as a whole: still "running" while any of them is.
+    private func settleStatus(afterJobEndedWith result: Result<String, Error>, spoken: String) {
+        if let stillRunning = AgentJobCenter.shared.activeJobs.last(where: { $0.showsCard }) {
+            status = .running(toolName: stillRunning.activity)
+            return
+        }
+        switch result {
+        case .success: status = .completed(result: spoken)
+        case .failure(let error): status = .failed(error: error.localizedDescription)
+        }
+    }
+
+    /// Sends what the person just said to the job it belongs to: one they named (by its title
+    /// or its agent's name), else the only running job, else the card in front. Returns that
+    /// job, or nil when there is none to follow up (start a new job instead).
+    @discardableResult
+    func followUp(_ text: String) -> AgentJob? {
+        guard let job = AgentJobCenter.shared.followUpTarget(for: text),
+              AgentJobCenter.shared.followUp(jobID: job.id, text: text) else { return nil }
+        status = .running(toolName: job.activity)
+        return job
+    }
+
+    /// One unattended run of a routine. Used by `RoutineScheduler`.
+    func runRoutine(_ routine: Routine) async -> RoutineRunOutcome {
+        var launch = JobLaunch(transcript: routine.task)
+        launch.agentSlug = routine.agentSlug.flatMap { AgentRoster.shared.agent(slug: $0)?.slug }
+        launch.picksAgentByName = false
+        launch.routineID = routine.id
+        launch.isUnattended = true
+        let job = await startJob(launch)
+        do {
+            let answer = try await job.task?.value ?? ""
+            if case .stopped(let why) = job.status {
+                return .succeeded(result: "Stopped before it finished (\(why)).")
+            }
+            return job.refusals.isEmpty ? .succeeded(result: answer) : .needsPerson(result: job.resultSummary)
+        } catch is CancellationError {
+            return .failed(reason: "The run was cut short.")
+        } catch {
+            return .failed(reason: error.localizedDescription)
+        }
+    }
+
+    /// Stops every running job (used when the companion shuts down).
     func cancelTask() {
-        currentJobTask?.cancel()
-        currentJobTask = nil
         AgentJobCenter.shared.stopAll(reason: .superseded)
         status = .idle
     }

@@ -46,6 +46,13 @@ final class AgentToolGate {
         )
     }
 
+    /// The settings for one job: a job run as a named agent may read and write its own `files/` freely.
+    func settings(for job: AgentJob) -> ToolPolicySettings {
+        var settings = self.settings
+        settings.agentFilesDirectory = job.workingDirectory ?? ""
+        return settings
+    }
+
     func authorize(toolName: String, arguments: [String: Any], tool: any BackgroundAgentTool, job: AgentJob) async -> Verdict {
         var context = ToolPolicyContext()
         context.connectorHTTPMethod = tool.httpMethodForPolicy ?? ""
@@ -60,10 +67,27 @@ final class AgentToolGate {
         // Judge file tools by where the path really leads, not by how it is spelled.
         var argumentsForPolicy = arguments
         if toolName == "read_file" || toolName == "write_file", let path = arguments["path"] as? String {
-            argumentsForPolicy["path"] = Self.resolvedPath(path)
+            // A relative path starts in the job's working folder, exactly as the tool itself reads it.
+            let absolute = PathPolicy.absolute(path, workingDirectory: job.workingDirectory, home: NSHomeDirectory())
+            argumentsForPolicy["path"] = Self.resolvedPath(absolute)
         }
 
-        let decision = ToolPolicy.classify(toolName: toolName, arguments: argumentsForPolicy, settings: settings, context: context)
+        let decision = ToolPolicy.classify(toolName: toolName, arguments: argumentsForPolicy, settings: settings(for: job), context: context)
+
+        if job.isUnattended {
+            // A routine run: there is nobody to ask, and a routine must never be able to say yes
+            // to itself. Only safe calls and ones the person already always-allowed go through.
+            switch ledger.resolveUnattended(decision) {
+            case .allowed:
+                return .run
+            case .ask, .refused:
+                if decision.risk == .blocked {
+                    return .refuse("Blocked by Teachy's safety rules: \(decision.reason). Carry on without it.")
+                }
+                job.recordRefusal(ConsentLedger.unattendedRefusalNote(for: decision))
+                return .refuse("Not run: this needs the person's yes (\(decision.summary)) and nobody is watching this routine run, so it was refused. Do not try another route to the same thing. Finish what you can without it and say in your answer that this part is waiting for them.")
+            }
+        }
 
         switch ledger.resolve(decision, jobID: job.id) {
         case .allowed:
@@ -102,6 +126,8 @@ final class AgentToolGate {
         if ledger.record(choice, for: decision, jobID: job.id) {
             return .run
         }
+        // Kept in the job's notes, so a long job still knows after its context is compacted.
+        job.addRule("The person said not now to: \(decision.summary). Do not do it or ask again.")
         return .refuse("The user said not now to this (\(decision.summary)). Do not ask again in this job and do not try another route to the same thing. Carry on without it if you can, otherwise stop and tell them what is left to do.")
     }
 
@@ -156,6 +182,12 @@ final class BackgroundAgentToolRegistry {
         register(DriveKeyTool())
         register(DriveScrollTool())
         register(DriveClickPointTool())
+        // Named agents and routines.
+        register(RememberTool())
+        register(CreateRoutineTool())
+        register(ListRoutinesTool())
+        register(PauseRoutineTool())
+        register(DeleteRoutineTool())
     }
 
     func register(_ tool: any BackgroundAgentTool) {

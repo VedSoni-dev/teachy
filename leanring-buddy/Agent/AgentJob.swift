@@ -3,12 +3,19 @@
 //  leanring-buddy
 //
 //  An agent job: one request the agent works through, with a name, a plan the
-//  user can read, a step log, a budget and a Stop. AgentJobCenter publishes the
-//  jobs so UI can show them; AgentJobRunner runs the model/tool loop.
+//  user can read, a step log, a budget and a Stop. `AgentJobCenter` runs up to
+//  four of them at once, each with its own conversation, budget and consent
+//  scope; `AgentLoop` (AgentLoop.swift) is the model / tool loop each one runs.
 //
-//  Model calls go ONLY through TeachyAIRouter.sendJSON(job: .agent, …).
-//  Tool calls go ONLY through AgentToolRegistry.invoke, which holds the
-//  permission gate.
+//  - Starting a job never cancels another. A fifth job waits its turn.
+//  - `followUp(jobID:text:)` adds to a job's conversation: a running job reads
+//    it before its next step, a finished one wakes up and carries on.
+//  - Drive (the real mouse and keyboard) is held by one job at a time.
+//  - Every job that had a card, and every routine run, is saved to
+//    ~/.teachy/agents/history/.
+//
+//  Model calls go ONLY through TeachyAIRouter (job `.agent`). Tool calls go
+//  ONLY through AgentToolRegistry.invoke, which holds the permission gate.
 //
 
 import AppKit
@@ -53,6 +60,15 @@ final class AgentJob: ObservableObject, Identifiable {
     /// Coaching turns run as quiet jobs: no card under the notch.
     nonisolated let showsCard: Bool
     nonisolated let drive: DriveSession
+    /// The named agent this job runs as, if any.
+    nonisolated let agentSlug: String?
+    nonisolated let agentName: String?
+    /// Set when a routine started it.
+    nonisolated let routineID: String?
+    /// Nobody is watching (a routine): the gate never asks, it refuses.
+    nonisolated let isUnattended: Bool
+    /// The agent's `files/` folder, symlinks resolved. Relative file paths start here.
+    nonisolated let workingDirectory: String?
     let startedAt = Date()
 
     @Published var title: String
@@ -63,18 +79,55 @@ final class AgentJob: ObservableObject, Identifiable {
     @Published var activity = "Thinking"
     @Published var isDriving = false
     @Published private(set) var finishedAt: Date?
+    /// The final answer, once there is one.
+    @Published fileprivate(set) var answer = ""
+    /// What the person added after the first request.
+    @Published fileprivate(set) var followUps: [String] = []
+    /// Calls the gate refused because nobody was there to say yes (unattended runs).
+    @Published private(set) var refusals: [String] = []
 
     var budget: AgentJobBudget
     private(set) var stopReason: AgentJobStopReason?
     fileprivate(set) var task: Task<String, Error>?
 
-    init(request: String, title: String? = nil, showsCard: Bool, maxIterations: Int, maxWallTime: TimeInterval) {
+    /// This job's own conversation. Kept after it ends so a follow-up can carry on.
+    fileprivate var messages: [[String: Any]] = []
+    fileprivate var pendingFollowUps: [String] = []
+    /// Things the person said that the job must keep to; written to its notes file.
+    fileprivate var rules: [String] = []
+    fileprivate var launch: AgentJobRequest?
+    fileprivate var registry: BackgroundAgentToolRegistry?
+    fileprivate let maxIterations: Int
+    fileprivate let maxWallTime: TimeInterval
+
+    /// Explicit jobs and routine runs share the four slots; quiet coaching turns do not wait.
+    var countsTowardLimit: Bool { showsCard || isUnattended }
+
+    init(
+        request: String,
+        title: String? = nil,
+        showsCard: Bool,
+        maxIterations: Int,
+        maxWallTime: TimeInterval,
+        agentSlug: String? = nil,
+        agentName: String? = nil,
+        workingDirectory: String? = nil,
+        routineID: String? = nil,
+        isUnattended: Bool = false
+    ) {
         let identifier = UUID().uuidString
         self.id = identifier
         self.request = request
         self.showsCard = showsCard
         self.drive = DriveSession(jobID: identifier)
+        self.agentSlug = agentSlug
+        self.agentName = agentName
+        self.workingDirectory = workingDirectory
+        self.routineID = routineID
+        self.isUnattended = isUnattended
         self.title = title ?? AgentJobTitle.fallback(from: request)
+        self.maxIterations = maxIterations
+        self.maxWallTime = maxWallTime
         self.budget = AgentJobBudget(maxIterations: maxIterations, maxWallTime: maxWallTime, startedAt: Date())
     }
 
@@ -95,20 +148,96 @@ final class AgentJob: ObservableObject, Identifiable {
         finishedAt = Date()
     }
 
+    /// A follow-up arrived after the job ended: it is a live job again, with a fresh budget.
+    fileprivate func reopen() {
+        stopReason = nil
+        finishedAt = nil
+        status = .running
+        activity = "Thinking"
+        budget = AgentJobBudget(maxIterations: maxIterations, maxWallTime: maxWallTime, startedAt: Date())
+    }
+
+    /// The gate could not ask (unattended run) and refused. Shown in the routine's result.
+    func recordRefusal(_ note: String) {
+        if !refusals.contains(note) { refusals.append(note) }
+    }
+
+    /// Something the person decided that must outlive context compaction ("not now" to a step).
+    func addRule(_ rule: String) {
+        if !rules.contains(rule) { rules.append(rule) }
+    }
+
     var elapsedDescription: String {
         let seconds = Int((finishedAt ?? Date()).timeIntervalSince(startedAt))
         return seconds < 60 ? "\(seconds)s" : "\(seconds / 60)m \(seconds % 60)s"
     }
+
+    /// The answer plus anything a routine run was not allowed to do.
+    var resultSummary: String {
+        guard !refusals.isEmpty else { return answer }
+        return ([answer] + refusals).filter { !$0.isEmpty }.joined(separator: "\n")
+    }
 }
 
-/// The published list of jobs. UI observes `AgentJobCenter.shared.jobs`.
+/// What a caller asks the runner to do.
+struct AgentJobRequest {
+    var transcript: String
+    var screenCaptures: [CompanionScreenCapture] = []
+    var mouseOutlineContext: CompanionMouseOutlineContext?
+    var systemPrompt: String
+    var conversationHistory: [(userTranscript: String, assistantResponse: String)] = []
+    /// nil = every registered tool.
+    var allowedToolNames: Set<String>?
+    /// Explicit jobs keep a visible plan; quick coaching turns skip it.
+    var usesPlan = false
+    var showsCard = false
+    var maxIterations = AgentJobBudget.defaultMaxIterations
+    var maxWallTime = AgentJobBudget.defaultMaxWallTime
+    /// Run as this named agent: its AGENT.md and MEMORY.md go in the prompt, its `files/` is the working folder.
+    var agent: AgentProfile?
+    var routineID: String?
+    /// A routine run: nobody can be asked, so anything needing a yes is refused.
+    var isUnattended = false
+    /// The plan rides along as a line of text with each tool call (no extra round trip). Off = the old loop.
+    var inlinePlan = true
+    /// Stream the model's replies, so the answer can be spoken as it arrives.
+    var streams = true
+    var onToolStep: ((AgentStep) -> Void)?
+    var onStatus: ((AgentJobStatus, String) -> Void)?
+    /// Each sentence of the final answer as soon as it is complete, already cleaned for speech.
+    var onAnswerSentence: ((String) -> Void)?
+    /// The sentences just delivered were not the answer after all (rare): stop speaking them.
+    var onAnswerRetracted: (() -> Void)?
+    /// The job ended (again, after each follow-up): its answer, or why it failed. Not called when superseded.
+    var onFinished: ((AgentJob, Result<String, Error>) -> Void)?
+}
+
+struct AgentJobError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
+/// The published list of jobs, and the thing that runs them. UI observes `AgentJobCenter.shared.jobs`.
 @MainActor
 final class AgentJobCenter: ObservableObject {
     static let shared = AgentJobCenter()
+    /// How many jobs are kept in memory (finished ones are dropped first; all are in the history files).
     static let historyLimit = 20
 
     @Published private(set) var jobs: [AgentJob] = []
+    /// The card in front under the notch (set by the card stack). A follow-up with no name goes here.
+    @Published var frontJobID: String?
+    /// Bumped whenever a job is saved to the history files, so lists can refresh.
+    @Published private(set) var historyRevision = 0
+
+    var historyStore: AgentHistoryStore? = .shared
+    var notesDirectory: URL = AgentHome.notesDirectory
+    var roster: AgentRoster = .shared
+
     private var statusWatchers: [String: AnyCancellable] = [:]
+    private var slots = AgentSlotBook()
+    private var driveLease = DriveLease()
+    private var slotWaiters: [String: CheckedContinuation<Void, Error>] = [:]
 
     var activeJobs: [AgentJob] { jobs.filter { !$0.status.isFinished } }
 
@@ -120,7 +249,378 @@ final class AgentJobCenter: ObservableObject {
         activeJobs.forEach { $0.stop(reason: reason) }
     }
 
-    fileprivate func add(_ job: AgentJob) {
+    // MARK: Starting
+
+    /// Starts a job and returns at once. It runs alongside whatever else is running; if four
+    /// are already going it waits its turn (status `.queued`). Results come through
+    /// `request.onFinished` and the published job.
+    @discardableResult
+    func start(_ request: AgentJobRequest, registry: BackgroundAgentToolRegistry) -> AgentJob {
+        var workingDirectory: String?
+        if let agent = request.agent {
+            let files = roster.filesDirectory(for: agent.slug)
+            try? FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
+            workingDirectory = files.resolvingSymlinksInPath().path
+        }
+        let job = AgentJob(
+            request: request.transcript,
+            showsCard: request.showsCard,
+            maxIterations: request.maxIterations,
+            maxWallTime: request.maxWallTime,
+            agentSlug: request.agent?.slug,
+            agentName: request.agent?.name,
+            workingDirectory: workingDirectory,
+            routineID: request.routineID,
+            isUnattended: request.isUnattended
+        )
+        job.launch = request
+        job.registry = registry
+        add(job)
+        launch(job, isResume: false)
+        return job
+    }
+
+    /// Starts a job and waits for its answer (guided steps and other callers that need the result inline).
+    /// Cancelling the caller stops the job.
+    func run(_ request: AgentJobRequest, registry: BackgroundAgentToolRegistry) async throws -> String {
+        let job = start(request, registry: registry)
+        guard let task = job.task else { throw AgentJobError(message: "The job could not start.") }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            Task { @MainActor in job.stop(reason: .superseded) }
+        }
+    }
+
+    private func launch(_ job: AgentJob, isResume: Bool) {
+        job.task = Task<String, Error> { @MainActor in
+            try await self.execute(job, isResume: isResume)
+        }
+    }
+
+    // MARK: Follow-ups
+
+    /// Adds to a job's conversation. A running job reads it before its next step; a finished
+    /// one wakes up and carries on with what it already knows. False when the job is no longer
+    /// in memory (start a new one instead).
+    @discardableResult
+    func followUp(jobID: String, text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let job = job(withID: jobID), job.launch != nil, job.registry != nil else { return false }
+        job.followUps.append(trimmed)
+        job.addRule(trimmed)
+        if job.status.isFinished {
+            let hasConversation = !job.messages.isEmpty
+            job.reopen()
+            if hasConversation {
+                job.messages.append(["role": "user", "content": trimmed])
+            } else {
+                // It never got as far as its first model call (stopped while waiting its turn).
+                job.pendingFollowUps.append(trimmed)
+            }
+            launch(job, isResume: hasConversation)
+            AgentJobPanelPresenter.shared.refresh()
+        } else {
+            job.pendingFollowUps.append(trimmed)
+        }
+        return true
+    }
+
+    /// Which job a spoken follow-up is for: one named in it (by job title or agent name), else
+    /// the only running job, else the card in front if it is running or just finished. nil = none.
+    func followUpTarget(for text: String) -> AgentJob? {
+        let candidates = jobs.filter(\.showsCard).map {
+            AgentFollowUpRouter.Candidate(id: $0.id, title: $0.title, agentName: $0.agentName, isActive: !$0.status.isFinished, finishedAt: $0.finishedAt)
+        }
+        guard let id = AgentFollowUpRouter.target(for: text, candidates: candidates, frontJobID: frontJobID, now: Date()) else { return nil }
+        return job(withID: id)
+    }
+
+    // MARK: Drive is exclusive
+
+    /// Asks for the mouse and keyboard on behalf of a job. If another job has them, waits a
+    /// little for it to finish, then reports who holds them.
+    func claimDrive(for job: AgentJob, waitingUpTo seconds: TimeInterval = 20) async -> DriveLease.Claim {
+        let deadline = Date().addingTimeInterval(seconds)
+        var isWaiting = false
+        defer { if isWaiting { job.budget.resume(now: Date()) } }
+        while true {
+            let claim = driveLease.claim(job.id)
+            if claim == .granted { return claim }
+            if Date() >= deadline || Task.isCancelled || job.status.isFinished { return claim }
+            if !isWaiting {
+                isWaiting = true
+                job.budget.pause(now: Date())
+                job.activity = "Waiting for Drive"
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
+
+    func releaseDrive(jobID: String) {
+        driveLease.release(jobID)
+    }
+
+    var driveHolder: AgentJob? { driveLease.holder.flatMap(job(withID:)) }
+
+    // MARK: Running one job
+
+    private func execute(_ job: AgentJob, isResume: Bool) async throws -> String {
+        guard let request = job.launch, let registry = job.registry else {
+            throw AgentJobError(message: "The job could not start.")
+        }
+        let outcome: Result<String, Error>
+        do {
+            if job.countsTowardLimit { try await waitForSlot(job) }
+            outcome = .success(try await runLoop(job: job, request: request, registry: registry, isResume: isResume))
+        } catch {
+            outcome = .failure(error)
+        }
+
+        await job.drive.end()
+        releaseDrive(jobID: job.id)
+        AgentToolGate.shared.ledger.endJob(job.id)
+        if job.countsTowardLimit { promote(slots.release(job.id)) }
+
+        let result: Result<String, Error>
+        switch outcome {
+        case .success(let answer):
+            job.answer = answer
+            job.finish(.done)
+            result = .success(answer)
+        case .failure(let error):
+            if let handBack = error as? AgentLoopHandBack {
+                job.stop(reason: .handedBack(handBack.spokenLine))
+                job.answer = handBack.spokenLine
+                result = .success(handBack.spokenLine)
+            } else if let handBack = error as? DriveHandBack {
+                job.stop(reason: .handedBack(handBack.spokenLine))
+                job.answer = handBack.spokenLine
+                result = .success(handBack.spokenLine)
+            } else if let reason = job.stopReason, reason != .superseded {
+                // The user stopped the job (Stop, Escape, mouse). That is an answer, not an error.
+                job.answer = reason.spokenLine
+                result = .success(reason.spokenLine)
+            } else if error is CancellationError || job.stopReason == .superseded {
+                job.stop(reason: .superseded)
+                saveHistory(job)
+                request.onStatus?(job.status, job.activity)
+                throw CancellationError()
+            } else {
+                job.finish(.failed(error.localizedDescription))
+                result = .failure(error)
+            }
+        }
+
+        saveHistory(job)
+        request.onStatus?(job.status, job.activity)
+        request.onFinished?(job, result)
+
+        // Something the person said in the last moment, after the model had already written
+        // its answer: do not lose it, carry on with it now.
+        if !job.pendingFollowUps.isEmpty, job.stopReason == nil, job.status.isFinished, !job.messages.isEmpty {
+            let late = job.pendingFollowUps
+            job.pendingFollowUps = []
+            job.reopen()
+            job.messages.append(["role": "user", "content": late.joined(separator: "\n")])
+            launch(job, isResume: true)
+        }
+        return try result.get()
+    }
+
+    private func waitForSlot(_ job: AgentJob) async throws {
+        guard case .queued = slots.request(job.id) else { return }
+        job.status = .queued
+        job.activity = "Waiting for another job to finish"
+        let jobID = job.id
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                slotWaiters[jobID] = continuation
+            }
+        } onCancel: {
+            Task { @MainActor in
+                self.slotWaiters.removeValue(forKey: jobID)?.resume(throwing: CancellationError())
+            }
+        }
+        if !job.status.isFinished { job.status = .planning }
+    }
+
+    private func promote(_ jobIDs: [String]) {
+        for jobID in jobIDs {
+            slotWaiters.removeValue(forKey: jobID)?.resume()
+        }
+    }
+
+    /// Tools that only make sense in some jobs are left out of the others' tool lists.
+    static func toolNames(for request: AgentJobRequest, registered: [String]) -> Set<String> {
+        AgentToolAvailability.names(registered: registered, hasAgent: request.agent != nil, isUnattended: request.isUnattended)
+    }
+
+    private func runLoop(job: AgentJob, request: AgentJobRequest, registry: BackgroundAgentToolRegistry, isResume: Bool) async throws -> String {
+        let allowed = Self.toolNames(for: request, registered: registry.toolNames(allowed: request.allowedToolNames))
+
+        var config = AgentLoopConfig()
+        config.tools = registry.toolDefinitions(allowed: allowed)
+        config.usesPlan = request.usesPlan
+        config.inlinePlan = request.inlinePlan
+        config.streams = request.streams
+        config.knownPlanSteps = job.plan.steps.map(\.text)
+
+        if !isResume {
+            var systemPrompt = request.systemPrompt
+            if allowed.contains(where: { $0.hasPrefix("drive_") }) {
+                systemPrompt += "\n\n" + DriveToolGuide.text
+            }
+            if let agent = request.agent {
+                systemPrompt += "\n\n" + roster.promptSection(for: agent)
+            }
+            if request.isUnattended {
+                systemPrompt += "\n\n" + Self.unattendedGuide
+            }
+            if request.usesPlan {
+                systemPrompt += "\n\n" + AgentLoop.planGuide(for: config)
+            }
+            var messages: [[String: Any]] = [["role": "system", "content": systemPrompt]]
+            for entry in request.conversationHistory {
+                messages.append(["role": "user", "content": entry.userTranscript])
+                messages.append(["role": "assistant", "content": entry.assistantResponse])
+            }
+            messages.append([
+                "role": "user",
+                "content": await Self.buildUserMessageContent(request: request, drive: job.drive)
+            ])
+            job.messages = messages
+        }
+
+        var hooks = AgentLoopHooks(
+            model: { try await AgentModelClient.send($0) },
+            checkBudget: { job.budget.check(now: Date()) },
+            recordIteration: { job.budget.recordIteration() },
+            runTool: { [weak self] call, arguments in
+                guard let self else { return .failed("Teachy is shutting down.") }
+                return await self.runTool(call, arguments: arguments, job: job, allowed: allowed, registry: registry)
+            }
+        )
+        hooks.publish = { status, activity in
+            if let status, !job.status.isFinished { job.status = status }
+            if let activity { job.activity = activity }
+            request.onStatus?(job.status, job.activity)
+        }
+        hooks.planChanged = { title, plan in
+            job.plan = plan
+            if let title { job.title = title }
+        }
+        hooks.stepFinished = { call, resultText, duration in
+            let step = AgentStep(toolName: call.name, arguments: call.arguments, result: String(resultText.prefix(2000)), duration: duration)
+            job.steps.append(step)
+            request.onToolStep?(step)
+        }
+        hooks.takeFollowUps = {
+            let taken = job.pendingFollowUps
+            job.pendingFollowUps = []
+            return taken
+        }
+        hooks.compacted = { [weak self] summaries in
+            self?.writeNotes(for: job, addingDone: summaries)
+        }
+        hooks.answerSentence = request.onAnswerSentence
+        hooks.answerRetracted = request.onAnswerRetracted
+        hooks.describeActivity = { AgentToolActivity.describe(toolName: $0, arguments: $1) }
+
+        // The loop works on a copy; whatever happens, the job keeps the conversation so far.
+        var messages = job.messages
+        defer { job.messages = messages }
+        return try await AgentLoop.run(messages: &messages, config: config, hooks: hooks)
+    }
+
+    static let unattendedGuide = """
+    NOBODY IS WATCHING THIS RUN: it is a routine that started on its own schedule. Nobody can be asked for permission, \
+    so anything that would need a yes is refused. Do the work you can do without it. \
+    In your answer say plainly what you found and, if something was refused, what is left for the person to do. \
+    Your answer is shown as text, not spoken: a few short plain sentences.
+    """
+
+    private func runTool(_ call: AgentToolCall, arguments: [String: Any], job: AgentJob, allowed: Set<String>, registry: BackgroundAgentToolRegistry) async -> AgentLoopToolOutcome {
+        if ToolPolicy.driveActionToolNames.contains(call.name) {
+            if case .busy(let holderID) = await claimDrive(for: job) {
+                let holderTitle = self.job(withID: holderID)?.title ?? "another job"
+                return .refused(DriveLease.busyMessage(holderTitle: holderTitle))
+            }
+        }
+        switch await registry.invoke(toolName: call.name, arguments: arguments, allowedToolNames: allowed, job: job) {
+        case .result(let result):
+            return .result(text: result.text, content: Self.toolResultContent(from: result))
+        case .refused(let message):
+            return .refused(message)
+        case .handBack(let line):
+            return .handBack(line)
+        case .failed(let message):
+            return .failed(message)
+        }
+    }
+
+    // MARK: Notes (long jobs)
+
+    func notesURL(for job: AgentJob) -> URL {
+        notesDirectory.appendingPathComponent("\(job.id).md")
+    }
+
+    /// Writes the job's goal, the person's rules and the summaries of dropped tool results to
+    /// its notes file, and returns the whole file so it can be read back into context.
+    private func writeNotes(for job: AgentJob, addingDone summaries: [String]) -> String? {
+        let url = notesURL(for: job)
+        var text = (try? String(contentsOf: url, encoding: .utf8)) ?? AgentJobNotes.initial(request: job.request, title: job.title)
+        for rule in job.rules { text = AgentJobNotes.addingRule(rule, to: text) }
+        text = AgentJobNotes.addingDone(summaries, to: text)
+        do {
+            try FileManager.default.createDirectory(at: notesDirectory, withIntermediateDirectories: true)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            print("⚠️ Agent: could not save job notes: \(error.localizedDescription)")
+        }
+        return text
+    }
+
+    // MARK: History
+
+    static func record(for job: AgentJob) -> AgentJobRecord {
+        var detail = ""
+        switch job.status {
+        case .failed(let why), .stopped(let why): detail = why
+        default: break
+        }
+        return AgentJobRecord(
+            id: job.id,
+            title: job.title,
+            request: job.request,
+            agentSlug: job.agentSlug,
+            agentName: job.agentName,
+            routineID: job.routineID,
+            plan: job.plan.steps.map { AgentJobRecord.PlanStep(text: $0.text, state: $0.state.rawValue) },
+            steps: job.steps.map { AgentJobRecord.Step(tool: $0.toolName, result: AgentJobRecord.shortResult($0.result), seconds: ($0.duration * 10).rounded() / 10) },
+            answer: job.answer,
+            status: job.status.historyWord,
+            statusDetail: detail,
+            refusals: job.refusals,
+            followUps: job.followUps,
+            startedAt: job.startedAt,
+            finishedAt: job.finishedAt
+        )
+    }
+
+    private func saveHistory(_ job: AgentJob) {
+        guard job.countsTowardLimit, let historyStore else { return }
+        do {
+            try historyStore.save(Self.record(for: job))
+            historyRevision += 1
+        } catch {
+            print("⚠️ Agent: could not save job history: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: The list
+
+    private func add(_ job: AgentJob) {
         jobs.append(job)
         if jobs.count > Self.historyLimit {
             let finished = jobs.filter { $0.status.isFinished }
@@ -137,279 +637,8 @@ final class AgentJobCenter: ObservableObject {
             }
         AgentJobPanelPresenter.shared.refresh()
     }
-}
-
-/// What a caller asks the runner to do.
-struct AgentJobRequest {
-    var transcript: String
-    var screenCaptures: [CompanionScreenCapture] = []
-    var mouseOutlineContext: CompanionMouseOutlineContext?
-    var systemPrompt: String
-    var conversationHistory: [(userTranscript: String, assistantResponse: String)] = []
-    /// nil = every registered tool.
-    var allowedToolNames: Set<String>?
-    /// Explicit jobs state a plan first; quick coaching turns skip it.
-    var usesPlan = false
-    var showsCard = false
-    var maxIterations = AgentJobBudget.defaultMaxIterations
-    var maxWallTime = AgentJobBudget.defaultMaxWallTime
-    var onToolStep: ((AgentStep) -> Void)?
-    var onStatus: ((AgentJobStatus, String) -> Void)?
-}
-
-struct AgentJobError: LocalizedError {
-    let message: String
-    var errorDescription: String? { message }
-}
-
-@MainActor
-enum AgentJobRunner {
-    static let planToolName = "update_plan"
-
-    static let planToolDefinition: [String: Any] = [
-        "type": "function",
-        "function": [
-            "name": planToolName,
-            "description": "State or update your plan. Call this FIRST, before any other tool, with a 2-3 word title for the job and 2-6 short steps. Call it again whenever you move to the next step or the plan changes. The user sees this plan while you work.",
-            "parameters": [
-                "type": "object",
-                "properties": [
-                    "title": ["type": "string", "description": "A 2-3 word name for the job, like \"Inbox Hunter\" or \"Crop Photo\"."],
-                    "steps": ["type": "array", "items": ["type": "string"], "description": "The steps, each a few plain words."],
-                    "current_step": ["type": "integer", "description": "Which step you are on now, counting from 1. One past the last step means all done."]
-                ],
-                "required": ["steps", "current_step"]
-            ] as [String: Any]
-        ] as [String: Any]
-    ]
-
-    static let planGuide = """
-    PLAN FIRST: your very first tool call must be update_plan, with a 2-3 word title and 2-6 short steps. \
-    Call update_plan again each time you move to the next step. Keep steps short and plain; the user reads them.
-    """
-
-    /// Runs one job to its end and returns the final answer as written by the model
-    /// (or the line to say if the job was stopped or handed back).
-    static func run(_ request: AgentJobRequest, registry: BackgroundAgentToolRegistry) async throws -> String {
-        let job = AgentJob(
-            request: request.transcript,
-            showsCard: request.showsCard,
-            maxIterations: request.maxIterations,
-            maxWallTime: request.maxWallTime
-        )
-        AgentJobCenter.shared.add(job)
-
-        let work = Task<String, Error> { @MainActor in
-            try await loop(job: job, request: request, registry: registry)
-        }
-        job.task = work
-
-        let outcome: Result<String, Error>
-        do {
-            let answer = try await withTaskCancellationHandler {
-                try await work.value
-            } onCancel: {
-                work.cancel()
-            }
-            outcome = .success(answer)
-        } catch {
-            outcome = .failure(error)
-        }
-
-        await job.drive.end()
-        AgentToolGate.shared.ledger.endJob(job.id)
-
-        switch outcome {
-        case .success(let answer):
-            job.finish(.done)
-            request.onStatus?(job.status, job.activity)
-            return answer
-        case .failure(let error):
-            if let handBack = error as? DriveHandBack {
-                job.stop(reason: .handedBack(handBack.spokenLine))
-                request.onStatus?(job.status, job.activity)
-                return handBack.spokenLine
-            }
-            if let reason = job.stopReason, !Task.isCancelled {
-                // The user stopped the job (Stop, Escape, mouse). That is an answer, not an error.
-                request.onStatus?(job.status, job.activity)
-                return reason.spokenLine
-            }
-            if error is CancellationError || Task.isCancelled {
-                job.stop(reason: .superseded)
-                throw CancellationError()
-            }
-            job.finish(.failed(error.localizedDescription))
-            request.onStatus?(job.status, job.activity)
-            throw error
-        }
-    }
-
-    // MARK: The loop
-
-    private static func loop(job: AgentJob, request: AgentJobRequest, registry: BackgroundAgentToolRegistry) async throws -> String {
-        var systemPrompt = request.systemPrompt
-        let toolNames = registry.toolNames(allowed: request.allowedToolNames)
-        if toolNames.contains(where: { $0.hasPrefix("drive_") }) {
-            systemPrompt += "\n\n" + DriveToolGuide.text
-        }
-        if request.usesPlan {
-            systemPrompt += "\n\n" + planGuide
-        }
-
-        var messages: [[String: Any]] = [["role": "system", "content": systemPrompt]]
-        for entry in request.conversationHistory {
-            messages.append(["role": "user", "content": entry.userTranscript])
-            messages.append(["role": "assistant", "content": entry.assistantResponse])
-        }
-        messages.append([
-            "role": "user",
-            "content": await buildUserMessageContent(request: request, drive: job.drive)
-        ])
-
-        var tools = registry.toolDefinitions(allowed: request.allowedToolNames)
-        if request.usesPlan { tools.insert(planToolDefinition, at: 0) }
-
-        var failures = ToolFailureTracker()
-        var isFinalTurn = false
-
-        func publish(_ status: AgentJobStatus? = nil, activity: String? = nil) {
-            if let status, !job.status.isFinished { job.status = status }
-            if let activity { job.activity = activity }
-            request.onStatus?(job.status, job.activity)
-        }
-
-        while true {
-            try Task.checkCancellation()
-
-            switch job.budget.check(now: Date()) {
-            case .proceed:
-                break
-            case .lastTurn:
-                isFinalTurn = true
-                messages.append(["role": "user", "content": "Step limit reached. Stop calling tools. Say in a sentence or two what you got done and what is left."])
-            case .exhausted(let why):
-                if isFinalTurn { throw AgentJobError(message: "The job \(why) before it could finish.") }
-                isFinalTurn = true
-                messages.append(["role": "user", "content": "This job has \(why). Stop calling tools. Say in a sentence or two what you got done and what is left."])
-            }
-
-            publish(job.steps.isEmpty && job.plan.steps.isEmpty ? .planning : .running, activity: isFinalTurn ? "Wrapping up" : "Thinking")
-            let response = try await sendChatRequest(messages: messages, tools: isFinalTurn ? [] : tools)
-            job.budget.recordIteration()
-
-            let message = (response["choices"] as? [[String: Any]])?.first?["message"] as? [String: Any] ?? [:]
-            let content = message["content"] as? String
-            let toolCalls = message["tool_calls"] as? [[String: Any]] ?? []
-
-            guard !toolCalls.isEmpty else {
-                if let content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return content }
-                if isFinalTurn { return "I ran out of steps before I could finish." }
-                return "Done."
-            }
-            if isFinalTurn {
-                // Asked for a final answer, got more tool calls: take whatever text there is.
-                return content?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? content! : "I ran out of steps before I could finish."
-            }
-            messages.append(sanitizedAssistantMessage(message))
-
-            for toolCall in toolCalls {
-                try Task.checkCancellation()
-                let function = toolCall["function"] as? [String: Any]
-                let toolName = function?["name"] as? String ?? ""
-                let rawArguments = function?["arguments"] as? String ?? "{}"
-                let toolCallID = toolCall["id"] as? String ?? ""
-                func reply(_ text: Any) {
-                    messages.append(["role": "tool", "tool_call_id": toolCallID, "content": text])
-                }
-
-                let arguments: [String: Any]
-                if rawArguments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    arguments = [:]
-                } else if let data = rawArguments.data(using: .utf8), let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    arguments = parsed
-                } else {
-                    reply("Invalid arguments JSON")
-                    continue
-                }
-
-                if toolName == planToolName {
-                    if request.usesPlan, let parsed = AgentPlan.parse(arguments: arguments) {
-                        job.plan = parsed.plan
-                        if let title = parsed.title { job.title = title }
-                        publish(.running, activity: parsed.plan.currentStep?.text ?? "Working")
-                        reply("Plan noted. Carry on.")
-                    } else {
-                        reply("update_plan needs steps (a list of short strings) and current_step.")
-                    }
-                    continue
-                }
-
-                if failures.isDead(toolName: toolName, argumentsJSON: rawArguments) {
-                    failures.recordRefusedRepeat()
-                    if failures.shouldGiveUp {
-                        throw AgentJobError(message: "I kept hitting the same wall with \(toolName), so I stopped.")
-                    }
-                    reply("Not run: this exact call already failed twice the same way. Use a different approach, or stop and tell the user what is blocking you.")
-                    continue
-                }
-
-                publish(.running, activity: AgentToolActivity.describe(toolName: toolName, arguments: arguments))
-                let stepStart = Date()
-                let invocation = await registry.invoke(
-                    toolName: toolName,
-                    arguments: arguments,
-                    allowedToolNames: request.allowedToolNames,
-                    job: job
-                )
-                try Task.checkCancellation()
-
-                let resultText: String
-                var visionResult: AgentToolResult?
-                switch invocation {
-                case .result(let result):
-                    resultText = result.text
-                    visionResult = result
-                case .refused(let message):
-                    resultText = message
-                case .handBack(let line):
-                    throw DriveHandBack(spokenLine: line)
-                case .failed(let message):
-                    switch failures.recordFailure(toolName: toolName, argumentsJSON: rawArguments, error: message) {
-                    case .firstFailure:
-                        resultText = "Error: \(message)"
-                    case .abortApproach:
-                        resultText = "Error: \(message)\nThis exact call has now failed twice the same way. Do not repeat it. Try a different approach, or stop and tell the user what is blocking you."
-                    }
-                }
-
-                let step = AgentStep(
-                    toolName: toolName,
-                    arguments: rawArguments,
-                    result: String(resultText.prefix(2000)),
-                    duration: Date().timeIntervalSince(stepStart)
-                )
-                job.steps.append(step)
-                request.onToolStep?(step)
-
-                if let visionResult {
-                    reply(toolResultContent(from: visionResult))
-                } else {
-                    reply(truncate(resultText))
-                }
-            }
-        }
-    }
 
     // MARK: Messages
-
-    /// Keeps only the fields a chat-completions request accepts back.
-    private static func sanitizedAssistantMessage(_ message: [String: Any]) -> [String: Any] {
-        var cleaned: [String: Any] = ["role": "assistant"]
-        cleaned["content"] = message["content"] ?? NSNull()
-        if let toolCalls = message["tool_calls"] { cleaned["tool_calls"] = toolCalls }
-        return cleaned
-    }
 
     private static func buildUserMessageContent(request: AgentJobRequest, drive: DriveSession) async -> Any {
         guard !request.screenCaptures.isEmpty else { return request.transcript }
@@ -454,41 +683,24 @@ enum AgentJobRunner {
     }
 
     private static func toolResultContent(from result: AgentToolResult) -> Any {
-        let text = truncate(result.text)
+        let text = AgentLoop.truncate(result.text)
         guard let imageData = result.visionImageJPEGData else { return text }
         var blocks: [[String: Any]] = [["type": "text", "text": text]]
         if let label = result.visionImageLabel { blocks.append(["type": "text", "text": label]) }
         blocks.append(["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(imageData.base64EncodedString())"]])
         return blocks
     }
+}
 
-    private static func truncate(_ text: String) -> String {
-        let limit = 12_000
-        guard text.count > limit else { return text }
-        return "\(text.prefix(limit))\n\n[truncated — \(text.count - limit) more characters omitted]"
-    }
+/// The old entry point, kept for callers that wait for the answer.
+@MainActor
+enum AgentJobRunner {
+    static let planToolName = AgentLoop.planToolName
 
-    // MARK: Model call
-
-    private static func sendChatRequest(messages: [[String: Any]], tools: [[String: Any]]) async throws -> [String: Any] {
-        var body: [String: Any] = [
-            "max_tokens": 4096,
-            "messages": messages
-        ]
-        if !tools.isEmpty {
-            body["tools"] = tools
-            body["tool_choice"] = "auto"
-            body["parallel_tool_calls"] = false
-        }
-        let hasImages = messages.contains { message in
-            guard let blocks = message["content"] as? [[String: Any]] else { return false }
-            return blocks.contains { ($0["type"] as? String) == "image_url" }
-        }
-        let data = try await TeachyAIRouter.sendJSON(job: .agent, hasImages: hasImages, body: body)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw AgentJobError(message: "The AI sent back something Teachy could not read.")
-        }
-        return json
+    /// Runs one job to its end and returns the final answer as written by the model
+    /// (or the line to say if the job was stopped or handed back).
+    static func run(_ request: AgentJobRequest, registry: BackgroundAgentToolRegistry) async throws -> String {
+        try await AgentJobCenter.shared.run(request, registry: registry)
     }
 }
 
@@ -513,6 +725,10 @@ enum AgentToolActivity {
         case "open_browser_tab", "control_browser": return "Working in the browser"
         case "control_app": return "Opening an app"
         case "authenticated_fetch": return "Reading a signed-in page"
+        case "remember": return "Saving a note"
+        case "create_routine": return "Setting up a routine"
+        case "list_routines": return "Checking your routines"
+        case "pause_routine", "delete_routine": return "Changing a routine"
         default: return "Using \(toolName.replacingOccurrences(of: "_", with: " "))"
         }
     }

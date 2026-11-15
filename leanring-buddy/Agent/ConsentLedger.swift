@@ -90,6 +90,33 @@ final class ConsentLedger {
         }
     }
 
+    /// For a run nobody is watching (a routine). There is no one to ask, so nothing is asked:
+    /// safe calls run, a call the person already chose "always allow" for (that exact tool + app)
+    /// runs, and everything else is refused. Delete / send / pay / credentials are always refused.
+    /// "Allow for this job" grants are never consulted: an unattended job cannot have been given one.
+    func resolveUnattended(_ decision: ToolPolicyDecision) -> Resolution {
+        lock.lock(); defer { lock.unlock() }
+        switch decision.risk {
+        case .safe:
+            return .allowed(because: "safe")
+        case .blocked:
+            return .refused(because: decision.reason)
+        case .alwaysAsk:
+            return .refused(because: "this needs your yes every time, and nobody is here to give it")
+        case .needsConsent:
+            if store.consentStrings(forKey: Self.alwaysAllowStoreKey).contains(decision.grantKey) {
+                return .allowed(because: "always allowed")
+            }
+            return .refused(because: "this needs your yes, and nobody is here to give it")
+        }
+    }
+
+    /// What a routine's result says about a call it could not make.
+    static func unattendedRefusalNote(for decision: ToolPolicyDecision) -> String {
+        let scope = decision.appScope.isEmpty ? "" : " in \(decision.appScope)"
+        return "Could not \(decision.summary)\(scope): it needs your yes. Run it yourself once and choose Always allow if you want routines to do this."
+    }
+
     /// Records the user's answer. Returns whether the call may run now.
     @discardableResult
     func record(_ choice: ConsentChoice, for decision: ToolPolicyDecision, jobID: String) -> Bool {
