@@ -1181,6 +1181,17 @@ final class CompanionManager: ObservableObject {
                 SceneDirector.shared.onFollowUpQuestion = { [weak self] question in
                     self?.submitSyntheticCompanionRequest(question)
                 }
+                // Answers given on the drawing itself (a tapped part, "zoom in on…") skip the
+                // voice turn, so they are added to the conversation here.
+                SceneDirector.shared.onRefinementAnswered = { [weak self] question, spokenAnswer in
+                    guard let self else { return }
+                    self.conversationHistory.append((userTranscript: question, assistantResponse: spokenAnswer))
+                    BrainStore.shared.appendMessage(role: .user, text: question)
+                    BrainStore.shared.appendMessage(role: .assistant, text: spokenAnswer)
+                    if self.conversationHistory.count > 10 {
+                        self.conversationHistory.removeFirst(self.conversationHistory.count - 10)
+                    }
+                }
                 SceneDirector.shared.speak = { [weak self] sentence in
                     guard let self else { return }
                     await self.speechSynthesizer.finishStream()            // let the one-line reply finish
