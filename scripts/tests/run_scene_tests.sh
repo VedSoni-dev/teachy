@@ -10,6 +10,7 @@ swiftc -O -parse-as-library \
   leanring-buddy/Scene/SceneScriptParser.swift \
   leanring-buddy/Scene/SceneGeometry.swift \
   leanring-buddy/Scene/SceneParts.swift \
+  leanring-buddy/Scene/SceneMacros.swift \
   leanring-buddy/Scene/SceneReplayLog.swift \
   leanring-buddy/Scene/SceneScriptPrompt.swift \
   scripts/tests/scene_tests.swift \

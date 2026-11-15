@@ -92,6 +92,17 @@ enum SceneOrientation {
         return simd_quatd(from: a, to: b)
     }
 
+    /// The turn that points a shape's own Y along `along` and its own Z along `facing` (as near as it can).
+    static func frame(along: SceneVec3, facing: SceneVec3) -> simd_quatd {
+        guard simd_length(along) > 1e-9 else { return simd_quatd(angle: 0, axis: SceneVec3(0, 1, 0)) }
+        let y = simd_normalize(along)
+        var x = simd_cross(y, facing)
+        guard simd_length(x) > 1e-6 else { return aligning(SceneVec3(0, 1, 0), to: y) }
+        x = simd_normalize(x)
+        let z = simd_cross(x, y)
+        return simd_quatd(simd_double3x3(columns: (x, y, z)))
+    }
+
     /// Roughly where the camera starts, so cutaways open toward the viewer.
     static let viewerDirection = simd_normalize(SceneVec3(0.55, 0.45, 0.8))
 
@@ -124,6 +135,8 @@ enum SceneAnimator: Equatable {
     case spin(target: String, axis: SceneVec3?, rpm: Double)
     /// Markers travelling along a path, looping.
     case flow(group: String, markers: [String], path: [SceneVec3], speed: Double)
+    /// Links travelling round a closed path at the rim speed of a gear (a chain or belt).
+    case belt(group: String, markers: [String], path: [SceneVec3], gear: String, radius: Double, axis: SceneVec3)
     /// Crank, rod and head of a piston macro.
     case piston(group: String, crank: Double, rod: Double, headHeight: Double, rpm: Double, phase: Double)
     /// Circular orbit around a point or another part.
@@ -134,7 +147,7 @@ enum SceneAnimator: Equatable {
     var target: String {
         switch self {
         case .spin(let target, _, _), .orbit(let target, _, _, _, _, _, _), .spring(let target, _, _, _, _, _): return target
-        case .flow(let group, _, _, _), .piston(let group, _, _, _, _, _): return group
+        case .flow(let group, _, _, _), .piston(let group, _, _, _, _, _), .belt(let group, _, _, _, _, _): return group
         }
     }
 }
@@ -160,6 +173,7 @@ struct ScenePartBuilder {
     private(set) var gears: [String: Gear] = [:]
     private(set) var train = SceneGearTrain()
     private(set) var boardThickness: [String: Double] = [:]
+    private(set) var boardSize: [String: SceneVec2] = [:]
     private(set) var positions: [String: SceneVec3] = [:]
 
     init() {}
@@ -174,6 +188,15 @@ struct ScenePartBuilder {
 
     mutating func build(_ c: SceneCommand) -> SceneBuild {
         var build = SceneBuild()
+        if let expansion = SceneMacros.expand(c) {
+            // A whole object: build each of the simpler commands it stands for.
+            for command in expansion where command.verb.makes3DPart || command.verb == .group || command.verb == .fixed {
+                let piece = self.build(command)
+                build.parts += piece.parts
+                build.animators += piece.animators
+            }
+            return build
+        }
         switch c.verb {
         case .group, .scene3d:
             if c.verb == .group { build.parts = [basePart(c, shape: .group)] }
@@ -220,6 +243,7 @@ struct ScenePartBuilder {
         case .flow: build = flow(c)
         case .board: build = board(c)
         case .comp, .chip: build = component(c)
+        case .chain: build = chain(c)
         case .axes: build = axes(c)
         case .body, .fixed: build = body(c)
         case .ground:
@@ -651,7 +675,25 @@ struct ScenePartBuilder {
         var part = basePart(c, shape: .box(size: SceneVec3(width, thickness, depth), corner: min(width, depth) * 0.03))
         if c.color() == nil { part.color = SceneColor.named["pcb"]! }
         boardThickness[c.id] = thickness
+        boardSize[c.id] = SceneVec2(width, depth)
         return SceneBuild(parts: [part])
+    }
+
+    /// What a block on a board is, from `kind=` or from words in its id and label.
+    static func componentKind(_ c: SceneCommand) -> String {
+        if let kind = c.string("kind", "type")?.lowercased() { return kind }
+        let text = (c.id + " " + (c.string("label", "name") ?? "") + " " + (c.words.first(where: \.quoted)?.text ?? "")).lowercased()
+        let table: [(String, [String])] = [
+            ("header", ["gpio", "header", "pins"]),
+            ("ethernet", ["ethernet", "rj45", "lan"]),
+            ("hdmi", ["hdmi", "displayport"]),
+            ("usb", ["usb", "power in"]),
+            ("sd", ["sd", "sim"]),
+            ("connector", ["camera", "csi", "dsi", "ribbon", "connector", "fpc", "pcie"]),
+            ("chip", ["cpu", "soc", "processor", "chip", "ram", "memory", "wifi", "wi-fi", "bluetooth", "controller", "pmic", "flash", "gpu", "rp1"]),
+        ]
+        for (kind, words) in table where words.contains(where: { text.contains($0) }) { return kind }
+        return "block"
     }
 
     /// A flat labelled block. `on=board at=x,z` sits it on top of the board.
@@ -676,7 +718,121 @@ struct ScenePartBuilder {
             part.position = SceneVec3(at[0], height / 2, at[1])
         }
         if part.label == nil, part.name == nil, let text = c.words.first(where: \.quoted)?.text { part.label = text }
-        return SceneBuild(parts: [part])
+
+        // Dress the block as what it is: a port gets a metal shell and a dark opening, a chip a lid, a header its pins.
+        let kind = Self.componentKind(c)
+        var extras: [ScenePart] = []
+        func child(_ name: String, _ shape: SceneShape, at: SceneVec3, color: SceneColor, material: SceneMaterial = .plastic) -> ScenePart {
+            var piece = ScenePart(id: "\(c.id).\(name)", shape: shape, color: color)
+            piece.parent = c.id
+            piece.position = at
+            piece.material = material
+            piece.isTappable = false
+            return piece
+        }
+        let explicitHeight = size.count > 2 || c.number("h", "thick") != nil
+        func resize(height newHeight: Double) {
+            guard !explicitHeight else { return }
+            part.shape = .box(size: SceneVec3(width, newHeight, depth), corner: min(width, depth, newHeight) * 0.08)
+            part.position.y += (newHeight - height) / 2
+        }
+        var bodyHeight = height
+        let small = min(width, depth)
+        switch kind {
+        case "usb", "ethernet", "hdmi":
+            bodyHeight = explicitHeight ? height : small * (kind == "ethernet" ? 0.85 : (kind == "usb" ? 0.7 : 0.4))
+            resize(height: bodyHeight)
+            if c.color() == nil { part.color = SceneColor.named["silver"]!; part.material = .metal }
+            // The opening faces the nearest edge of the board.
+            let half = board.flatMap { boardSize[$0] }.map { $0 / 2 } ?? SceneVec2(1, 1)
+            let x = part.position.x, z = part.position.z
+            let facesX = abs(x) / max(half.x, 1e-6) >= abs(z) / max(half.y, 1e-6)
+            let sign: Double = (facesX ? x : z) >= 0 ? 1 : -1
+            let slab = facesX ? SceneVec3(width * 0.04, bodyHeight * 0.62, depth * 0.78) : SceneVec3(width * 0.78, bodyHeight * 0.62, depth * 0.04)
+            let at = facesX ? SceneVec3(sign * width * 0.49, 0, 0) : SceneVec3(0, 0, sign * depth * 0.49)
+            extras.append(child("port", .box(size: slab, corner: 0), at: at, color: SceneColor(hex: 0x15161A), material: .matte))
+        case "chip":
+            if c.color() == nil { part.color = SceneColor(hex: 0x1E1F24) }
+            extras.append(child("lid", .box(size: SceneVec3(width * 0.74, height * 0.3, depth * 0.74), corner: small * 0.03), at: SceneVec3(0, height * 0.5, 0),
+                                color: SceneColor.named["silver"]!, material: .metal))
+        case "sd":
+            if c.color() == nil { part.color = SceneColor.named["silver"]!; part.material = .metal }
+        case "connector":
+            if c.color() == nil { part.color = SceneColor.named["cream"]! }
+            extras.append(child("latch", .box(size: SceneVec3(width * 0.94, height * 0.4, depth * 0.3), corner: 0), at: SceneVec3(0, height * 0.5, depth * 0.3),
+                                color: SceneColor(hex: 0x33363D), material: .matte))
+        case "header":
+            if c.color() == nil { part.color = SceneColor(hex: 0x17181C) }
+            let alongX = width >= depth
+            let long = max(width, depth), short = min(width, depth)
+            let rows = 2
+            let pitch = short / Double(rows)
+            let perRow = min(max(Int(long / pitch), 2), 24)
+            let gold = SceneColor.named["gold"]!
+            for row in 0..<rows {
+                for pin in 0..<perRow {
+                    let along = (Double(pin) + 0.5) * long / Double(perRow) - long / 2
+                    let across = (Double(row) + 0.5) * pitch - short / 2
+                    extras.append(child("p\(row)_\(pin)", .box(size: SceneVec3(pitch * 0.26, pitch * 1.3, pitch * 0.26), corner: 0),
+                                        at: alongX ? SceneVec3(along, height / 2 + pitch * 0.6, across) : SceneVec3(across, height / 2 + pitch * 0.6, along),
+                                        color: gold, material: .metal))
+                }
+            }
+        default:
+            break
+        }
+        return SceneBuild(parts: [part] + extras)
+    }
+
+    /// A chain or belt round two gears. They then turn the same way, at the ratio of their teeth.
+    private mutating func chain(_ c: SceneCommand) -> SceneBuild {
+        guard let aID = c.string("a", "from"), let bID = c.string("b", "to") else { return SceneBuild() }
+        let first = gears[aID], second = gears[bID]
+        let axis = first?.axis ?? second?.axis ?? c.axis() ?? SceneVec3(0, 0, 1)
+        let centerA = first?.position ?? positions[aID] ?? .zero
+        let centerB = second?.position ?? positions[bID] ?? SceneVec3(2, 0, 0)
+        // The chain rides on the teeth, a little outside each gear's pitch circle.
+        func rim(_ gear: Gear?) -> Double? { gear.map { $0.radius + SceneGeometry.gearModule(teeth: $0.teeth, pitchRadius: $0.radius) * 0.6 } }
+        let radiusA = positive(c.number("ra") ?? rim(first) ?? 0.5), radiusB = positive(c.number("rb") ?? rim(second) ?? 0.5)
+        let alignment = SceneOrientation.aligning(SceneVec3(0, 0, 1), to: axis)
+        let u = alignment.act(SceneVec3(1, 0, 0)), v = alignment.act(SceneVec3(0, 1, 0))
+        let path = SceneGeometry.beltPath(centerA: centerA, radiusA: radiusA, centerB: centerB, radiusB: radiusB, u: u, v: v)
+        guard path.count >= 4 else { return SceneBuild() }
+        let wire = positive(c.number("r", "w", "wire") ?? min(radiusA, radiusB) * 0.09)
+        let across = positive(c.number("width") ?? min(radiusA, radiusB) * 0.34)
+        var group = basePart(c, shape: .group)
+        group.position = .zero
+        group.axis = nil
+        group.parent = first?.parent ?? c.string("parent")
+        if c.color() == nil { group.color = SceneColor(hex: 0x3B3F48) }
+        if group.name == nil, group.label == nil { group.name = "Chain" }
+        var parts = [group]
+        var loop = ScenePart(id: "\(c.id).loop", shape: .tube(path: path, radius: wire * 0.5, closed: true), color: group.color)
+        loop.parent = c.id
+        loop.material = .metal
+        loop.isTappable = false
+        parts.append(loop)
+        let closed = path + [path[0]]
+        let length = SceneGeometry.pathLength(closed)
+        let count = Int(min(max((length / (wire * 4.4)).rounded(), 6), 110))
+        var markers: [String] = []
+        for index in 0..<count {
+            var link = ScenePart(id: "\(c.id).l\(index)", shape: .box(size: SceneVec3(wire * 1.5, wire * 3.2, across), corner: wire * 0.4), color: SceneColor.named["silver"]!)
+            link.parent = c.id
+            link.material = .metal
+            link.isTappable = false
+            let placement = SceneGeometry.pointAlong(closed, t: Double(index) / Double(count))
+            link.position = placement.position
+            link.orientation = SceneOrientation.frame(along: placement.direction, facing: axis)
+            markers.append(link.id)
+            parts.append(link)
+        }
+        if let first, let second, first.teeth > 0 {
+            train.couple(aID, bID, ratio: -Double(second.teeth) / Double(first.teeth))
+        } else {
+            train.couple(aID, bID, ratio: -radiusB / radiusA)
+        }
+        return SceneBuild(parts: parts, animators: [.belt(group: c.id, markers: markers, path: closed, gear: aID, radius: radiusA, axis: axis)])
     }
 
     private func axes(_ c: SceneCommand) -> SceneBuild {
@@ -718,6 +874,31 @@ struct ScenePartBuilder {
         var part = basePart(c, shape: shape)
         if c.verb == .fixed, c.color() == nil { part.color = SceneColor.named["darkgray"]! }
         return SceneBuild(parts: [part])
+    }
+}
+
+// MARK: - Label text
+
+enum SceneLabelText {
+    /// Separates a leading list number from a label: "1. Fan" → ("Fan", 1), and "1 Fan" with n=1 → ("Fan", 1).
+    /// A number that is part of the name stays: "3 Na⁺ out" and "2 stroke engine" are left alone,
+    /// because a bare number followed by a space is only a list number when `n=` says the same.
+    static func split(_ text: String, number: Int?) -> (text: String, number: Int?) {
+        let digits = text.prefix(while: { $0.isASCII && $0.isNumber })
+        guard !digits.isEmpty, digits.count <= 2, let leading = Int(digits) else { return (text, number) }
+        let rest = text.dropFirst(digits.count)
+        guard let separator = rest.first else { return (text, number) }
+        let isListMark = ".:)·".contains(separator) || rest.hasPrefix(" ·") || rest.hasPrefix(" - ") || rest.hasPrefix(" – ")
+        if isListMark {
+            guard number == nil || number == leading else { return (text, number) }
+        } else if separator == " " {
+            guard number == leading else { return (text, number) }
+        } else {
+            return (text, number)
+        }
+        let stripped = rest.drop(while: { " .:)·-–".contains($0) })
+        guard !stripped.isEmpty else { return (text, number) }
+        return (String(stripped), leading)
     }
 }
 

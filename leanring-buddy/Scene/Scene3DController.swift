@@ -53,22 +53,39 @@ final class Scene3DSCNView: SCNView {
     var onTap: ((CGPoint) -> Void)?
     var onInteraction: (() -> Void)?
     private var mouseDownPoint: CGPoint?
+    private var dragStarted = false
+    /// A press that moves less than this many points is a click on a part, not a turn of the model.
+    static let clickSlop: CGFloat = 4
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
         mouseDownPoint = convert(event.locationInWindow, from: nil)
-        onInteraction?()
+        dragStarted = false
         super.mouseDown(with: event)
+    }
+
+    /// Only a real drag takes the camera from the gentle sway. A plain click on a part must
+    /// not stop the model turning (it used to: every mouse-down counted as taking the camera).
+    override func mouseDragged(with event: NSEvent) {
+        if !dragStarted, let start = mouseDownPoint {
+            let point = convert(event.locationInWindow, from: nil)
+            if hypot(point.x - start.x, point.y - start.y) >= Self.clickSlop {
+                dragStarted = true
+                onInteraction?()
+            }
+        }
+        super.mouseDragged(with: event)
     }
 
     override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
         let point = convert(event.locationInWindow, from: nil)
-        if let start = mouseDownPoint, hypot(point.x - start.x, point.y - start.y) < 4 {
+        if let start = mouseDownPoint, !dragStarted, hypot(point.x - start.x, point.y - start.y) < Self.clickSlop {
             onTap?(point)
         }
         mouseDownPoint = nil
+        dragStarted = false
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -111,7 +128,18 @@ final class Scene3DController: NSObject {
     private var spins: [String: Spin] = [:]
     private var spinAngles: [String: Double] = [:]
     private var solvedRPM: [String: Double] = [:]
-    private struct Flow { var markers: [String]; var path: [SceneVec3]; var speed: Double; var phase: Double; var length: Double }
+    private struct Flow {
+        var markers: [String]; var path: [SceneVec3]; var speed: Double; var phase: Double; var length: Double
+        /// A closed loop (a chain): markers keep their size all the way round.
+        var loops = false
+        /// The gear whose rim speed the markers follow, and its radius.
+        var driver: String?
+        var driveRadius = 0.0
+        /// Links keep this side facing along the gear's axle.
+        var facing: SceneVec3?
+    }
+    private struct Beat { var bpm: Double; var amount: Double; var phase: Double }
+    private var beats: [String: Beat] = [:]
     private var flows: [String: Flow] = [:]
     private struct Piston { var crank: Double; var rod: Double; var headHeight: Double; var rpm: Double; var angle: Double }
     private var pistons: [String: Piston] = [:]
@@ -123,6 +151,8 @@ final class Scene3DController: NSObject {
 
     // Labels
     private struct LabelChip { var partID: String; var chip: SCNNode; var leader: SCNNode; var index: Int; var side: String? }
+    /// The box round every chip in the camera plane (relative to the model's middle), so the camera keeps chips in frame.
+    private var chipExtent: (low: SceneVec2, high: SceneVec2)?
     private var labels: [String: LabelChip] = [:]
 
     // Simulation
@@ -170,12 +200,26 @@ final class Scene3DController: NSObject {
 
     static let fieldOfView: CGFloat = 30
 
-    override init() {
+    /// Headless: nothing ticks by itself and nothing fades in. The owner moves time on with
+    /// `advance(by:)` and takes pictures with `renderFrame`, so the same log always gives
+    /// the same frames (used for saving a drawing as a video and for thumbnails).
+    let isHeadless: Bool
+    private var manualClock: CFTimeInterval = 0
+    private var offscreenRenderer: SCNRenderer?
+    private var now: CFTimeInterval { isHeadless ? manualClock : CACurrentMediaTime() }
+
+    init(headless: Bool = false) {
+        isHeadless = headless
         view = Scene3DSCNView(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
         super.init()
         configureView()
         configureScene()
-        startTicking()
+        if headless {
+            view.isPlaying = false
+            view.rendersContinuously = false
+        } else {
+            startTicking()
+        }
     }
 
     var partCount: Int { parts.values.filter { if case .group = $0.shape { return false } else { return true } }.count }
@@ -219,27 +263,44 @@ final class Scene3DController: NSObject {
         // Key light rides with the camera so the model is always lit from over the viewer's shoulder.
         let key = SCNLight()
         key.type = .directional
-        key.intensity = 640
-        key.color = NSColor(calibratedRed: 1.0, green: 0.97, blue: 0.92, alpha: 1)
+        key.intensity = 760
+        key.color = NSColor(calibratedRed: 1.0, green: 0.965, blue: 0.91, alpha: 1)
         key.castsShadow = true
         key.shadowMode = .deferred
-        key.shadowRadius = 5
-        key.shadowSampleCount = 12
-        key.shadowColor = NSColor.black.withAlphaComponent(0.32)
+        key.shadowRadius = 6
+        key.shadowSampleCount = 16
+        key.shadowColor = NSColor.black.withAlphaComponent(0.34)
         key.shadowMapSize = CGSize(width: 2048, height: 2048)
         let keyNode = SCNNode()
         keyNode.light = key
-        keyNode.simdEulerAngles = simd_float3(-0.62, -0.5, 0)
+        keyNode.simdEulerAngles = simd_float3(-0.66, -0.55, 0)
         cameraNode.addChildNode(keyNode)
 
         let fill = SCNLight()
         fill.type = .directional
-        fill.intensity = 260
-        fill.color = NSColor(calibratedRed: 0.82, green: 0.90, blue: 1.0, alpha: 1)
+        fill.intensity = 240
+        fill.color = NSColor(calibratedRed: 0.80, green: 0.89, blue: 1.0, alpha: 1)
         let fillNode = SCNNode()
         fillNode.light = fill
-        fillNode.simdEulerAngles = simd_float3(-0.2, 0.9, 0)
+        fillNode.simdEulerAngles = simd_float3(-0.15, 0.95, 0)
         cameraNode.addChildNode(fillNode)
+
+        // A rim light from behind and above picks out edges, so parts of one colour don't merge.
+        let rim = SCNLight()
+        rim.type = .directional
+        rim.intensity = 420
+        rim.color = NSColor(calibratedRed: 1.0, green: 0.98, blue: 0.95, alpha: 1)
+        let rimNode = SCNNode()
+        rimNode.light = rim
+        rimNode.simdEulerAngles = simd_float3(-2.35, 0.5, 0)
+        cameraNode.addChildNode(rimNode)
+
+        // Contact shading in the creases between parts.
+        camera.screenSpaceAmbientOcclusionIntensity = 0.55
+        camera.screenSpaceAmbientOcclusionRadius = 0.6
+        camera.screenSpaceAmbientOcclusionBias = 0.03
+        camera.screenSpaceAmbientOcclusionDepthThreshold = 0.2
+        camera.screenSpaceAmbientOcclusionNormalThreshold = 0.3
 
         // A soft blob under the model so it sits on something even over a busy screen.
         let plane = SCNPlane(width: 1, height: 1)
@@ -288,6 +349,7 @@ final class Scene3DController: NSObject {
         builder = ScenePartBuilder()
         nodes = [:]; parts = [:]; baseOrientation = [:]; order = []
         spins = [:]; spinAngles = [:]; solvedRPM = [:]; flows = [:]; pistons = [:]; orbits = [:]; coils = [:]; explodedOffsets = [:]
+        beats = [:]; chipExtent = nil; leaderOffsets = [:]; labelRowsDecidedFor = -1
         labels = [:]; chipTargets = [:]; springVelocity = [:]; bodyMass = [:]; joints = [:]; forces = [:]; sliderBindings = [:]; plotSources = [:]; plotBuffers = [:]
         isSimulation = false; speed = 1; movingIDs = []; lastPositions = [:]; measuredVelocity = [:]; labelBoxes = [:]
         azimuth = 0.5; baseAzimuth = 0.5; swayPhase = 0; elevation = 0.30; hasFit = false; userTookCamera = false; cameraPinned = false; autoRotate = true
@@ -301,9 +363,17 @@ final class Scene3DController: NSObject {
     // MARK: Commands
 
     func apply(_ original: SceneCommand) {
+        if let expansion = SceneMacros.expand(original) {
+            // A whole object (jet, rocket, heart…): draw the simpler commands it stands for.
+            for command in expansion { apply(command) }
+            return
+        }
         var c = original
         c.verb = SceneRouter.verbIn3D(original)
         switch c.verb {
+        case .beat:
+            beats[c.id] = Beat(bpm: min(max(c.number("bpm", "rate", "rpm") ?? 60, 1), 240), amount: min(max(c.number("amount", "by") ?? 0.08, 0), 0.5),
+                               phase: c.number("phase") ?? 0)
         case .scene3d:
             model.title = c.string("title") ?? c.freeText ?? model.title
             if c.flag("still") { autoRotate = false }
@@ -319,6 +389,7 @@ final class Scene3DController: NSObject {
         case .spin:
             spins[c.id] = Spin(axis: c.axis(), rpm: Self.watchable(c.number("rpm", "speed") ?? 20))
             if let piston = pistons[c.id] { pistons[c.id]?.rpm = c.number("rpm", "speed") ?? piston.rpm; spins[c.id] = nil }
+            if setEngineSpeed(c.id, rpm: Self.watchable(c.number("rpm", "speed") ?? 20, limit: 150)) { spins[c.id] = nil }
             solvedRPM = [:]
         case .move: move(c)
         case .pulse: pulse(c.id, times: Int(c.number("times", "n") ?? 3))
@@ -392,7 +463,7 @@ final class Scene3DController: NSObject {
         for part in build.parts { addNode(for: part) }
         for animator in build.animators { register(animator) }
         fitCountdown = min(fitCountdown, 0.06)
-        settleUntil = CACurrentMediaTime() + 1.2
+        settleUntil = now + 1.2
     }
 
     private func addNode(for part: ScenePart) {
@@ -411,8 +482,12 @@ final class Scene3DController: NSObject {
         }
         let parent = part.parent.flatMap { nodes[$0] } ?? contentRoot
         parent.addChildNode(node)
-        node.opacity = 0
-        node.runAction(.fadeOpacity(to: CGFloat(part.opacity), duration: 0.28))
+        if isHeadless {
+            node.opacity = CGFloat(part.opacity)
+        } else {
+            node.opacity = 0
+            node.runAction(.fadeOpacity(to: CGFloat(part.opacity), duration: 0.28))
+        }
         if part.opacity < 0.999 { node.renderingOrder = 10 }
         nodes[part.id] = node
         parts[part.id] = part
@@ -430,6 +505,10 @@ final class Scene3DController: NSObject {
             solvedRPM = [:]
         case .flow(let group, let markers, let path, let speed):
             flows[group] = Flow(markers: markers, path: path, speed: speed, phase: 0, length: max(SceneGeometry.pathLength(path), 1e-6))
+        case .belt(let group, let markers, let path, let gear, let radius, let axis):
+            flows[group] = Flow(markers: markers, path: path, speed: 0, phase: 0, length: max(SceneGeometry.pathLength(path), 1e-6),
+                                loops: true, driver: gear, driveRadius: radius, facing: axis)
+            solvedRPM = [:]
         case .piston(let group, let crank, let rod, let headHeight, let rpm, let phase):
             pistons[group] = Piston(crank: crank, rod: rod, headHeight: headHeight, rpm: Self.watchable(rpm, limit: 150), angle: phase)
             updatePiston(group)
@@ -446,6 +525,7 @@ final class Scene3DController: NSObject {
         node.runAction(.sequence([.fadeOut(duration: 0.25), .removeFromParentNode()]))
         for key in doomed {
             nodes[key] = nil; parts[key] = nil; spins[key] = nil; flows[key] = nil; pistons[key] = nil; orbits[key] = nil; coils[key] = nil
+            beats[key] = nil
             if let label = labels[key] {
                 label.chip.removeFromParentNode()
                 label.leader.removeFromParentNode()
@@ -460,18 +540,7 @@ final class Scene3DController: NSObject {
     private func addLabel(to partID: String, text: String, number: Int?, side: String?) {
         guard nodes[partID] != nil else { return }
         // "1 Fan" with n=1, or "1. Fan" with no n: the number belongs in the dot, once.
-        var text = text, number = number
-        let digits = text.prefix(while: { $0.isASCII && $0.isNumber })
-        if !digits.isEmpty, digits.count <= 2, let leading = Int(digits) {
-            let rest = text.dropFirst(digits.count)
-            if let separator = rest.first, " .:)·-".contains(separator), number == nil || number == leading {
-                let stripped = rest.drop(while: { " .:)·-".contains($0) })
-                if !stripped.isEmpty {
-                    text = String(stripped)
-                    number = leading
-                }
-            }
-        }
+        let (text, number) = SceneLabelText.split(text, number: number)
         if let existing = labels[partID] {
             existing.chip.removeFromParentNode()
             existing.leader.removeFromParentNode()
@@ -506,14 +575,20 @@ final class Scene3DController: NSObject {
         leader.name = "_leader:" + partID
         leader.renderingOrder = 990
 
-        chip.opacity = 0
-        leader.opacity = 0
-        chip.runAction(.sequence([.wait(duration: 0.15), .fadeIn(duration: 0.3)]))
-        leader.runAction(.sequence([.wait(duration: 0.15), .fadeOpacity(to: 0.85, duration: 0.3)]))
+        if isHeadless {
+            leader.opacity = 0.85
+        } else {
+            chip.opacity = 0
+            leader.opacity = 0
+            chip.runAction(.sequence([.wait(duration: 0.15), .fadeIn(duration: 0.3)]))
+            leader.runAction(.sequence([.wait(duration: 0.15), .fadeOpacity(to: 0.85, duration: 0.3)]))
+        }
         labelRoot.addChildNode(leader)
         labelRoot.addChildNode(chip)
         labels[partID] = LabelChip(partID: partID, chip: chip, leader: leader, index: labels[partID]?.index ?? labels.count, side: side)
         labelBoxes[partID] = nil
+        leaderOffsets[partID] = nil
+        chipTargets[partID] = nil
         updateLabels()
     }
 
@@ -580,73 +655,174 @@ final class Scene3DController: NSObject {
         movingIDs.contains(id) ? node.presentation.simdWorldPosition : node.simdWorldPosition
     }
 
-    private func updateLabels(refresh: Bool = false) {
-        guard !labels.isEmpty else { return }
-        let radius = max(fitRadius, 0.05)
-        let modelTop = boundsHigh.y
-        let toCamera = simd_normalize(cameraNode.simdWorldPosition - shownCenter)
-        let right = simd_normalize(simd_cross(simd_float3(0, 1, 0), toCamera))
-        let up = simd_cross(toCamera, right)
-        let chipHeight = radius * 0.11
-        var placed: [(x: Float, y: Float, halfWidth: Float)] = []
-        var top = -Float.greatestFiniteMagnitude
+    /// The direction from the model to the camera that chips are laid out for: the opening
+    /// view while the model sways by itself, the real view once the person turns it.
+    private var layoutDirection: simd_float3 {
+        if userTookCamera || cameraPinned, let camera = view.pointOfView {
+            let direction = camera.presentation.simdWorldPosition - shownCenter
+            if simd_length(direction) > 1e-5 { return simd_normalize(direction) }
+        }
+        return cameraDirection(azimuth: autoRotate ? baseAzimuth : azimuth)
+    }
 
-        for label in labels.values.sorted(by: { $0.index < $1.index }) {
-            guard let node = nodes[label.partID], let (low, high) = labelBox(for: label.partID, node: node, refresh: refresh) else { continue }
-            let center = (low + high) / 2
-            let halfHeight = (high.y - low.y) / 2
-            let halfWidth = max(high.x - low.x, high.z - low.z) / 2
-            var target: simd_float3
-            switch label.side?.lowercased() {
-            case "down", "below", "bottom":
-                target = simd_float3(center.x, min(low.y - radius * 0.2, boundsLow.y - radius * 0.06), center.z)
-            case "left":
-                target = center - right * (halfWidth + radius * 0.5)
-            case "right":
-                target = center + right * (halfWidth + radius * 0.5)
-            default:
-                let near = high.y + radius * 0.2
-                let clear = min(modelTop + radius * 0.1, high.y + radius * 0.9)
-                // A chip rides just above a moving body; otherwise it clears the whole model.
-                target = simd_float3(center.x, movingIDs.contains(label.partID) || orbits[label.partID] != nil ? near : max(near, clear), center.z)
+    /// Where on a part its leader line lands, as an offset from the part's position. Found by
+    /// hit-testing at refit rate, because the middle of a part's box is often thin air (a
+    /// cable's curve, a hollow casing, a row of hangers).
+    private var leaderOffsets: [String: simd_float3] = [:]
+
+    private func leaderAnchor(for id: String, chipEnd: simd_float3, center: simd_float3, halfExtent: simd_float3, refresh: Bool) -> simd_float3 {
+        guard let node = nodes[id], !isMovingPart(id) else { return center }
+        let origin = currentPosition(of: id, node: node)
+        if !refresh, let offset = leaderOffsets[id] { return origin + offset }
+        // Aim at the nearest piece of the part, then stop where the line first touches it.
+        var aim = center
+        var best = Float.greatestFiniteMagnitude
+        node.enumerateHierarchy { child, _ in
+            guard child.geometry != nil, !(child.name ?? "").hasPrefix("_") else { return }
+            var point = child.simdWorldPosition
+            if let name = child.name, let part = parts[name], case .tube(let path, _, _) = part.shape, !path.isEmpty {
+                point = child.simdConvertPosition(simd_float3(path[path.count / 2]), to: nil)
+            } else if let geometry = child.geometry {
+                let (low, high) = geometry.boundingBox
+                point = child.simdConvertPosition((simd_float3(low) + simd_float3(high)) / 2, to: nil)
             }
-            // Keep chips from covering each other, judged in the camera's plane.
-            let aspect = Float((label.chip.geometry as? SCNPlane)?.width ?? 3)
-            let half = aspect * chipHeight / 2
-            let direction: Float = ["down", "below", "bottom"].contains(label.side?.lowercased() ?? "") ? -1 : 1
+            let distance = simd_length(point - chipEnd)
+            if distance < best { best = distance; aim = point }
+        }
+        var anchor = aim
+        let overshoot = aim + (aim - chipEnd) * 0.02
+        let hits = contentRoot.hitTestWithSegment(from: SCNVector3(chipEnd), to: SCNVector3(overshoot),
+                                                  options: [SCNHitTestOption.rootNode.rawValue: node, SCNHitTestOption.backFaceCulling.rawValue: false,
+                                                            SCNHitTestOption.searchMode.rawValue: SCNHitTestSearchMode.all.rawValue])
+        if let first = hits.min(by: { simd_length(simd_float3($0.worldCoordinates) - chipEnd) < simd_length(simd_float3($1.worldCoordinates) - chipEnd) }) {
+            let surface = simd_float3(first.worldCoordinates)
+            // A touch inside the surface, so the line visibly lands on the part.
+            anchor = surface + (aim - surface) * 0.12
+        }
+        leaderOffsets[id] = anchor - origin
+        return anchor
+    }
+
+    private var labelRows = false
+    private var labelRowsDecidedFor = -1
+
+    private func isMovingPart(_ id: String) -> Bool {
+        movingIDs.contains(id) || orbits[id] != nil || nodes[id]?.physicsBody?.type == .kinematic
+    }
+
+    private func updateLabels(refresh: Bool = false) {
+        guard !labels.isEmpty else {
+            chipExtent = nil
+            return
+        }
+        let radius = max(fitRadius, 0.05)
+        let toCamera = layoutDirection
+        var right = simd_cross(simd_float3(0, 1, 0), toCamera)
+        right = simd_length(right) > 1e-5 ? simd_normalize(right) : simd_float3(1, 0, 0)
+        let up = simd_cross(toCamera, right)
+        let origin = fitCenter
+        var chipHeight = radius * 0.115
+        if isSimulation {
+            // A simulation is framed by the space its bodies move in, which can be much bigger
+            // than the bodies; size chips by the picture so they stay readable.
+            chipHeight = max(chipHeight, shownDistance * tan(Float(Self.fieldOfView) * .pi / 360) * 0.085)
+        }
+        func flat(_ point: simd_float3) -> SceneVec2 { SceneVec2(Double(simd_dot(point - origin, right)), Double(simd_dot(point - origin, up))) }
+        func world(_ point: SceneVec2) -> simd_float3 { origin + right * Float(point.x) + up * Float(point.y) }
+
+        // The model's box as the camera sees it.
+        var low = SceneVec2(repeating: .greatestFiniteMagnitude), high = SceneVec2(repeating: -.greatestFiniteMagnitude)
+        for corner in 0..<8 {
+            let point = flat(simd_float3(corner & 1 == 0 ? boundsLow.x : boundsHigh.x, corner & 2 == 0 ? boundsLow.y : boundsHigh.y, corner & 4 == 0 ? boundsLow.z : boundsHigh.z))
+            low = simd_min(low, point)
+            high = simd_max(high, point)
+        }
+
+        struct Entry { var label: LabelChip; var center: simd_float3; var halfExtent: simd_float3; var size: SceneVec2 }
+        var fixed: [Entry] = [], riding: [Entry] = []
+        for label in labels.values.sorted(by: { $0.index < $1.index }) {
+            guard let node = nodes[label.partID], let (boxLow, boxHigh) = labelBox(for: label.partID, node: node, refresh: refresh) else { continue }
+            let aspect = Double((label.chip.geometry as? SCNPlane)?.width ?? 3)
+            let entry = Entry(label: label, center: (boxLow + boxHigh) / 2, halfExtent: (boxHigh - boxLow) / 2,
+                              size: SceneVec2(aspect * Double(chipHeight), Double(chipHeight)))
+            if isMovingPart(label.partID) { riding.append(entry) } else { fixed.append(entry) }
+        }
+
+        var targets: [String: (position: simd_float3, side: SceneLabelLayout.Side)] = [:]
+        let items = fixed.map { entry -> SceneLabelLayout.Item in
+            // Order chips by where their leader lands (it can be far from the middle of a long part), so leaders don't cross.
+            let landing = leaderOffsets[entry.label.partID].map { currentPosition(of: entry.label.partID, node: nodes[entry.label.partID]!) + $0 } ?? entry.center
+            return SceneLabelLayout.Item(id: entry.label.partID, anchor: flat(landing), size: entry.size,
+                                         side: SceneLabelLayout.Side(script: entry.label.side))
+        }
+        // Rows or columns is decided when the set of labels changes, not every frame: a spinning
+        // part changes the model's box a little all the time, and chips must not hop about.
+        if labelRowsDecidedFor != labels.count {
+            labelRowsDecidedFor = labels.count
+            labelRows = SceneLabelLayout.prefersRows(low: low, high: high)
+        }
+        let placements = SceneLabelLayout.place(items, low: low, high: high, gap: Double(chipHeight) * 0.3, margin: Double(radius) * 0.14, rows: labelRows)
+        for (id, placement) in placements {
+            targets[id] = (world(placement.center), placement.side)
+        }
+        // A chip on a moving body rides just above it.
+        var taken: [(center: SceneVec2, size: SceneVec2)] = items.compactMap { item in placements[item.id].map { ($0.center, item.size) } }
+        for entry in riding {
+            var spot = flat(entry.center) + SceneVec2(0, Double(entry.halfExtent.y) + Double(radius) * 0.2)
             var attempts = 0
-            while attempts < 12 {
-                let x = simd_dot(target, right), y = simd_dot(target, up)
-                let collides = placed.contains { abs($0.x - x) < ($0.halfWidth + half) * 1.04 && abs($0.y - y) < chipHeight * 1.12 }
-                if !collides { break }
-                target.y += direction * chipHeight * 1.2
+            while attempts < 12, taken.contains(where: { abs($0.center.x - spot.x) < ($0.size.x + entry.size.x) / 2 * 1.04 && abs($0.center.y - spot.y) < Double(chipHeight) * 1.12 }) {
+                spot.y += Double(chipHeight) * 1.2
                 attempts += 1
             }
-            placed.append((simd_dot(target, right), simd_dot(target, up), half))
+            taken.append((spot, entry.size))
+            // Keep the chip at the body's own depth so it reads as attached.
+            targets[entry.label.partID] = (entry.center + right * Float(spot.x - flat(entry.center).x) + up * Float(spot.y - flat(entry.center).y), .up)
+        }
 
-            // Ease toward the target so chips glide instead of jumping as the view sways.
-            let previous = chipTargets[label.partID] ?? target
-            let position = previous + (target - previous) * 0.2
-            chipTargets[label.partID] = position
-            label.chip.simdPosition = position
-            label.chip.simdScale = simd_float3(repeating: chipHeight)
+        var extentLow = SceneVec2(repeating: .greatestFiniteMagnitude), extentHigh = SceneVec2(repeating: -.greatestFiniteMagnitude)
+        var top = -Float.greatestFiniteMagnitude
+        for entry in fixed + riding {
+            let id = entry.label.partID
+            guard let target = targets[id] else { continue }
+            // Ease toward the target so chips glide instead of jumping.
+            let previous = chipTargets[id] ?? target.position
+            let position = isHeadless ? target.position : previous + (target.position - previous) * 0.2
+            chipTargets[id] = position
+            entry.label.chip.simdPosition = position
+            // A chip riding on a body nearer the camera would look bigger than the rest; undo the perspective.
+            var chipScale = chipHeight
+            if isMovingPart(id) {
+                let cameraPosition = (view.pointOfView ?? cameraNode).simdWorldPosition
+                let reference = simd_dot(cameraPosition - origin, toCamera)
+                let depth = simd_dot(cameraPosition - position, toCamera)
+                if reference > 1e-4, depth > 1e-4 { chipScale *= min(max(depth / reference, 0.4), 2.5) }
+            }
+            entry.label.chip.simdScale = simd_float3(repeating: chipScale)
             top = max(top, position.y + chipHeight * 0.7)
+            let spot = flat(target.position)
+            extentLow = simd_min(extentLow, spot - entry.size / 2)
+            extentHigh = simd_max(extentHigh, spot + entry.size / 2)
 
-            let sideways = label.side.map { ["left", "right"].contains($0.lowercased()) } ?? false
-            let anchor = sideways ? center : simd_float3(center.x, center.y + direction * halfHeight * 0.55, center.z)
-            let toChip = position - anchor
-            let distance = simd_length(toChip)
-            guard distance > 1e-4 else { continue }
-            let along = toChip / distance
-            let reach = sideways ? half : chipHeight * 0.5
-            let end = position - along * min(reach, distance * 0.5)
+            // The leader runs from just inside the part to the middle of the chip's nearest edge.
+            let halfWidth = Float(entry.size.x / 2), halfHeight = chipHeight / 2
+            let end: simd_float3
+            switch target.side {
+            case .up: end = position - up * halfHeight
+            case .down: end = position + up * halfHeight
+            case .left: end = position + right * halfWidth
+            case .right: end = position - right * halfWidth
+            }
+            let anchor = leaderAnchor(for: id, chipEnd: end, center: entry.center, halfExtent: entry.halfExtent, refresh: refresh)
             let span = simd_length(end - anchor)
-            label.leader.simdPosition = (anchor + end) / 2
-            label.leader.simdOrientation = simd_quatf(SceneOrientation.aligning(SceneVec3(0, 1, 0), to: SceneVec3(along)))
+            guard span > 1e-4 else { continue }
+            let along = (end - anchor) / span
+            entry.label.leader.simdPosition = (anchor + end) / 2
+            entry.label.leader.simdOrientation = simd_quatf(SceneOrientation.aligning(SceneVec3(0, 1, 0), to: SceneVec3(along)))
             let thickness = radius * 0.0045
-            label.leader.simdScale = simd_float3(thickness, span, thickness)
+            entry.label.leader.simdScale = simd_float3(thickness, span, thickness)
         }
         if top > -Float.greatestFiniteMagnitude { labelsTop = top }
+        chipExtent = extentLow.x <= extentHigh.x ? (extentLow, extentHigh) : nil
     }
 
     // MARK: Motion
@@ -688,7 +864,7 @@ final class Scene3DController: NSObject {
         var materials: [SCNMaterial] = []
         node.enumerateHierarchy { child, _ in materials += child.geometry?.materials ?? [] }
         for material in materials { material.emission.contents = NSColor.white; material.emission.intensity = 0 }
-        flashes.append(Flash(materials: materials, start: CACurrentMediaTime(), duration: 0.42 * Double(times), times: times))
+        flashes.append(Flash(materials: materials, start: now, duration: 0.42 * Double(times), times: times))
     }
 
     private func updateFlashes(now: CFTimeInterval) {
@@ -702,19 +878,30 @@ final class Scene3DController: NSObject {
     }
 
     /// Pulls the top-level parts (or one group's children) apart along an axis. `dist=0` puts them back.
+    ///
+    /// The axis is a world direction (it is turned into the space the parts live in, so a
+    /// model lying on its side still comes apart the way the script said). With no axis the
+    /// parts go the way they are spread; parts sitting on a base (components on a board,
+    /// layers on a plate) lift off it instead of half of them being pushed through it.
     private func explode(_ c: SceneCommand) {
-        let axis = c.axis() ?? SceneVec3(1, 0, 0)
-        let distance = c.number("dist", "by", "d") ?? Double(fitRadius) * 0.6
         let duration = c.number("dur", "t") ?? 0.9
-        let targets: [SCNNode]
+        func movable(_ node: SCNNode) -> Bool {
+            guard let name = node.name, let part = parts[name] else { return false }
+            if flows[name] != nil || node.physicsBody != nil { return false }
+            if case .text = part.shape { return false }
+            return true
+        }
+        var container: SCNNode = contentRoot
+        var targets: [SCNNode]
         if c.hasExplicitID, let group = nodes[c.id], !group.childNodes.isEmpty {
-            targets = group.childNodes.filter { $0.name != nil }
+            container = group
+            targets = group.childNodes.filter(movable)
         } else {
-            targets = contentRoot.childNodes.filter { node in
-                guard let name = node.name, let part = parts[name] else { return false }
-                if flows[name] != nil || node.physicsBody != nil { return false }
-                if case .text = part.shape { return false }
-                return true
+            targets = contentRoot.childNodes.filter(movable)
+            // A scene that is one object (a board with its parts, or one ready-made model): open that object.
+            if targets.count == 1, targets[0].childNodes.filter(movable).count >= 2 {
+                container = targets[0]
+                targets = container.childNodes.filter(movable)
             }
         }
         guard !targets.isEmpty else { return }
@@ -722,12 +909,43 @@ final class Scene3DController: NSObject {
         let homes: [simd_float3] = targets.map { node in
             node.simdPosition - (explodedOffsets[node.name ?? ""] ?? .zero)
         }
+        var extents: [SceneVec3] = []
         let centers = zip(targets, homes).map { node, home -> SceneVec3 in
             let (low, high) = node.boundingBox
             let local = (simd_float3(low) + simd_float3(high)) / 2
+            let size = node.simdOrientation.act((simd_float3(high) - simd_float3(low)) * node.simdScale)
+            extents.append(SceneVec3(simd_abs(size)))
             return SceneVec3(home + node.simdOrientation.act(local * node.simdScale))
         }
-        let offsets = SceneGeometry.explodeOffsets(positions: centers, axis: axis, distance: distance)
+        // The container's own shape is a base the parts sit on.
+        var base: (center: SceneVec3, size: SceneVec3)?
+        if container !== contentRoot, let geometry = container.geometry {
+            let (low, high) = geometry.boundingBox
+            base = (SceneVec3((simd_float3(low) + simd_float3(high)) / 2), SceneVec3(simd_float3(high) - simd_float3(low)))
+        }
+        var axis: SceneVec3
+        if let worldAxis = c.axis() {
+            let local = container.simdConvertVector(simd_float3(worldAxis), from: nil)
+            axis = simd_length(local) > 1e-6 ? SceneVec3(simd_normalize(local)) : worldAxis
+        } else if let base {
+            // Off the base's flat face.
+            let thickness = [base.size.x, base.size.y, base.size.z]
+            let thin = thickness.firstIndex(of: thickness.min() ?? 0) ?? 1
+            axis = [SceneVec3(1, 0, 0), SceneVec3(0, 1, 0), SceneVec3(0, 0, 1)][thin]
+        } else {
+            axis = SceneGeometry.explodeAxis(positions: centers, extents: extents)
+        }
+        // `dist` is in world units; the parts may live in a scaled group.
+        let worldScale = max(simd_length(container.simdConvertVector(simd_float3(axis), to: nil)), 1e-6)
+        let distance = (c.number("dist", "by", "d") ?? Double(fitRadius) * 0.6) / Double(worldScale)
+        let offsets: [SceneVec3]
+        if let base, abs(simd_dot(axis, simd_normalize(SceneVec3(base.size.x < base.size.y && base.size.x < base.size.z ? 1 : 0,
+                                                                  base.size.y <= base.size.x && base.size.y <= base.size.z ? 1 : 0,
+                                                                  base.size.z < base.size.x && base.size.z < base.size.y ? 1 : 0)))) > 0.7 {
+            offsets = SceneGeometry.explodeOffsets(positions: centers, axis: axis, distance: distance, base: base.center)
+        } else {
+            offsets = SceneGeometry.explodeOffsets(positions: centers, axis: axis, distance: distance)
+        }
         for (index, node) in targets.enumerated() {
             let offset = simd_float3(offsets[index])
             explodedOffsets[node.name ?? ""] = offset
@@ -735,7 +953,9 @@ final class Scene3DController: NSObject {
             action.timingMode = .easeInEaseOut
             node.runAction(action, forKey: "explode")
         }
+        labelBoxes = [:]
         fitCountdown = duration
+        refitUntil = now + duration + 0.3
     }
 
     /// Models often name the orbit instead of the planet ("orbit earthPath around=sun").
@@ -988,8 +1208,26 @@ final class Scene3DController: NSObject {
         return (binding, "rpm")
     }
 
+    /// A ready-made pendulum's id names its joint; its mass, bounce and plots belong to the bob.
+    private func bodyID(_ id: String) -> String {
+        if nodes[id] == nil, let joint = joints[id] { return joint.b }
+        return id
+    }
+
+    /// Sets every piston of a ready-made engine. False when `id` is not one.
+    @discardableResult
+    private func setEngineSpeed(_ id: String, rpm: Double) -> Bool {
+        let members = pistons.keys.filter { $0.hasPrefix(id + ".") }
+        guard pistons[id] == nil, !members.isEmpty else { return false }
+        for member in members { pistons[member]?.rpm = rpm }
+        for key in spins.keys where key.hasPrefix(id + ".") { spins[key]?.rpm = rpm }
+        solvedRPM = [:]
+        return true
+    }
+
     private func applyBinding(_ binding: String, value: Double) {
-        let (target, property) = splitBinding(binding)
+        var (target, property) = splitBinding(binding)
+        if ["mass", "m", "bounce", "restitution"].contains(property) { target = bodyID(target) }
         switch property {
         case "gravity", "g":
             scene.physicsWorld.gravity = SCNVector3(0, -abs(value), 0)
@@ -1006,6 +1244,8 @@ final class Scene3DController: NSObject {
         case "rpm", "spin":
             if pistons[target] != nil {
                 pistons[target]?.rpm = value
+            } else if setEngineSpeed(target, rpm: value) {
+                break
             } else {
                 spins[target] = Spin(axis: spins[target]?.axis, rpm: value)
                 solvedRPM = [:]
@@ -1057,6 +1297,7 @@ final class Scene3DController: NSObject {
             target = String(source[..<dot])
             property = String(source[source.index(after: dot)...]).lowercased()
         }
+        if property != "rpm" { target = bodyID(target) }
         plotSources[c.id] = PlotSource(target: target, property: property)
         plotBuffers[c.id] = []
         let unit = ["angle": "°", "rpm": " rpm"][property] ?? ""
@@ -1110,7 +1351,9 @@ final class Scene3DController: NSObject {
                 if name.hasPrefix("_label:") { return String(name.dropFirst("_label:".count)) }
                 if name.hasPrefix("_") { return nil }
                 if let part = parts[name] {
-                    if part.isTappable { return name }
+                    // An unnamed piece of a ready-made object stands for the object.
+                    let isAnonymousPiece = name.contains(".") && part.label == nil && part.name == nil
+                    if part.isTappable, !isAnonymousPiece { return name }
                     if fallback == nil, part.name != nil { fallback = name }
                 }
             }
@@ -1135,6 +1378,18 @@ final class Scene3DController: NSObject {
         handleTap(at: CGPoint(x: projected.x, y: projected.y))
     }
 
+    /// Where the middle of a part is in the view (the view's own coordinates), for aiming a click at it.
+    func viewPoint(ofPart id: String) -> CGPoint? {
+        guard let node = nodes[id] else { return nil }
+        let (center, _) = worldBounds(of: node)
+        let projected = view.projectPoint(SCNVector3(center))
+        guard projected.x.isFinite, projected.y.isFinite else { return nil }
+        return CGPoint(x: projected.x, y: projected.y)
+    }
+
+    /// True once the person has dragged, scrolled or pinched the view: the model stops swaying by itself.
+    var cameraWasTakenByUser: Bool { userTookCamera }
+
     private func userTouchedCamera() {
         guard !userTookCamera else { return }
         userTookCamera = true
@@ -1144,9 +1399,21 @@ final class Scene3DController: NSObject {
     // MARK: Per-frame
 
     private func tick() {
-        let now = CACurrentMediaTime()
-        let wall = min(now - lastTick, 0.1)
-        lastTick = now
+        let time = CACurrentMediaTime()
+        let wall = min(time - lastTick, 0.1)
+        lastTick = time
+        step(wall: wall)
+    }
+
+    /// Headless only: moves motion, simulation and the camera on by `seconds`.
+    func advance(by seconds: Double) {
+        guard isHeadless, seconds > 0 else { return }
+        manualClock += seconds
+        step(wall: seconds)
+    }
+
+    private func step(wall: Double) {
+        let now = self.now
         let dt = wall * speed
         guard hasContent else { return }
 
@@ -1180,6 +1447,9 @@ final class Scene3DController: NSObject {
 
         for id in Array(flows.keys) {
             guard var flow = flows[id] else { continue }
+            if let driver = flow.driver {
+                flow.speed = (solvedRPM[driver] ?? spins[driver]?.rpm ?? 0) * 2 * Double.pi / 60 * flow.driveRadius
+            }
             flow.phase = SceneGeometry.fraction(flow.phase + flow.speed * dt / flow.length)
             flows[id] = flow
             for (index, markerID) in flow.markers.enumerated() {
@@ -1187,8 +1457,12 @@ final class Scene3DController: NSObject {
                 let t = SceneGeometry.fraction(flow.phase + Double(index) / Double(flow.markers.count))
                 let placement = SceneGeometry.pointAlong(flow.path, t: t)
                 marker.simdPosition = simd_float3(placement.position)
-                marker.simdOrientation = simd_quatf(SceneOrientation.aligning(SceneVec3(0, 1, 0), to: placement.direction))
-                let edge = min(t, 1 - t) / 0.1
+                if let facing = flow.facing {
+                    marker.simdOrientation = simd_quatf(SceneOrientation.frame(along: placement.direction, facing: facing))
+                } else {
+                    marker.simdOrientation = simd_quatf(SceneOrientation.aligning(SceneVec3(0, 1, 0), to: placement.direction))
+                }
+                let edge = flow.loops ? 1 : min(t, 1 - t) / 0.1
                 marker.simdScale = simd_float3(repeating: Float(min(max(edge, 0.01), 1)))
             }
         }
@@ -1197,6 +1471,15 @@ final class Scene3DController: NSObject {
             let pistonRPM = pistons[id]?.rpm ?? 0
             pistons[id]?.angle += pistonRPM * dt * 2 * Double.pi / 60
             updatePiston(id)
+        }
+
+        // Beats: a quick squeeze, then rest (a heart, a pulsing cell).
+        for id in Array(beats.keys) {
+            guard var beat = beats[id], let node = nodes[id], let part = parts[id] else { continue }
+            beat.phase = SceneGeometry.fraction(beat.phase + beat.bpm / 60 * dt)
+            beats[id] = beat
+            let squeeze = beat.phase < 0.35 ? sin(beat.phase / 0.35 * Double.pi) : 0
+            node.simdScale = simd_float3(part.scale * (1 - beat.amount * squeeze))
         }
 
         for id in Array(orbits.keys) {
@@ -1249,7 +1532,8 @@ final class Scene3DController: NSObject {
         fitCountdown -= wall
         var refreshed = false
         if fitCountdown <= 0 {
-            fitCountdown = 0.25
+            // While parts are flying apart the frame follows them closely.
+            fitCountdown = now < refitUntil ? 0.05 : 0.25
             refit()
             refreshed = true
         }
@@ -1288,13 +1572,14 @@ final class Scene3DController: NSObject {
     // MARK: Camera
 
     private var contentHalfHeight: Float = 1
+    private var refitUntil: CFTimeInterval = 0
 
     private func refit() {
         guard let (minimum, maximum) = tightBounds(of: contentRoot) else { return }
         guard minimum.x.isFinite, maximum.x.isFinite, simd_length(maximum - minimum) > 1e-5 else { return }
         var center = (minimum + maximum) / 2
         var radius = max(simd_length(maximum - minimum) / 2, 0.05)
-        if isSimulation, hasFit, CACurrentMediaTime() > settleUntil {
+        if isSimulation, hasFit, now > settleUntil {
             // Don't breathe with every bounce: only ever widen.
             radius = max(radius, fitRadius)
             center = fitCenter + (center - fitCenter) * 0.05
@@ -1323,27 +1608,58 @@ final class Scene3DController: NSObject {
         simd_float3(Float(sin(azimuth) * cos(elevation)), Float(sin(elevation)), Float(cos(azimuth) * cos(elevation)))
     }
 
-    /// Where the camera looks: the middle of the model, lifted to leave room for label chips.
+    /// Where the camera looks: the middle of the model and its label chips together.
     private var lookCenter: simd_float3 {
-        fitCenter + simd_float3(0, labels.isEmpty ? 0 : labelHeadroom / 2, 0)
+        if isSimulation { return fitCenter + simd_float3(0, labels.isEmpty ? 0 : labelHeadroom / 2, 0) }
+        guard let frame = framedBox else { return fitCenter }
+        let toCamera = layoutDirection
+        var right = simd_cross(simd_float3(0, 1, 0), toCamera)
+        right = simd_length(right) > 1e-5 ? simd_normalize(right) : simd_float3(1, 0, 0)
+        let up = simd_cross(toCamera, right)
+        let middle = (frame.low + frame.high) / 2
+        return fitCenter + right * Float(middle.x) + up * Float(middle.y)
     }
 
-    /// How far the stacked chips rise above the model, so the camera keeps them in frame.
+    /// The model's box joined with the chips' box, in the camera plane, relative to the model's middle.
+    private var framedBox: (low: SceneVec2, high: SceneVec2)? {
+        guard let chips = chipExtent, !labels.isEmpty else { return nil }
+        let toCamera = layoutDirection
+        var right = simd_cross(simd_float3(0, 1, 0), toCamera)
+        right = simd_length(right) > 1e-5 ? simd_normalize(right) : simd_float3(1, 0, 0)
+        let up = simd_cross(toCamera, right)
+        var low = chips.low, high = chips.high
+        for corner in 0..<8 {
+            let point = simd_float3(corner & 1 == 0 ? boundsLow.x : boundsHigh.x, corner & 2 == 0 ? boundsLow.y : boundsHigh.y, corner & 4 == 0 ? boundsLow.z : boundsHigh.z) - fitCenter
+            let flat = SceneVec2(Double(simd_dot(point, right)), Double(simd_dot(point, up)))
+            low = simd_min(low, flat)
+            high = simd_max(high, flat)
+        }
+        // Room for the title pill in the top-left corner of the view.
+        if !model.title.isEmpty { high.y += (high.y - low.y) * 0.13 }
+        return (low, high)
+    }
+
+    /// How far chips riding on moving bodies rise above the model (simulations only).
     private var labelHeadroom: Float {
         guard !labels.isEmpty else { return 0 }
         return min(max(labelsTop - boundsHigh.y, fitRadius * 0.3), fitRadius * 1.4)
     }
     private var labelsTop: Float = 0
 
-    /// The distance at which the model's box (plus label headroom) just fills the view,
+    /// The size of the picture: the view's, or the frame being rendered when headless.
+    var viewportSize: CGSize?
+    private var viewportAspect: Float {
+        let size = viewportSize ?? view.bounds.size
+        return Float(max(size.width, 1) / max(size.height, 1))
+    }
+
+    /// The distance at which the model's box and its chips just fill the view,
     /// taken as the worst case across the sway so the zoom doesn't breathe.
     private var targetDistance: Float {
         let halfVertical = Float(Self.fieldOfView) * .pi / 360
-        let aspect = Float(max(view.bounds.width, 1) / max(view.bounds.height, 1))
+        let aspect = viewportAspect
         let tanVertical = tan(halfVertical), tanHorizontal = tan(halfVertical) * aspect
         let center = lookCenter
-        var low = boundsLow, high = boundsHigh
-        high.y += labelHeadroom
         if isSimulation {
             // Bodies move: fit the sphere instead of the box.
             return (fitRadius + labelHeadroom * 0.5) / sin(min(halfVertical, atan(tanHorizontal))) * 1.05
@@ -1355,10 +1671,17 @@ final class Scene3DController: NSObject {
             let right = simd_normalize(simd_cross(simd_float3(0, 1, 0), toCamera))
             let up = simd_cross(toCamera, right)
             for corner in 0..<8 {
-                let point = simd_float3(corner & 1 == 0 ? low.x : high.x, corner & 2 == 0 ? low.y : high.y, corner & 4 == 0 ? low.z : high.z) - center
+                let point = simd_float3(corner & 1 == 0 ? boundsLow.x : boundsHigh.x, corner & 2 == 0 ? boundsLow.y : boundsHigh.y, corner & 4 == 0 ? boundsLow.z : boundsHigh.z) - center
                 let depth = simd_dot(point, toCamera)
                 needed = max(needed, abs(simd_dot(point, right)) / tanHorizontal + depth, abs(simd_dot(point, up)) / tanVertical + depth)
             }
+        }
+        // Chips sit in the plane through the model's middle, facing the opening view.
+        if let chips = chipExtent, let frame = framedBox {
+            let middle = (frame.low + frame.high) / 2
+            let halfWidth = Float(max(chips.high.x - middle.x, middle.x - chips.low.x))
+            let halfHeight = Float(max(max(chips.high.y, frame.high.y) - middle.y, middle.y - chips.low.y))
+            needed = max(needed, halfWidth / tanHorizontal * 1.04, halfHeight / tanVertical * 1.04)
         }
         return needed * 1.1
     }
@@ -1395,12 +1718,39 @@ final class Scene3DController: NSObject {
 
     /// Renders the scene off-screen at twice the view's size.
     func snapshot() -> NSImage {
+        if isHeadless { return renderFrame(size: CGSize(width: max(view.bounds.width, 320) * 2, height: max(view.bounds.height, 240) * 2)) }
         let renderer = SCNRenderer(device: nil, options: nil)
         renderer.scene = scene
         renderer.pointOfView = view.pointOfView
         renderer.autoenablesDefaultLighting = false
         let size = CGSize(width: max(view.bounds.width, 320) * 2, height: max(view.bounds.height, 240) * 2)
         return renderer.snapshot(atTime: view.sceneTime, with: size, antialiasingMode: .multisampling4X)
+    }
+
+    /// Headless: the picture at the current time, `size` in pixels. One renderer is kept for
+    /// the controller's life, so SceneKit's own actions and physics move on with `advance(by:)`.
+    func renderFrame(size: CGSize) -> NSImage {
+        let renderer: SCNRenderer
+        if let offscreenRenderer {
+            renderer = offscreenRenderer
+        } else {
+            renderer = SCNRenderer(device: nil, options: nil)
+            renderer.scene = scene
+            renderer.autoenablesDefaultLighting = false
+            offscreenRenderer = renderer
+        }
+        renderer.pointOfView = cameraNode
+        return renderer.snapshot(atTime: manualClock, with: size, antialiasingMode: .multisampling4X)
+    }
+
+    /// Names of the parts a person can ask about, labelled ones first (for follow-up questions).
+    var describedParts: [String] {
+        var names: [String] = []
+        for id in order {
+            guard let part = parts[id], let name = part.label ?? part.name, !names.contains(name) else { continue }
+            names.append(name)
+        }
+        return names
     }
 
     /// Numbers for checking a simulation without watching it.

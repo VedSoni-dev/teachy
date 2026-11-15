@@ -37,6 +37,12 @@ struct SceneAnchor {
     /// True when the host draws `session.overlayModel` in its own overlay
     /// (with `SceneOverlayView`), so the session must not open a second one.
     var hostsOverlay = false
+    /// With speech timing, how long a line waits for its sentence before it is drawn anyway.
+    /// A host that always reports sentences (or calls `speechEnded`) can make this long.
+    var maximumHold: Double = 8
+    /// No windows at all: everything is built in memory and drawn with `snapshots()` or
+    /// the video exporter. The 3D model's clock only moves when `advance(by:)` is called.
+    var headless = false
 
     static func display(frame: CGRect, timing: SceneCueScheduler.Timing = .speech) -> SceneAnchor {
         SceneAnchor(screenFrame: frame, timing: timing)
@@ -47,12 +53,13 @@ struct SceneAnchor {
     }
 }
 
-enum SceneExportError: LocalizedError {
-    case notAvailableYet
-
-    var errorDescription: String? {
-        "Saving a drawing as a video isn't available yet."
-    }
+/// A photo for a card, with where it came from.
+struct ScenePhoto {
+    var image: NSImage
+    /// The page the photo is from, shown as a small "source" link under it.
+    var sourceURL: URL?
+    /// A short name for that page ("Wikipedia").
+    var sourceName: String?
 }
 
 @MainActor
@@ -68,6 +75,12 @@ final class SceneSession {
     var onSay: ((Int, String) -> Void)?
     /// Finds a photo for an `image query="…"` line. Without it, cards show a placeholder.
     var imageFetcher: ((String) async -> NSImage?)?
+    /// The same, with the photo's source page for a caption. Used in preference to `imageFetcher`.
+    var photoFetcher: ((String) async -> ScenePhoto?)?
+    /// Every line the model sent has been drawn (the stream ended and nothing is waiting).
+    var onFinished: (() -> Void)?
+    /// Returns false for commands that must not be drawn (a screen annotation allows only overlay verbs).
+    var commandFilter: ((SceneCommand) -> Bool)?
     /// The person closed the last window of the drawing.
     var onDismissed: (() -> Void)?
 
@@ -90,6 +103,14 @@ final class SceneSession {
     private var replayTimer: Timer?
     private var streamEnded = false
     private var clearOverlayWhenDrained = false
+    private var reportedFinished = false
+    /// After a barge-in: lines for the on-screen overlay are logged but not drawn.
+    private var overlayMuted = false
+    /// Raw narration audio the host captured, placed on the scene's clock (see `appendNarrationAudio`).
+    private(set) var narration = SceneNarrationAudio()
+    /// Seconds on the scene's own clock while headless.
+    private var headlessClock = 0.0
+    private var sceneTime: Double { anchor.headless ? headlessClock : CACurrentMediaTime() - startTime }
 
     private var overlayWindow: SceneOverlayWindow?
     private(set) var cards: [SceneCardWindow] = []
@@ -107,11 +128,16 @@ final class SceneSession {
         clearRenderers()
         self.anchor = anchor
         parser.reset()
-        scheduler = SceneCueScheduler(timing: anchor.timing)
+        scheduler = SceneCueScheduler(timing: anchor.timing, maximumHold: anchor.maximumHold)
         log = SceneReplayLog()
         startTime = CACurrentMediaTime()
+        headlessClock = 0
         streamEnded = false
         clearOverlayWhenDrained = false
+        reportedFinished = false
+        overlayMuted = false
+        narration = SceneNarrationAudio()
+        overlayModel.clock = anchor.headless ? { [weak self] in Date(timeIntervalSinceReferenceDate: self?.headlessClock ?? 0) } : { Date() }
     }
 
     /// Model text, in whatever pieces it arrives.
@@ -123,6 +149,7 @@ final class SceneSession {
     func end() {
         enqueue(parser.finish())
         streamEnded = true
+        drain()
     }
 
     /// The speech engine began sentence `index` (1-based, matching `say N`).
@@ -138,6 +165,38 @@ final class SceneSession {
         clearOverlayWhenDrained = true
         drain()
     }
+
+    /// The person interrupted. Whatever was already received is drawn at once (so a card or a
+    /// model is not left half built), then the marks on the screen go; cards and 3D stay.
+    func interrupt() {
+        // From here on no new marks go on the screen, including ones still waiting for their sentence.
+        overlayMuted = true
+        enqueue(parser.finish())
+        streamEnded = true
+        clearOverlayWhenDrained = false
+        for command in scheduler.drainAll() { draw(command, record: true) }
+        drain()
+        clearOverlay(animated: true)
+    }
+
+    /// Fades the on-screen annotations out, leaving cards and 3D models.
+    func clearOverlay(animated: Bool = true) {
+        overlayModel.clearAll(animated: animated)
+        if !animated {
+            overlayWindow?.close()
+            overlayWindow = nil
+        }
+    }
+
+    /// Narration audio as the voice produced it: mono 16-bit PCM. It is laid on the scene's
+    /// clock where it arrived (a pause of a quarter second starts a new stretch), and goes
+    /// into the saved drawing so an exported video has the voice.
+    func appendNarrationAudio(_ pcm16: Data, sampleRate: Double) {
+        narration.append(pcm16, sampleRate: sampleRate, at: sceneTime)
+    }
+
+    /// A short description of what is on screen, for follow-up questions.
+    var summary: String { log.summary }
 
     /// Removes everything this session drew.
     func clear() {
@@ -186,27 +245,61 @@ final class SceneSession {
         replay()
     }
 
-    /// Not built yet. The plan: replay the log off-screen, render each frame
-    /// (SCNRenderer for 3D, ImageRenderer for cards and overlay) and write them
-    /// with AVAssetWriter. The log already holds everything that needs.
-    func exportMP4(to url: URL) async throws {
-        throw SceneExportError.notAvailableYet
+    /// Renders the recorded scene to an MP4, off screen, frame by frame from the log
+    /// (so the same drawing always gives the same video). See `SceneVideoExporter`.
+    func exportMP4(to url: URL, options: SceneVideoOptions = SceneVideoOptions()) async throws {
+        try await SceneVideoExporter.export(log: log, narration: narration, to: url, options: options, photoFetcher: photoFetcher)
+    }
+
+    // MARK: Headless playback (video export, thumbnails)
+
+    /// Starts an empty off-screen scene that the caller plays a log into with `advance(to:)`.
+    func beginHeadless(log saved: SceneReplayLog, size: CGSize) {
+        var anchor = SceneAnchor(screenFrame: CGRect(origin: .zero, size: size), timing: .stagger)
+        anchor.headless = true
+        anchor.hostsOverlay = true
+        begin(anchor: anchor)
+        log = saved
+        isReplaying = true
+        headlessPlayhead = -1
+    }
+
+    private var headlessPlayhead = -1.0
+
+    /// Headless: draws every logged command up to `time` and moves the 3D model's clock there.
+    func advance(to time: Double) {
+        guard anchor.headless else { return }
+        let step = max(time - headlessClock, 0)
+        headlessClock = time
+        for entry in log.entries(after: headlessPlayhead, upTo: time) { draw(entry.command, record: false) }
+        headlessPlayhead = time
+        modelWindow?.controller.advance(by: step)
     }
 
     // MARK: Drawing
 
     private func enqueue(_ commands: [SceneCommand]) {
         guard !commands.isEmpty else { return }
-        let now = CACurrentMediaTime() - startTime
-        for command in commands { scheduler.enqueue(command, now: now) }
+        let now = sceneTime
+        for command in commands {
+            if let commandFilter, command.verb != .say, !commandFilter(command) { continue }
+            // With speech timing the host has to hear a sentence before it can speak it,
+            // so `say` is handed over as it arrives, not when its turn to be drawn comes.
+            if command.verb == .say, anchor.timing == .speech, let text = command.freeText, let cue = command.cue { onSay?(cue, text) }
+            scheduler.enqueue(command, now: now)
+        }
         drain()
     }
 
     private func drain() {
-        let now = CACurrentMediaTime() - startTime
+        let now = sceneTime
         for command in scheduler.due(now: now) { draw(command, record: true) }
         if scheduler.isEmpty {
             stopPump()
+            if streamEnded, !reportedFinished, !isReplaying {
+                reportedFinished = true
+                onFinished?()
+            }
             if clearOverlayWhenDrained {
                 clearOverlayWhenDrained = false
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
@@ -236,10 +329,10 @@ final class SceneSession {
     }
 
     private func draw(_ command: SceneCommand, record: Bool) {
-        if record { log.record(command, at: CACurrentMediaTime() - startTime) }
+        if record { log.record(command, at: sceneTime) }
         switch command.verb {
         case .say:
-            if let text = command.freeText, let cue = command.cue, !isReplaying { onSay?(cue, text) }
+            if anchor.timing == .stagger, let text = command.freeText, let cue = command.cue, !isReplaying { onSay?(cue, text) }
             return
         case .clear:
             clearRenderers()
@@ -264,6 +357,7 @@ final class SceneSession {
         currentSurface = surface
         switch surface {
         case .overlay:
+            if overlayMuted { return }
             if !anchor.hostsOverlay {
                 if overlayWindow == nil { overlayWindow = SceneOverlayWindow(model: overlayModel) }
                 overlayWindow?.show(on: anchor.screenFrame)
@@ -291,6 +385,8 @@ final class SceneSession {
     private func openCard(id: String) -> SceneCardWindow {
         let card = SceneCardWindow()
         card.model.imageFetcher = imageFetcher
+        card.model.photoFetcher = photoFetcher
+        card.isHeadless = anchor.headless
         card.model.onChipTapped = { [weak self] text in self?.onChipTapped?(text) }
         let visible = visibleFrame
         let offset = CGFloat(cards.count) * 28
@@ -303,7 +399,7 @@ final class SceneSession {
 
     private func ensureModelWindow() -> Scene3DWindow {
         if let modelWindow { return modelWindow }
-        let window = Scene3DWindow()
+        let window = Scene3DWindow(headless: anchor.headless)
         window.controller.onPartTapped = { [weak self] id, label in self?.onPartTapped?(id, label) }
         window.controller.onSliderChanged = { [weak self] id, value in self?.recordSlider(id: id, value: value) }
         window.onChipTapped = { [weak self] text in self?.onChipTapped?(text) }
@@ -322,7 +418,7 @@ final class SceneSession {
     private func recordSlider(id: String, value: Double) {
         guard !isReplaying else { return }
         let command = SceneCommand(verb: .set, id: id, args: ["value": String(format: "%.4g", value)])
-        log.record(command, at: CACurrentMediaTime() - startTime)
+        log.record(command, at: sceneTime)
     }
 
     private var visibleFrame: CGRect {

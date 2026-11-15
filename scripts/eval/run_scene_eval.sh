@@ -1,10 +1,11 @@
 #!/bin/bash
-# Builds and runs the TeachyScene model eval (10 prompts, one model call each).
+# Builds and runs the TeachyScene model eval (20 prompts, one model call each).
 # Calls go through TeachyAIRouter with this Mac's publik sign-in.
 #
 #   scripts/eval/run_scene_eval.sh                 all prompts
 #   scripts/eval/run_scene_eval.sh --only gears    one prompt
 #   scripts/eval/run_scene_eval.sh --out DIR       where to save the answers
+#   scripts/eval/run_scene_eval.sh --score DIR     score saved answers again, no model calls
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 OUT="${TMPDIR:-/tmp}/teachy-scene-eval-build"
@@ -14,8 +15,10 @@ swiftc -O -parse-as-library \
   leanring-buddy/Scene/SceneScriptParser.swift \
   leanring-buddy/Scene/SceneGeometry.swift \
   leanring-buddy/Scene/SceneParts.swift \
+  leanring-buddy/Scene/SceneMacros.swift \
   leanring-buddy/Scene/SceneReplayLog.swift \
   leanring-buddy/Scene/SceneScriptPrompt.swift \
+  leanring-buddy/Scene/SceneQuality.swift \
   leanring-buddy/TeachyAIRouter.swift \
   leanring-buddy/Publik.swift \
   leanring-buddy/TeachyAPIKeyStore.swift \
