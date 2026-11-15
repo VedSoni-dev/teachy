@@ -42,7 +42,7 @@ final class AppleSpeechTranscriptionProvider: BuddyTranscriptionProvider {
     }
 
     private static func makeBestAvailableSpeechRecognizer() -> SFSpeechRecognizer? {
-        let preferredLocales = [
+        let preferredLocales = [TeachySettingsStorage.speechRecognizerLocale()].compactMap { $0 } + [
             Locale.autoupdatingCurrent,
             Locale(identifier: "en-US")
         ]

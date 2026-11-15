@@ -72,6 +72,8 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             self?.companionManager.submitSyntheticCompanionRequest(text)
         })
         TeachyUIExtras.start()
+        // Press Control three times for hands-free (always-on) voice.
+        VoiceModeController.shared.installHotkey()
         TextBoxController.shared.onSubmit = { [weak self] text in
             self?.companionManager.submitSyntheticCompanionRequest(text)
         }

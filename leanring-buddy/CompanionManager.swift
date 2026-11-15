@@ -317,6 +317,12 @@ final class CompanionManager: ObservableObject {
         bindVoiceStateObservation()
         bindAudioPowerLevel()
         bindShortcutTransitions()
+        // Hands-free mode: each finished utterance runs through the normal voice turn.
+        VoiceModeController.shared.onUtterance = { [weak self] text in
+            self?.lastTranscript = text
+            self?.submitSyntheticCompanionRequest(text)
+        }
+        VoiceModeController.shared.onBargeIn = { [weak self] in self?.currentResponseTask?.cancel() }
         // Eagerly touch the Claude API so its TLS warmup handshake completes
         // well before the onboarding demo fires at ~40s into the video.
         _ = claudeAPI
@@ -743,6 +749,9 @@ final class CompanionManager: ObservableObject {
             guard !buddyDictationManager.isDictationInProgress else { return }
             // Don't register push-to-talk while the onboarding video is playing.
             guard !(showOnboardingVideo && besideCursorVideoBlocksPushToTalk) else { return }
+            // Pressing the talk key always gets a spoken answer, and pauses hands-free listening.
+            SpokenOutputGate.shared.noteTalkKeyPressed()
+            VoiceModeController.shared.suspend(reason: "talkKey")
 
             // Cancel any pending transient hide so the overlay stays visible
             transientHideTask?.cancel()
@@ -803,6 +812,7 @@ final class CompanionManager: ObservableObject {
             // Without this, a quick press-and-release drops the release event and
             // leaves the waveform overlay stuck on screen indefinitely.
             ClickyAnalytics.trackPushToTalkReleased()
+            VoiceModeController.shared.resume(reason: "talkKey")
             mouseOutlineTracker.stopTracking()
             PaintTrailPresenter.shared.end()
             pendingKeyboardShortcutStartTask?.cancel()
@@ -882,6 +892,7 @@ final class CompanionManager: ObservableObject {
             .map { "\n\nThe browser tab they're on right now: \($0)." } ?? ""
 
         let guidedTaskSection = guidedTaskPromptSection()
+        let languageSection = "\n\n" + TeachySettingsStorage.replyLanguagePromptSentence()
 
         // What Teachy remembers about this person (PROFILE.md / VOLATILE.md, editable by
         // them). Without this the model "remembered" facts that never came back to it.
@@ -934,7 +945,7 @@ final class CompanionManager: ObservableObject {
         - Never say "simply", "certainly", "I'd be happy to help", or "great question".
         - Don't read code aloud — say what it does in plain words.
         - If something's confusing, empathize in half a breath, then give the next move.\(brainSection)\(frontmostAppSection)\(allOpenApplicationsSection)\(browserTabSection)
-        \(guidedTaskSection)\(interpreterModeSection)
+        \(guidedTaskSection)\(interpreterModeSection)\(languageSection)
 
         You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
         - Compound direct commands are fine ("close all my tabs and open Figma") — emit one [DO:] tag per action, in order. They execute as one sequence.
@@ -1960,6 +1971,8 @@ final class CompanionManager: ObservableObject {
         // builder and cleared after the prompt is built (same transient-per-turn
         // hygiene as pendingGuidedTaskVerificationResult).
         currentBrowserTabContext = await BrowserActiveTabReader.activeTabContext()
+        // One line of screen memory per turn, so "that page I had open earlier" can be answered.
+        ScreenMemory.shared.noteCurrentScreen(browserTabContext: currentBrowserTabContext)
 
         // Build a compact text block the model can reference to pick an element by ax:ID.
         // Only built when the list is non-empty.

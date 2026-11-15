@@ -41,6 +41,8 @@ struct NotchHomeTabView: View {
 
             AttachmentChipsView(compact: true)
 
+            AlwaysOnPillView()
+
             PublikAccountSection()
 
             settingsHeader
