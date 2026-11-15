@@ -2,8 +2,9 @@
 
 Teachy's drawing engine does not ask the model for code or JSON. The model streams a short script, one command per line, and the engine draws each line the moment it arrives. High-level commands (`gear`, `dna`, `fan`, `piston`) expand into geometry inside the engine, so a labelled turbofan costs about 350 output tokens.
 
-- Compact prompt the model sees: `leanring-buddy/Scene/SceneScriptPrompt.swift`
-- Parser: `SceneScriptParser.swift`. Part library: `SceneParts.swift`. Maths: `SceneGeometry.swift`
+- Compact prompts the model sees: `leanring-buddy/Scene/SceneScriptPrompt.swift` (`system` for explaining a thing, `annotateSystem` for marking up the screen)
+- Parser: `SceneScriptParser.swift`. Part library: `SceneParts.swift`. Whole objects: `SceneMacros.swift`. Maths: `SceneGeometry.swift`. Label chips: `SceneLabelLayout.swift`
+- Voice turn to drawing: `Core/SceneDirector.swift` (`show`, `annotate`, `stop`)
 - Try it without a model: `TEACHY_SCENE_DEMO=turbofan Teachy.app/Contents/MacOS/Teachy` (samples: turbofan, dna, gears, pendulum, card, overlay, piston, solar, bounce, board, spring). `TEACHY_SCENE_DEMO_SCRIPT=/path/file` shows any script file.
 
 ## Line format
@@ -26,7 +27,21 @@ verb id key=value key="quoted text" flag
 say 1 "A turbofan is a big fan wrapped around a small jet engine."
 ```
 
-`say N "sentence"` gives the sentence to speak and ties the lines after it to sentence N. `@N` does the same without text (alone on a line, or as a prefix: `@3 ring …`). With speech, a line is drawn when the host calls `sentenceStarted(index: N)`. Without speech, lines are drawn in order about 0.09 s apart with a half-second pause between sentences. A sentence that never starts is released after 8 s.
+`say N "sentence"` gives the sentence to speak and ties the lines after it to sentence N. `@N` does the same without text (alone on a line, or as a prefix: `@3 ring …`). With speech, a line is drawn when the host calls `sentenceStarted(index: N)`. Without speech, lines are drawn in order about 0.09 s apart with a half-second pause between sentences. A sentence that never starts is released after `SceneAnchor.maximumHold` seconds (8 by default; `SceneDirector` sets 120 because it always reports each sentence or the end of speech).
+
+The prompt asks for 3–6 short spoken sentences, each followed at once by at least one line that draws, labels or moves what the sentence is about.
+
+### How the drawing narrates itself
+
+`SceneDirector.show(_:)` makes one model call. The model writes the narration into the script as `say` lines. With speech timing a `say` line is handed to the host (`onSay`) the moment it arrives, so the voice can start; the drawing lines after it wait in the scheduler. `SceneNarrationSequencer` (pure, in `SceneNarration.swift`) speaks one sentence at a time in arrival order:
+
+| Situation | What happens |
+|---|---|
+| The stream is ahead of the voice (usual: the script arrives in 2–4 s, speaking it takes 10–20 s) | Sentences queue. Each sentence's lines appear when that sentence starts being spoken. |
+| The stream is behind the voice | The voice waits for the next `say`. Lines that arrive after their sentence started are drawn at once. |
+| No `say` lines, or no `speak` callback | Lines are drawn a beat apart. Marks on the screen stay at least 5 s. |
+| Barge-in (`SceneDirector.shared.stop()`) | The stream and the speech callback are cancelled. Lines already received are drawn at once so a card or model is not left half built, marks on the screen fade, cards and 3D stay. |
+| Speech ends | Anything still waiting is drawn, then marks on the screen fade (cards and 3D stay). |
 
 ## Surfaces
 
@@ -46,7 +61,9 @@ Coordinates are 0–1000 across and down the screenshot the model was shown. The
 | `label` (`pill`) | `at=x,y text="…"` |
 | `highlight` | `from=x,y to=x,y`; fades after 2 s (`for=` seconds to change) |
 
-Options on any of them: `color=`, `w=` stroke width, `dash`, `fill` (hatching), `label="…"` (a pill beside the shape), `for=seconds`. Shapes stay while Teachy speaks and fade when the host calls `speechEnded()`.
+Options on any of them: `color=`, `w=` stroke width, `dash`, `fill` (hatching), `label="…"` (a pill beside the shape), `for=seconds`. Shapes stay while Teachy speaks and fade when the host calls `speechEnded()`. A highlight fades by itself after 2 s.
+
+**Drawing on the real screen.** `SceneDirector.shared.annotate(question:screenshotJPEG:displayFrame:)` sends the screenshot with `SceneScriptPrompt.annotateSystem`, which offers only these verbs, and drops any other line (`SceneSession.commandFilter`). The overlay window covers `displayFrame` (the AppKit frame of the display the screenshot shows), so 0–1000 lands on that display on any monitor arrangement. The mapping is `SceneScreenMapping` (pure, in `SceneNarration.swift`): x runs across the frame, y is measured down from the frame's top edge.
 
 ### Card (a floating sheet of grid paper)
 
@@ -55,11 +72,13 @@ card c title="The chain rule"
 text "…"            bullet "…"            formula "dy/dx = dy/du × du/dx"
 steps "x" "u = 3x² + 1" "y = ln u"        (or steps items="A > B > C")
 chart ch type=bar|line|point data=1,4,9 labels="a|b|c" title="…" x="…" y="…"
-image query="GE9X turbofan" caption="…"   (the host's imageFetcher finds the photo)
+image query="GE9X turbofan" caption="…"   (a real photo, with a small "source" link under it)
 chip "A follow-up question"
 ```
 
 Lines go to the most recent `card`. A second `card` with a new id opens a second window.
+
+**Photos.** `ScenePhotoFetcher` finds the picture on its own task, so the card keeps filling in while it loads. Order: the disk cache (`~/Library/Caches/<bundle id>/scene-photos/<key>.img` plus a `.json` note of the source page); publik `POST /search` (its results have no image fields as of 14 Nov 2026, so this only tells us which Wikipedia article the phrase means; an image field is used if one ever appears); Wikipedia's page summary for that article or for the phrase itself; Wikipedia's title search. Downloads are HTTPS only, JPEG/PNG/WebP/GIF only, 6 MB at most. `ScenePhotoPicker` is the pure half.
 
 ### 3D model (a transparent window you can turn)
 
@@ -83,6 +102,28 @@ Shapes:
 
 Any part: `at=x,y,z` `rot=x,y,z` (degrees) `axis=` `scale=` `color=` `opacity=` `mat=plastic|metal|glass|glow|matte|rubber` `glow` `parent=id` `rpm=` `label="Name"` `n=1` `name="…"`. `label=` shows a chip with a leader line; `n=` puts a numbered dot on it; `name=` only names the part for clicks. `label id on=partId text="…" n= side=up|down|left|right` adds a chip afterwards (pieces of a ready-made part can be addressed, e.g. `on=d.strand1`).
 
+A leading list number in a label moves to the dot (`"1. Fan"`, or `"1 Fan"` with `n=1`). A number that is part of the name stays (`"3 Na⁺ out"`, `"2 stroke engine"`).
+
+**Where chips go** (`SceneLabelLayout`, pure): a wide model gets a row of chips above it, and a second row below when the first is full; a tall or squarish model gets a column of chips each side. Chips never overlap, they keep the order of the parts they point at so leaders do not cross, and each leader ends on the part itself (found by hit-testing, because the middle of a cable or a hollow casing is thin air). The camera frames the model and its chips together. `side=` on a label overrides the choice.
+
+Whole objects (`SceneMacros.swift`). One line expands into the shapes and ready-made parts below, as children of a group with the line's id. Label a piece with `label x on=id.piece text="…" n=1`, or add the flag `labels` to label the main pieces in order. They take `at=` `rot=` `axis=` `scale=` `color=`.
+
+| Verb | What you get | Pieces (`id.…`) |
+|---|---|---|
+| `jet id stages=4 rpm=` (`turbofan`) | a cutaway turbofan with spinning fan, compressor and turbine, and the bypass and core air streams | `fan compressor combustor turbine nozzle nacelle casing bypass core exhaust` |
+| `engine id cylinders=4 rpm= bore= stroke=` | an inline piston engine: pistons firing in order on one crankshaft, flywheel, see-through block | `p1…pN crankshaft flywheel block pan` |
+| `rocket id stages=1…3 h=` | nose cone, stages with interstages, fins, engine bell and flame (`explode id axis=y` shows staging) | `nose stage1 stage2 stage3 interstage fins engine flame` |
+| `bridge id span=` | a suspension bridge: deck, two towers, main cables, hangers, anchorages, water | `deck cable cable2 hangers tower1 tower2 anchor1 anchor2` |
+| `heart id bpm=` | a beating diagram heart, blue for oxygen-poor and red for oxygen-rich, with the blood's path | `ra rv la lv aorta pulmonary venacava veins` |
+| `eye id` | an eyeball cut open along its axis, with light rays to the retina | `sclera retina cornea iris lens nerve` |
+| `motor id rpm=` | a brushed DC motor in a cut-open can | `housing north south rotor shaft commutator brushes` |
+| `battery id` (`cell`) | an alkaline cell cut open | `case jacket cathode separator anode collector positive negative` |
+| `membrane id size=w,d` | a patch of lipid bilayer | (the group) |
+| `protein id on=membraneId at=x,z r= h=` (`pump`, `channel`) | a protein through the membrane, cut open to show its pore | (the part) |
+| `planet id r= dist= period= around=sunId moons=1 ring` | a body and its orbit; with no `dist=` it is the body in the middle (a `sun` glows) | `id.moon id.ring` |
+| `pendulum id length= angle= mass=` | pivot, support, bob and joint. The joint has the id, so `bind=id.length` and `of=id.angle` work | `bob pivot beam` |
+| `pins id on=boardId at=x,z count=40 rows=2` (`gpio`, `header`) | rows of gold pins on a black strip | (the part) |
+
 Ready-made parts:
 
 | Verb | What you get |
@@ -96,7 +137,8 @@ Ready-made parts:
 | `piston id bore= stroke= rod= rpm=` | cylinder (cut away), piston, rod and crank, all moving. Pieces: `id.cylinder id.head id.rod id.crank id.pin` |
 | `wheel id r= w= spokes=` | tyre, rim, hub, spokes |
 | `flow id pts=… color= speed= n=` | arrowheads travelling along a path |
-| `board id size=w,d` then `comp id on=board at=x,z size=w,d[,h] label="…"` | a flat board with blocks sitting on it |
+| `board id size=w,d` then `comp id on=board at=x,z size=w,d[,h] label="…"` | a flat board with blocks sitting on it. A block is dressed from `kind=` or from words in its id and label: `usb`, `ethernet`, `hdmi` (metal shell, dark opening toward the nearest board edge), `chip` (CPU, RAM…: black body, metal lid), `header` (GPIO: gold pins), `sd`, `connector` (camera, display) |
+| `chain id a=gearA b=gearB` (`belt`) | a chain round two gears, with links that travel at the driving gear's rim speed. The gears then turn the same way at the ratio of their teeth |
 | `axes id size=` | X, Y, Z arrows |
 
 Motion (the id is the part that moves):
@@ -104,11 +146,14 @@ Motion (the id is the part that moves):
 ```
 spin partId rpm= axis=            move partId to=x,y,z dur=2 loop     (or by=)
 pulse partId                      explode [groupId] axis=x dist=1     (dist=0 puts it back)
+beat partId bpm=60 amount=0.08    (a quick squeeze, then rest: a heart, a pulsing cell)
 orbit partId around=otherId r= period= tilt=
 camera to=x,y,z look=x,y,z dur=   hide id / show id / remove id / clear
 ```
 
 Scripted speeds above 240 rpm (150 for pistons) are capped so the motion can be seen.
+
+`explode`: the axis is a world direction (it is turned into the space the parts live in, so a model lying on its side comes apart the way the script says). With no axis, parts go the way they are spread, and flat layers on one spot separate along their thin side. Parts that sit on a base (components on a board) lift off it; none are pushed through it. A scene that is one object (a board with its parts, or one whole-object macro) is opened without naming it.
 
 ### Simulation
 
@@ -125,7 +170,7 @@ plot id of=partId.property label="…"
 set sliderId value=               (what a dragged slider is recorded as)
 ```
 
-Slider targets: `gravity`, `speed` (time scale), `jointId.length`, `bodyId.mass`, `bodyId.bounce`, `partId.rpm`, `orbitId.period`, `orbitId.r`, `springId.k`, `springId.rest`, `partId.x|y|z`, `partId.scale`, `partId.opacity`. With no property the obvious one is used (a joint's length, a body's mass, otherwise rpm).
+Slider targets: `gravity`, `speed` (time scale), `jointId.length`, `bodyId.mass`, `bodyId.bounce`, `partId.rpm` (an `engine` id sets all its pistons), `orbitId.period`, `orbitId.r`, `springId.k`, `springId.rest`, `partId.x|y|z`, `partId.scale`, `partId.opacity`. With no property the obvious one is used (a joint's length, a body's mass, otherwise rpm).
 
 Plot properties: `x`, `y`, `z`, `speed`, `angle` (of a body hanging from a joint, in degrees), `rpm`.
 
@@ -140,14 +185,32 @@ How each thing is simulated:
 
 ## Hosting
 
+The app goes through `SceneDirector` (`leanring-buddy/Core/SceneDirector.swift`):
+
+```swift
+// Once, when the voice turn is set up:
+SceneDirector.shared.speak = { sentence in await voice.speak(sentence) }      // returns when the sentence has been spoken
+SceneDirector.shared.cancelSpeech = { voice.stop() }
+SceneDirector.shared.onFollowUpQuestion = { question in ask(question) }       // a chip or a 3D part was tapped
+
+SceneDirector.shared.show("how a turbofan works")                              // [SHOW: …]
+SceneDirector.shared.annotate(question: "circle the bug", screenshotJPEG: jpeg, displayFrame: frame)   // [MARK: …]
+SceneDirector.shared.stop()                                                    // barge-in
+```
+
+- Without `speak`, nothing is spoken and lines appear a beat apart (stagger timing), as before.
+- Follow-ups keep context. When a drawing finishes, its `SceneReplayLog.summary` (title, kind, objects and labelled parts by id, what was said) is kept for ten minutes and sent with the next `show` request, so "show it in 3D" or "what does the turbine do" builds on it. Tapping a part asks `In the drawing "<title>", tell me about the <part>.`
+- `SceneDirector.voicePromptRules` is the text that tells the voice model when to use `[SHOW: …]` and when `[MARK: …]`.
+
+Underneath is `SceneSession`, which any host can drive directly:
+
 ```swift
 let scene = SceneSession()
 scene.onPartTapped = { id, label in ask("Tell me about the \(label)") }
 scene.onChipTapped = { question in ask(question) }
-scene.imageFetcher = { query in await photo(for: query) }
+scene.photoFetcher = { query in await photos.photo(for: query) }
+scene.onSay = { index, text in speakLater(index, text) }      // with speech timing: called as each `say` arrives
 scene.begin(anchor: .display(frame: screenshotDisplayFrame, timing: .speech))
-let stream = try await TeachyAIRouter.openStream(job: .scene, hasImages: false, session: session,
-                                                 body: SceneScriptPrompt.requestBody(question: question))
 for try await delta in contentDeltas(of: stream) { scene.feed(chunk: delta) }
 scene.end()
 // from the speech engine
@@ -155,12 +218,21 @@ scene.sentenceStarted(index: n)
 scene.speechEnded()
 ```
 
-- `scene.onSay = { index, text in … }` hands over each `say` sentence if the host wants the narration from the same stream.
 - Hosts with their own overlay set `anchor.hostsOverlay = true` and draw `SceneOverlayView(model: scene.overlayModel, mapping: rect)`.
+- `scene.interrupt()` is barge-in at the session level; `scene.onFinished` fires once when the stream has ended and every line is drawn.
 - `scene.replay()` plays the drawing again with its original timing. `scene.log.encoded()` saves it; `scene.replay(saved, anchor:)` loads it. Slider drags are in the log.
-- `scene.exportMP4(to:)` is a stub that throws; see the note on the method.
+
+## Replay, video and history
+
+- **Video.** `scene.exportMP4(to:)` (or `SceneVideoExporter.export(log:narration:to:options:)`) writes an H.264 MP4, 1920×1080 at 30 fps by default. Nothing is captured from the screen: the log is played into a headless scene (`SceneAnchor.headless`) and each frame is drawn in-process, the 3D model by an `SCNRenderer` whose clock is the frame number, cards and controls by `ImageRenderer`, marks by `SceneOverlayView` with a frozen clock. The same log gives the same video. Measured on this Mac (14 Nov 2026): 2.2 s of 1080p video of a labelled turbofan with a card rendered in 1.0 s.
+- **Voice in the video.** The exporter muxes an AAC track when the session was given the narration: `SceneDirector.shared.appendNarrationAudio(pcm16, sampleRate:)` (mono 16-bit PCM, as the realtime voice produces it). Chunks are laid on the scene's clock where they arrive. Nothing in the app forwards that audio yet, so videos are silent until the voice does.
+- **History.** Each finished `show` drawing is saved to `~/.teachy/drawings/<yyyy-MM-dd>-<id>/`: `meta.json` (title, question, date, length), `scene.json` (the log), `thumb.png`, `narration.pcm` when there is a voice, and `video.mp4` the first time it is exported. The newest 200 are kept. `SceneHistory.shared.entries`, `replay(id)`, `export(id) async throws -> URL`, `delete(id)`. `SceneHistoryStore` is the plain file half.
+- **Drawings card.** `DrawingsSection()` is the Home-tab card: a grid of thumbnails with Replay and Save video.
 
 ## Tests and eval
 
 - `scripts/tests/run_scene_tests.sh`: parser, fuzzing, geometry, part library, scheduler, replay log.
-- `scripts/eval/run_scene_eval.sh`: ten prompts through `TeachyAIRouter`, one call each, with a results table. Answers are saved so they can be opened with `TEACHY_SCENE_DEMO_SCRIPT`.
+- `scripts/tests/run_scene2_tests.sh`: whole-object macros, label layout, explode and label-number fixes, narration sequencing, screenshot coordinates, narration audio, summaries, quality score, photo picking, history store (pure); then, in-process with windows off every display: speech-synced building and barge-in on a live session, real mouse events into the 3D view and a slider, MP4 export, history and the Drawings card, photos. `--network` also fetches real photos.
+- `scripts/eval/run_scene_eval.sh`: twenty prompts through `TeachyAIRouter`, one call each, with latency and a crude quality score (`SceneQuality`: parse rate, part count, uses-macros, label count, bounding-box sanity). `--score DIR` scores saved answers again without model calls. Answers are saved so they can be opened with `TEACHY_SCENE_DEMO_SCRIPT`.
+- `scripts/eval/run_annotate_eval.sh`: ten made-up screenshots with a known target each; a hit is the model's first mark landing on the target.
+- `scripts/tests/scene2/render/main.swift`: renders script files to PNG without the app.

@@ -100,6 +100,9 @@ final class SceneOverlayModel: ObservableObject {
 
     /// Seconds a highlight stays before it fades.
     var highlightLifetime: TimeInterval = 2
+    /// The time items are stamped with. A headless scene supplies its own clock so a replay
+    /// rendered to video fades and draws on at the same moments every time.
+    var clock: () -> Date = { Date() }
     static let drawDuration: TimeInterval = 0.45
     static let fadeDuration: TimeInterval = 0.45
 
@@ -108,7 +111,7 @@ final class SceneOverlayModel: ObservableObject {
     var isEmpty: Bool { items.isEmpty }
 
     func apply(_ command: SceneCommand) {
-        let now = Date()
+        let now = clock()
         var item = Item(id: command.id, command: command, createdAt: now, fadeStart: nil)
         if command.verb == .highlight {
             item.fadeStart = now.addingTimeInterval(command.number("for", "dur") ?? highlightLifetime)
@@ -125,14 +128,14 @@ final class SceneOverlayModel: ObservableObject {
 
     func remove(id: String) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        items[index].fadeStart = Date()
+        items[index].fadeStart = clock()
         scheduleSweep()
     }
 
     /// Fades everything out (speech ended) or drops it at once.
     func clearAll(animated: Bool = true) {
         if animated {
-            let now = Date()
+            let now = clock()
             for index in items.indices where items[index].fadeStart == nil || items[index].fadeStart! > now {
                 items[index].fadeStart = now
             }
@@ -157,7 +160,7 @@ final class SceneOverlayModel: ObservableObject {
     }
 
     private func sweep() {
-        let now = Date()
+        let now = clock()
         let alive = items.filter { item in
             guard let fadeStart = item.fadeStart else { return true }
             return now.timeIntervalSince(fadeStart) < Self.fadeDuration
@@ -411,7 +414,7 @@ final class SceneOverlayWindow {
     func snapshot(size: CGSize, backdrop: Color = Color(white: 0.93)) -> NSImage? {
         let view = ZStack {
             backdrop
-            SceneOverlayView(model: model, frozenAt: Date())
+            SceneOverlayView(model: model, frozenAt: model.clock())
         }
         .frame(width: size.width, height: size.height)
         let renderer = ImageRenderer(content: view)

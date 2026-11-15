@@ -40,6 +40,9 @@ final class SceneCardModel: ObservableObject {
         var color: SceneColor?
         var image: NSImage?
         var imageFailed = false
+        /// Where the photo is from, for the small caption under it.
+        var sourceURL: URL?
+        var sourceName: String?
     }
 
     @Published var title = ""
@@ -48,8 +51,13 @@ final class SceneCardModel: ObservableObject {
 
     var onChipTapped: ((String) -> Void)?
     var imageFetcher: ((String) async -> NSImage?)?
+    var photoFetcher: ((String) async -> ScenePhoto?)?
     /// Called after content changes so the window can grow to fit.
     var onContentChanged: (() -> Void)?
+    /// Goes up whenever what the card shows changes (the video exporter redraws a card only then).
+    private(set) var revision = 0
+    /// Photos still being fetched.
+    private(set) var pendingPhotos = 0
 
     func apply(_ c: SceneCommand) {
         switch c.verb {
@@ -83,11 +91,13 @@ final class SceneCardModel: ObservableObject {
         default:
             break
         }
+        revision += 1
         onContentChanged?()
     }
 
     func remove(id: String) {
         items.removeAll { $0.id == id }
+        revision += 1
         onContentChanged?()
     }
 
@@ -108,6 +118,16 @@ final class SceneCardModel: ObservableObject {
     }
 
     private func loadImage(id: String, query: String) {
+        // The photo is fetched on its own task: the card keeps filling in while it loads.
+        if let photoFetcher {
+            pendingPhotos += 1
+            Task { [weak self] in
+                let photo = await photoFetcher(query)
+                self?.pendingPhotos -= 1
+                self?.markImage(id: id, image: photo?.image, sourceURL: photo?.sourceURL, sourceName: photo?.sourceName)
+            }
+            return
+        }
         guard let imageFetcher else {
             markImage(id: id, image: nil)
             return
@@ -118,10 +138,13 @@ final class SceneCardModel: ObservableObject {
         }
     }
 
-    private func markImage(id: String, image: NSImage?) {
+    private func markImage(id: String, image: NSImage?, sourceURL: URL? = nil, sourceName: String? = nil) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].image = image
         items[index].imageFailed = image == nil
+        items[index].sourceURL = sourceURL
+        items[index].sourceName = sourceName
+        revision += 1
         onContentChanged?()
     }
 }
@@ -233,7 +256,8 @@ struct SceneCardView: View {
         case .chart(let spec):
             SceneCardChart(spec: spec)
         case .image(let query):
-            SceneCardImage(image: item.image, failed: item.imageFailed, query: query, caption: item.text, seed: item.id)
+            SceneCardImage(image: item.image, failed: item.imageFailed, query: query, caption: item.text, seed: item.id,
+                           sourceURL: item.sourceURL, sourceName: item.sourceName)
         }
     }
 }
@@ -352,6 +376,8 @@ struct SceneCardImage: View {
     var query: String
     var caption: String
     var seed: String
+    var sourceURL: URL?
+    var sourceName: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -379,8 +405,24 @@ struct SceneCardImage: View {
             }
             .overlay(SceneRoughBox(seed: seed, roughness: 0.6).stroke(SceneStyle.ink.opacity(0.75), style: StrokeStyle(lineWidth: 1.6, lineCap: .round)))
             .rotationEffect(.degrees(image == nil ? 0 : -0.8))
-            if image != nil, !caption.isEmpty {
-                Text(caption).font(SceneStyle.body(13)).foregroundColor(SceneStyle.ink.opacity(0.7))
+            if image != nil {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if !caption.isEmpty {
+                        Text(caption).font(SceneStyle.body(13)).foregroundColor(SceneStyle.ink.opacity(0.7))
+                    }
+                    Spacer(minLength: 4)
+                    if let sourceURL {
+                        Button { NSWorkspace.shared.open(sourceURL) } label: {
+                            Text("source: \(sourceName ?? sourceURL.host ?? "web")")
+                                .font(.system(size: 10))
+                                .foregroundColor(SceneStyle.ink.opacity(0.5))
+                                .underline()
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                        .help(sourceURL.absoluteString)
+                    }
+                }
             }
         }
     }
@@ -443,6 +485,8 @@ final class SceneCardWindow {
     private var panel: NSPanel?
     private var hostingView: NSHostingView<SceneCardView>?
     private var resizeScheduled = false
+    /// Headless: the card is only a model that `snapshot()` draws; no window is opened.
+    var isHeadless = false
 
     init() {
         model.onContentChanged = { [weak self] in self?.scheduleResize() }
@@ -453,6 +497,7 @@ final class SceneCardWindow {
 
     /// Shows the card with its top-left corner at `topLeft` (AppKit screen coordinates).
     func show(topLeft: CGPoint) {
+        guard !isHeadless else { return }
         if panel == nil {
             let panel = SceneFloatingPanel(
                 contentRect: CGRect(x: 0, y: 0, width: SceneCardView.width, height: 120),

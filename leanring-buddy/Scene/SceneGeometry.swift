@@ -493,6 +493,66 @@ enum SceneGeometry {
         return projections.map { direction * (($0 - middle) / halfSpan) * distance }
     }
 
+    /// The axis a model comes apart along when a script does not name one: the direction
+    /// its parts are spread along most. Parts stacked on one spot (flat layers) come apart
+    /// along the direction they are thinnest.
+    static func explodeAxis(positions: [SceneVec3], extents: [SceneVec3]) -> SceneVec3 {
+        let axes = [SceneVec3(1, 0, 0), SceneVec3(0, 1, 0), SceneVec3(0, 0, 1)]
+        guard positions.count >= 2 else { return axes[0] }
+        let spreads = axes.map { axis -> Double in
+            let values = positions.map { simd_dot($0, axis) }
+            return (values.max() ?? 0) - (values.min() ?? 0)
+        }
+        let size = extents.reduce(SceneVec3.zero) { simd_max($0, $1) }
+        let largest = max(simd_reduce_max(size), 1e-9)
+        if let widest = spreads.max(), widest > largest * 0.05 {
+            return axes[spreads.firstIndex(of: widest) ?? 0]
+        }
+        let thickness = [size.x, size.y, size.z]
+        return axes[thickness.firstIndex(of: thickness.min() ?? 0) ?? 1]
+    }
+
+    /// Like `explodeOffsets`, for parts that sit on a base (components on a board): every
+    /// part moves away from the base, never through it, and the farthest moves by `distance`.
+    static func explodeOffsets(positions: [SceneVec3], axis: SceneVec3, distance: Double, base: SceneVec3) -> [SceneVec3] {
+        guard !positions.isEmpty else { return [] }
+        let direction = simd_length(axis) > 1e-9 ? simd_normalize(axis) : SceneVec3(0, 1, 0)
+        let heights = positions.map { simd_dot($0 - base, direction) }
+        let reach = max(heights.map { abs($0) }.max() ?? 0, 1e-9)
+        // Parts all on one side keep that side even if a script's axis points the other way.
+        let above = heights.filter { $0 >= 0 }.count
+        let side: Double = above * 2 >= heights.count ? 1 : -1
+        return heights.map { height in
+            let sign: Double = abs(height) < reach * 1e-3 ? side : (height >= 0 ? 1 : -1)
+            return direction * sign * abs(distance) * (0.6 + 0.4 * abs(height) / reach)
+        }
+    }
+
+    /// A closed belt round two circles in the plane spanned by `u` and `v`: the far arc of
+    /// each circle joined by the two outer tangents. Points run with the angle increasing.
+    static func beltPath(centerA: SceneVec3, radiusA: Double, centerB: SceneVec3, radiusB: Double, u: SceneVec3, v: SceneVec3, step: Double = 12) -> [SceneVec3] {
+        let delta = centerB - centerA
+        let dx = simd_dot(delta, u), dy = simd_dot(delta, v)
+        let distance = (dx * dx + dy * dy).squareRoot()
+        guard distance > abs(radiusA - radiusB) + 1e-9 else { return [] }
+        let facing = atan2(dy, dx)
+        let alpha = acos(min(max((radiusA - radiusB) / distance, -1), 1))
+        func point(_ center: SceneVec3, _ radius: Double, _ angle: Double) -> SceneVec3 {
+            center + (u * cos(angle) + v * sin(angle)) * radius
+        }
+        var points: [SceneVec3] = []
+        let stepRadians = max(step, 1) * Double.pi / 180
+        // Round the far side of A, from one tangent point to the other.
+        let spanA = 2 * Double.pi - 2 * alpha
+        let countA = max(Int((spanA / stepRadians).rounded(.up)), 1)
+        for index in 0...countA { points.append(point(centerA, radiusA, facing + alpha + spanA * Double(index) / Double(countA))) }
+        // Then the far side of B.
+        let spanB = 2 * alpha
+        let countB = max(Int((spanB / stepRadians).rounded(.up)), 1)
+        for index in 0...countB { points.append(point(centerB, radiusB, facing - alpha + spanB * Double(index) / Double(countB))) }
+        return points
+    }
+
     /// A point on a circular orbit in the XZ plane, tilted about X.
     static func orbitPosition(center: SceneVec3, radius: Double, angle: Double, tiltDegrees: Double = 0) -> SceneVec3 {
         let tilt = tiltDegrees * Double.pi / 180

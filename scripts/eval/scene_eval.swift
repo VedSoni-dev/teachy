@@ -28,6 +28,16 @@ let sceneEvalCases: [ScenePromptCase] = [
     ScenePromptCase(name: "piston", prompt: "how a piston engine works"),
     ScenePromptCase(name: "solar", prompt: "solar system orbits"),
     ScenePromptCase(name: "pump", prompt: "sodium-potassium pump"),
+    ScenePromptCase(name: "heart", prompt: "how the human heart pumps blood, in 3D"),
+    ScenePromptCase(name: "eye", prompt: "show me the inside of an eye"),
+    ScenePromptCase(name: "motor", prompt: "how does an electric motor spin"),
+    ScenePromptCase(name: "battery", prompt: "what's inside a battery"),
+    ScenePromptCase(name: "bridge", prompt: "why does a suspension bridge stay up"),
+    ScenePromptCase(name: "rocket", prompt: "draw a rocket and its stages in 3D"),
+    ScenePromptCase(name: "bicycle", prompt: "how a bicycle drivetrain works"),
+    ScenePromptCase(name: "jet", prompt: "jet engine cutaway with airflow"),
+    ScenePromptCase(name: "springmass", prompt: "a mass bouncing on a spring I can play with"),
+    ScenePromptCase(name: "cpugpu", prompt: "compare a CPU and a GPU on a card"),
 ]
 
 /// Shared between the stream reader and the watchdog.
@@ -52,6 +62,7 @@ struct SceneEvalResult {
     var surface = "-"
     var ending = "ok"
     var rejections: [String] = []
+    var quality = SceneQualityReport()
 }
 
 @main
@@ -65,6 +76,12 @@ enum SceneEval {
         let outputFolder = URL(fileURLWithPath: arguments.firstIndex(of: "--out").flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }
             ?? NSTemporaryDirectory() + "scene-eval")
         try? FileManager.default.createDirectory(at: outputFolder, withIntermediateDirectories: true)
+
+        // --score DIR: score answers saved by an earlier run, with no model calls.
+        if let scoreIndex = arguments.firstIndex(of: "--score"), arguments.indices.contains(scoreIndex + 1) {
+            scoreSaved(in: URL(fileURLWithPath: arguments[scoreIndex + 1]))
+            return
+        }
 
         guard TeachyAIRouter.isReadyForAI else {
             print("Teachy isn't signed in to publik on this Mac, so there is no model to ask. Open Teachy once and sign in, then run this again.")
@@ -89,10 +106,47 @@ enum SceneEval {
                          results.map(\.total).reduce(0, +) / Double(results.count),
                          outputFolder.path))
         }
+        printQuality(results)
         for result in results where !result.rejections.isEmpty {
             print("\n\(result.name): lines that did not parse")
             for rejection in result.rejections.prefix(8) { print("  " + rejection) }
         }
+    }
+
+    static let qualityHeader = "prompt      surface   parse  parts  macros  labels  says  tied  bounds  score"
+
+    static func qualityRow(_ name: String, _ q: SceneQualityReport) -> String {
+        name.padding(toLength: 11, withPad: " ", startingAt: 0) + " " + q.surface.padding(toLength: 8, withPad: " ", startingAt: 0)
+            + String(format: " %4.0f%%  %5d  %6d  %6d  %4d  %4d  %6.2f  %5.0f", q.parseRate * 100, q.partCount, q.macroLines, q.labelCount, q.sayCount, q.tiedSays, q.boundsSanity, q.score)
+    }
+
+    static func printQuality(_ results: [SceneEvalResult]) {
+        guard !results.isEmpty else { return }
+        print("\n" + qualityHeader)
+        for result in results { print(qualityRow(result.name, result.quality)) }
+        let threeD = results.filter { $0.quality.surface.contains("3D") }
+        let mean = { (values: [Double]) in values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count) }
+        let says = results.map(\.quality.sayCount).reduce(0, +), tied = results.map(\.quality.tiedSays).reduce(0, +)
+        print(String(format: "\nsentences tied to something appearing %d/%d (%.0f%%)   mean sentences %.1f", tied, says, says == 0 ? 0 : Double(tied) / Double(says) * 100,
+                     Double(says) / Double(results.count)))
+        print(String(format: "mean score %.1f   3D scenes %d   uses-macros rate %.0f%%   mean 3D parts %.1f   mean labels %.1f   mean bounds %.2f",
+                     mean(results.map(\.quality.score)), threeD.count,
+                     mean(threeD.map { $0.quality.usesMacros ? 1 : 0 }) * 100,
+                     mean(threeD.map { Double($0.quality.partCount) }), mean(threeD.map { Double($0.quality.labelCount) }),
+                     mean(threeD.map(\.quality.boundsSanity))))
+    }
+
+    static func scoreSaved(in folder: URL) {
+        var results: [SceneEvalResult] = []
+        for testCase in sceneEvalCases {
+            guard let text = try? String(contentsOf: folder.appendingPathComponent("\(testCase.name).txt"), encoding: .utf8) else { continue }
+            let parser = SceneScriptParser()
+            let commands = parser.feed(text) + parser.finish()
+            var result = SceneEvalResult(name: testCase.name)
+            result.quality = SceneQuality.report(commands: commands, stats: parser.stats)
+            results.append(result)
+        }
+        printQuality(results)
     }
 
     static let header = "prompt      surface  first cmd   total   ~tokens  lines  parsed  3D parts  end"
@@ -177,6 +231,7 @@ enum SceneEval {
         result.stats = outcome.stats
         result.rejections = outcome.rejections
         result.parts = SceneRouter.count3DParts(in: outcome.commands)
+        result.quality = SceneQuality.report(commands: outcome.commands, stats: outcome.stats)
         if let error = outcome.error, error != "cut" { ending = error }
         if outcome.text.isEmpty, ending == "ok" { ending = "empty" }
         result.ending = ending

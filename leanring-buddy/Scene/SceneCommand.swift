@@ -28,8 +28,10 @@ enum SceneVerb: String, CaseIterable, Codable {
     case scene3d, group, box, sphere, cyl, cone, tube, torus, capsule, lathe, extrude, arrow3, text3
     // part library
     case gear, helix, dna, spring, piston, wheel, fan, flow, board, comp, axes
+    // whole objects, expanded by SceneMacros into the parts above
+    case jet, engine, rocket, bridge, heart, eye, motor, battery, membrane, protein, planet, pendulum, chain, pins
     // motion
-    case spin, move, pulse, explode, camera, orbit
+    case spin, move, pulse, explode, camera, orbit, beat
     // simulation
     case body, fixed, ground, joint, force, impulse, gravity, mesh, slider, plot
 
@@ -51,6 +53,10 @@ enum SceneVerb: String, CaseIterable, Codable {
         "rotate": .spin, "animate": .move, "translate": .move, "blink": .pulse, "cutaway": .explode,
         "cam": .camera, "couple": .mesh, "coupling": .mesh, "floor": .ground,
         "delete": .remove, "anchor": .fixed, "push": .impulse,
+        "turbofan": .jet, "jetengine": .jet, "turbojet": .jet, "suspensionbridge": .bridge,
+        "bilayer": .membrane, "pump": .protein, "channel": .protein, "star": .planet,
+        "sprocket": .gear, "cog": .gear, "belt": .chain, "header": .pins, "gpio": .pins,
+        "heartbeat": .beat, "throb": .beat, "cell": .battery,
     ]
 
     static func lookup(_ word: String) -> SceneVerb? {
@@ -79,11 +85,28 @@ enum SceneVerb: String, CaseIterable, Codable {
         }
     }
 
+    /// Whole objects that SceneMacros rewrites into several simpler commands.
+    var isMacro: Bool {
+        switch self {
+        case .jet, .engine, .rocket, .bridge, .heart, .eye, .motor, .battery, .membrane, .protein, .planet, .pendulum, .pins: return true
+        default: return false
+        }
+    }
+
+    /// Ready-made parts: one line that the engine expands into placed geometry.
+    var isLibraryPart: Bool {
+        switch self {
+        case .gear, .helix, .dna, .spring, .piston, .wheel, .fan, .flow, .board, .comp, .axes, .chain: return true
+        default: return isMacro
+        }
+    }
+
     /// Verbs that put at least one visible 3D part into the scene.
     var makes3DPart: Bool {
         switch self {
         case .box, .sphere, .cyl, .cone, .tube, .torus, .capsule, .lathe, .extrude, .arrow3, .text3,
-             .gear, .helix, .dna, .spring, .piston, .wheel, .fan, .flow, .board, .comp, .axes, .body, .ground:
+             .gear, .helix, .dna, .spring, .piston, .wheel, .fan, .flow, .board, .comp, .axes, .body, .ground,
+             .jet, .engine, .rocket, .bridge, .heart, .eye, .motor, .battery, .membrane, .protein, .planet, .pendulum, .chain, .pins:
             return true
         default:
             return false

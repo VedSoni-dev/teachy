@@ -80,6 +80,13 @@ struct SceneCueScheduler {
         return released
     }
 
+    /// Everything still waiting, in order, at once (the person interrupted: no more pacing).
+    mutating func drainAll() -> [SceneCommand] {
+        let waiting = queue.map(\.command)
+        queue.removeAll()
+        return waiting
+    }
+
     mutating func reset() {
         queue.removeAll()
         currentSentence = 0
@@ -122,6 +129,46 @@ struct SceneReplayLog: Codable, Equatable {
         entries.map(\.command.scriptLine).joined(separator: "\n")
     }
 
+    /// A few lines saying what the scene shows, for a follow-up request: its title, the kind
+    /// of drawing, the objects and labelled parts by id, and what was said.
+    var summary: String {
+        var lines: [String] = []
+        var kinds: [String] = []
+        var objects: [String] = []
+        var labels: [String] = []
+        var said: [String] = []
+        var cardLines: [String] = []
+        for command in entries.map(\.command) {
+            switch command.verb {
+            case .say:
+                if let text = command.freeText { said.append(text) }
+            case .scene3d:
+                if !kinds.contains("a 3D model") { kinds.append("a 3D model") }
+            case .card:
+                if !kinds.contains("a card") { kinds.append("a card") }
+            case .label:
+                if let on = command.string("on"), let text = command.freeText { labels.append("\(text) (\(on))") }
+            case .text, .bullet, .formula:
+                if let text = command.freeText, cardLines.count < 6 { cardLines.append(text) }
+            case .chart:
+                cardLines.append("chart: \(command.string("title") ?? "data") [\(command.string("labels") ?? "")] = \(command.string("data") ?? "")")
+            default:
+                if command.verb.isLibraryPart, command.hasExplicitID, objects.count < 10 {
+                    objects.append("\(command.verb.rawValue) \(command.id)")
+                }
+                if command.verb.makes3DPart, let label = command.string("label") { labels.append("\(label) (\(command.id))") }
+            }
+        }
+        if let title, !title.isEmpty { lines.append("Title: \(title)") }
+        if !kinds.isEmpty { lines.append("Shown as: \(kinds.joined(separator: " and "))") }
+        if !objects.isEmpty { lines.append("Objects: \(objects.joined(separator: ", "))") }
+        if !labels.isEmpty { lines.append("Labelled parts: \(labels.prefix(12).joined(separator: ", "))") }
+        if !cardLines.isEmpty { lines.append("On the card: \(cardLines.joined(separator: " | "))") }
+        if !said.isEmpty { lines.append("You said: \(said.joined(separator: " "))") }
+        let text = lines.joined(separator: "\n")
+        return text.count > 1400 ? String(text.prefix(1400)) : text
+    }
+
     func encoded() throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -130,5 +177,75 @@ struct SceneReplayLog: Codable, Equatable {
 
     static func decoded(from data: Data) throws -> SceneReplayLog {
         try JSONDecoder().decode(SceneReplayLog.self, from: data)
+    }
+}
+
+// MARK: - Narration audio
+
+/// The voice that went with a scene: stretches of mono 16-bit PCM, each with the moment
+/// (seconds since the scene began) it started. Pure, so it can be tested and saved.
+struct SceneNarrationAudio: Equatable {
+    struct Segment: Equatable {
+        var start: Double
+        var samples: [Int16]
+    }
+
+    private(set) var sampleRate: Double = 0
+    private(set) var segments: [Segment] = []
+
+    /// A new chunk arriving more than this long after the audio so far would have finished playing starts a new stretch.
+    static let gap = 0.25
+
+    var isEmpty: Bool { segments.allSatisfy { $0.samples.isEmpty } }
+
+    /// When the last stretch finishes playing.
+    var duration: Double {
+        guard sampleRate > 0 else { return 0 }
+        return segments.map { $0.start + Double($0.samples.count) / sampleRate }.max() ?? 0
+    }
+
+    mutating func append(_ pcm16: Data, sampleRate rate: Double, at time: Double) {
+        guard rate > 0, pcm16.count >= 2 else { return }
+        var samples = [Int16](repeating: 0, count: pcm16.count / 2)
+        _ = samples.withUnsafeMutableBytes { pcm16.copyBytes(to: $0, count: (pcm16.count / 2) * 2) }
+        if sampleRate == 0 { sampleRate = rate }
+        if rate != sampleRate {
+            // One rate per scene: resample by nearest sample (voices don't change rate mid-scene in practice).
+            let ratio = rate / sampleRate
+            let count = Int(Double(samples.count) / ratio)
+            samples = (0..<count).map { samples[min(Int(Double($0) * ratio), samples.count - 1)] }
+        }
+        if let last = segments.indices.last {
+            let end = segments[last].start + Double(segments[last].samples.count) / sampleRate
+            // Voices send audio faster than it plays, so a chunk that arrives "early" continues the stretch.
+            if time <= end + Self.gap {
+                segments[last].samples += samples
+                return
+            }
+        }
+        segments.append(Segment(start: max(time, 0), samples: samples))
+    }
+
+    /// One continuous track from time zero, with silence between stretches. Later stretches never overlap earlier ones.
+    func mixed() -> [Int16] {
+        guard sampleRate > 0 else { return [] }
+        var track: [Int16] = []
+        for segment in segments {
+            let startIndex = max(Int((segment.start * sampleRate).rounded()), track.count)
+            if startIndex > track.count { track += [Int16](repeating: 0, count: startIndex - track.count) }
+            track += segment.samples
+        }
+        return track
+    }
+
+    /// The whole track as little-endian PCM bytes, and back.
+    func data() -> Data {
+        mixed().withUnsafeBufferPointer { Data(buffer: $0) }
+    }
+
+    init() {}
+
+    init(track pcm16: Data, sampleRate: Double) {
+        append(pcm16, sampleRate: sampleRate, at: 0)
     }
 }

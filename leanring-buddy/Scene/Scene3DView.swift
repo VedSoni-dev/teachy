@@ -93,15 +93,19 @@ enum Scene3DAssets {
         material.lightingModel = .physicallyBased
         material.diffuse.contents = color.with(alpha: 1).nsColor
         material.metalness.contents = 0.0
-        material.roughness.contents = 0.45
+        material.roughness.contents = 0.42
         switch kind {
         case .plastic:
-            break
+            // A thin glossy coat, like moulded plastic or enamel paint.
+            material.clearCoat.contents = 0.35
+            material.clearCoatRoughness.contents = 0.25
         case .metal:
-            material.metalness.contents = 0.82
-            material.roughness.contents = 0.34
+            material.metalness.contents = 0.9
+            material.roughness.contents = 0.3
         case .glass:
-            material.roughness.contents = 0.25
+            material.roughness.contents = 0.12
+            material.clearCoat.contents = 0.6
+            material.clearCoatRoughness.contents = 0.1
             material.isDoubleSided = true
         case .glow:
             material.emission.contents = color.with(alpha: 1).nsColor
@@ -181,7 +185,10 @@ enum Scene3DAssets {
             var textX = padding
             if let number {
                 let circle = CGRect(x: 6 * scale, y: (height - dot) / 2, width: dot, height: dot)
-                context.setFillColor(accent.with(alpha: 1).nsColor.cgColor)
+                // A pale part (white, cream, silver) would give a dot nobody can read the number on.
+                let luminance = 0.2126 * accent.r + 0.7152 * accent.g + 0.0722 * accent.b
+                let dotColor = luminance > 0.72 ? SceneColor.ink : accent
+                context.setFillColor(dotColor.with(alpha: 1).nsColor.cgColor)
                 context.fillEllipse(in: circle)
                 drawText(in: context) {
                     let digits = NSAttributedString(string: "\(number)", attributes: [.font: NSFont.systemFont(ofSize: 16 * scale, weight: .bold), .foregroundColor: NSColor.white])
@@ -368,14 +375,20 @@ struct Scene3DPlotView: View {
 /// A borderless, transparent window: the model floats over whatever is on screen.
 @MainActor
 final class Scene3DWindow {
-    let controller = Scene3DController()
+    let controller: Scene3DController
     var onChipTapped: ((String) -> Void)?
     var onClosed: (() -> Void)?
 
     private var panel: NSPanel?
     private var hostingView: NSHostingView<Scene3DView>?
 
-    init() {
+    /// Headless: the model is built and rendered in-process and no window is ever shown.
+    let isHeadless: Bool
+
+    init(headless: Bool = false) {
+        isHeadless = headless
+        controller = Scene3DController(headless: headless)
+        controller.view.frame = CGRect(origin: .zero, size: Scene3DView.viewSize)
         controller.model.onLayoutChanged = { [weak self] in
             DispatchQueue.main.async { self?.resize() }
         }
@@ -385,6 +398,7 @@ final class Scene3DWindow {
     var frame: CGRect? { panel?.frame }
 
     func show(topLeft: CGPoint) {
+        guard !isHeadless else { return }
         if panel == nil {
             let panel = SceneFloatingPanel(
                 contentRect: CGRect(origin: .zero, size: Scene3DView.viewSize),
