@@ -3,13 +3,16 @@
 //  leanring-buddy
 //
 //  Home tab card: which microphone Teachy hears, a picker to change it, and a live
-//  level meter so people can see it is picking them up.
+//  level meter so people can see it is picking them up. It follows devices as they
+//  are plugged in and removed (`MicrophoneDeviceWatcher`), names the microphone that
+//  is really live after a failover, and warns when that one is a Bluetooth mic.
 //
 
 import SwiftUI
 
 struct MicrophoneSettingsSection: View {
     @StateObject private var meter = MicrophoneLevelMeter()
+    @ObservedObject private var watcher = MicrophoneDeviceWatcher.shared
     @State private var devices: [MicrophoneDevice] = []
     @State private var selectedUID: String? = MicrophoneCenter.selectedUID
     @State private var activeName: String = MicrophoneCenter.activeDevice()?.name ?? "No microphone"
@@ -28,7 +31,7 @@ struct MicrophoneSettingsSection: View {
             summary: activeName,
             startsExpanded: startsExpanded
         ) {
-            Text("Teachy only listens while you hold a talk or dictation key. This is the microphone it uses.")
+            Text("Teachy only listens while you hold a talk or dictation key, or while always-on mode is on. This is the microphone it uses.")
                 .font(.system(size: 11))
                 .foregroundColor(DS.Colors.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -54,6 +57,15 @@ struct MicrophoneSettingsSection: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(DS.Colors.warning)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if let failover = watcher.liveOverride {
+                Text("That microphone isn't working, so Teachy is listening with \(failover.name).")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DS.Colors.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if watcher.live?.isBluetooth == true {
+                MicrophoneNotice(icon: "exclamationmark.triangle.fill", text: MicrophoneCenter.bluetoothWarning)
             }
 
             HStack(spacing: 10) {
@@ -85,6 +97,11 @@ struct MicrophoneSettingsSection: View {
         }
         .onAppear { refresh() }
         .onDisappear { stopTest() }
+        // A device was plugged in, removed, or the Mac's input changed.
+        .onReceive(NotificationCenter.default.publisher(for: MicrophoneDeviceWatcher.didChangeNotification)) { _ in
+            refresh()
+            if isTesting { meter.start() }
+        }
     }
 
     private func microphoneRow(title: String, detail: String?, isSelected: Bool, action: @escaping () -> Void) -> some View {
@@ -122,12 +139,13 @@ struct MicrophoneSettingsSection: View {
     private func refresh() {
         devices = MicrophoneCenter.inputDevices()
         selectedUID = MicrophoneCenter.selectedUID
-        activeName = MicrophoneCenter.activeDevice()?.name ?? "No microphone"
+        activeName = (watcher.liveOverride ?? MicrophoneCenter.activeDevice())?.name ?? "No microphone"
         systemDefaultName = MicrophoneCenter.systemDefaultInput()?.name ?? "none"
     }
 
     private func choose(_ uid: String?) {
         MicrophoneCenter.selectedUID = uid
+        watcher.refresh()
         refresh()
         if isTesting { meter.start() }
     }
@@ -141,6 +159,28 @@ struct MicrophoneSettingsSection: View {
     private func stopTest() {
         isTesting = false
         meter.stop()
+    }
+}
+
+/// An amber line with an icon, for things worth knowing about the live microphone.
+struct MicrophoneNotice: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(DS.Colors.warning)
+            Text(text)
+                .font(.system(size: 11))
+                .foregroundColor(DS.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(DS.Colors.warning.opacity(0.1)))
     }
 }
 

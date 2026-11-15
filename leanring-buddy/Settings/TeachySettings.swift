@@ -26,6 +26,10 @@ nonisolated enum TeachySettingsKey {
     static let soundsEnabled = "teachySoundsEnabled"
     static let allowBrowserCookieTools = "teachyAllowBrowserCookieTools"
     static let shortcuts = "teachyShortcuts"
+    /// "auto" (answer in the language they spoke) or a `TeachyReplyLanguages` code.
+    static let replyLanguage = "teachyReplyLanguage"
+    static let alwaysOnAutoOffMinutes = "teachyAlwaysOnAutoOffMinutes"
+    static let quietOnCallsEnabled = "teachyQuietOnCallsEnabled"
 }
 
 // MARK: - Voices
@@ -43,6 +47,7 @@ nonisolated enum TeachyVoiceCatalog {
 
     /// The voices of publik's realtime voice socket (Gemini Live), which is what Teachy
     /// speaks with. The slower fallback endpoint has its own fixed voice.
+    /// The eight the picker shows first.
     static let voices: [TeachyVoice] = [
         TeachyVoice(name: "Puck", character: "Upbeat, friendly"),
         TeachyVoice(name: "Aoede", character: "Breezy, warm"),
@@ -54,13 +59,44 @@ nonisolated enum TeachyVoiceCatalog {
         TeachyVoice(name: "Orus", character: "Steady, calm"),
     ]
 
+    /// 22 more, shown under "More voices". Added on 14 Nov 2026 after the socket accepted
+    /// each name in a `session.update` (it rejects unknown names with an error). Their
+    /// one-word characters are Google's published descriptions of the Gemini voices, not
+    /// something heard and judged here.
+    static let moreVoices: [TeachyVoice] = [
+        TeachyVoice(name: "Sulafat", character: "Warm"),
+        TeachyVoice(name: "Achird", character: "Friendly"),
+        TeachyVoice(name: "Vindemiatrix", character: "Gentle"),
+        TeachyVoice(name: "Achernar", character: "Soft"),
+        TeachyVoice(name: "Callirrhoe", character: "Easy-going"),
+        TeachyVoice(name: "Umbriel", character: "Easy-going"),
+        TeachyVoice(name: "Zubenelgenubi", character: "Casual"),
+        TeachyVoice(name: "Algieba", character: "Smooth"),
+        TeachyVoice(name: "Despina", character: "Smooth"),
+        TeachyVoice(name: "Autonoe", character: "Bright"),
+        TeachyVoice(name: "Laomedeia", character: "Upbeat"),
+        TeachyVoice(name: "Sadachbia", character: "Lively"),
+        TeachyVoice(name: "Iapetus", character: "Clear"),
+        TeachyVoice(name: "Erinome", character: "Clear"),
+        TeachyVoice(name: "Schedar", character: "Even"),
+        TeachyVoice(name: "Alnilam", character: "Firm"),
+        TeachyVoice(name: "Pulcherrima", character: "Forward"),
+        TeachyVoice(name: "Rasalgethi", character: "Informative"),
+        TeachyVoice(name: "Sadaltager", character: "Knowledgeable"),
+        TeachyVoice(name: "Gacrux", character: "Mature"),
+        TeachyVoice(name: "Enceladus", character: "Breathy"),
+        TeachyVoice(name: "Algenib", character: "Gravelly"),
+    ]
+
+    static let allVoices: [TeachyVoice] = voices + moreVoices
+
     static func isKnown(_ name: String) -> Bool {
-        voices.contains { $0.name == name }
+        allVoices.contains { $0.name == name }
     }
 
     /// The stored name if publik has that voice, else the default.
     static func resolved(_ name: String?) -> String {
-        guard let name, let match = voices.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+        guard let name, let match = allVoices.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
             return defaultVoiceName
         }
         return match.name
@@ -126,6 +162,89 @@ nonisolated enum TeachyDictationLanguages {
               (2...3).contains(code.count), code.allSatisfy({ $0.isLetter && $0.isASCII })
         else { return automaticCode }
         return code
+    }
+}
+
+// MARK: - Reply language
+
+/// A language Teachy can answer in.
+nonisolated struct TeachyReplyLanguage: Equatable, Identifiable, Sendable {
+    /// ISO 639 code, also what transcription takes ("es", "zh").
+    let code: String
+    let englishName: String
+    /// The language's name in the language itself, as shown in the picker.
+    let nativeName: String
+    /// The locale the Mac's on-device speech recogniser is asked for.
+    let localeIdentifier: String
+    var id: String { code }
+    /// "Español (Spanish)", or just "English".
+    var pickerLabel: String { nativeName == englishName ? englishName : "\(nativeName) (\(englishName))" }
+}
+
+nonisolated enum TeachyReplyLanguages {
+    static let automaticCode = "auto"
+
+    static let all: [TeachyReplyLanguage] = [
+        ("en", "English", "English", "en-US"), ("es", "Spanish", "Español", "es-ES"),
+        ("fr", "French", "Français", "fr-FR"), ("de", "German", "Deutsch", "de-DE"),
+        ("it", "Italian", "Italiano", "it-IT"), ("pt", "Portuguese", "Português", "pt-BR"),
+        ("nl", "Dutch", "Nederlands", "nl-NL"), ("sv", "Swedish", "Svenska", "sv-SE"),
+        ("da", "Danish", "Dansk", "da-DK"), ("nb", "Norwegian", "Norsk", "nb-NO"),
+        ("fi", "Finnish", "Suomi", "fi-FI"), ("pl", "Polish", "Polski", "pl-PL"),
+        ("cs", "Czech", "Čeština", "cs-CZ"), ("sk", "Slovak", "Slovenčina", "sk-SK"),
+        ("hu", "Hungarian", "Magyar", "hu-HU"), ("ro", "Romanian", "Română", "ro-RO"),
+        ("bg", "Bulgarian", "Български", "bg-BG"), ("hr", "Croatian", "Hrvatski", "hr-HR"),
+        ("sr", "Serbian", "Српски", "sr-RS"), ("el", "Greek", "Ελληνικά", "el-GR"),
+        ("uk", "Ukrainian", "Українська", "uk-UA"), ("ru", "Russian", "Русский", "ru-RU"),
+        ("tr", "Turkish", "Türkçe", "tr-TR"), ("ar", "Arabic", "العربية", "ar-SA"),
+        ("he", "Hebrew", "עברית", "he-IL"), ("fa", "Persian", "فارسی", "fa-IR"),
+        ("hi", "Hindi", "हिन्दी", "hi-IN"), ("gu", "Gujarati", "ગુજરાતી", "gu-IN"),
+        ("mr", "Marathi", "मराठी", "mr-IN"), ("bn", "Bengali", "বাংলা", "bn-IN"),
+        ("pa", "Punjabi", "ਪੰਜਾਬੀ", "pa-IN"), ("ta", "Tamil", "தமிழ்", "ta-IN"),
+        ("te", "Telugu", "తెలుగు", "te-IN"), ("kn", "Kannada", "ಕನ್ನಡ", "kn-IN"),
+        ("ml", "Malayalam", "മലയാളം", "ml-IN"), ("ur", "Urdu", "اردو", "ur-PK"),
+        ("zh", "Chinese", "中文", "zh-CN"), ("ja", "Japanese", "日本語", "ja-JP"),
+        ("ko", "Korean", "한국어", "ko-KR"), ("vi", "Vietnamese", "Tiếng Việt", "vi-VN"),
+        ("th", "Thai", "ไทย", "th-TH"), ("id", "Indonesian", "Bahasa Indonesia", "id-ID"),
+        ("ms", "Malay", "Bahasa Melayu", "ms-MY"), ("fil", "Filipino", "Filipino", "fil-PH"),
+        ("sw", "Swahili", "Kiswahili", "sw-KE"), ("ca", "Catalan", "Català", "ca-ES"),
+    ].map { TeachyReplyLanguage(code: $0.0, englishName: $0.1, nativeName: $0.2, localeIdentifier: $0.3) }
+
+    /// Nil for "auto" and for anything not in the list.
+    static func language(for code: String?) -> TeachyReplyLanguage? {
+        guard let code = code?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { return nil }
+        return all.first { $0.code == code }
+    }
+
+    /// A known code, or "auto".
+    static func normalized(_ code: String?) -> String {
+        language(for: code)?.code ?? automaticCode
+    }
+
+    /// What the picker and the card summary show for a saved setting.
+    static func label(for code: String) -> String {
+        language(for: code)?.pickerLabel ?? "Same as you speak"
+    }
+
+    /// The sentence added to the voice prompt so the model writes its reply in the right language.
+    static func promptSentence(for code: String) -> String {
+        guard let language = language(for: code) else {
+            return "LANGUAGE: Reply in the language they just spoke to you in. If they switch language, switch with them. Keep the bracket tags ([POINT:], [SHOW:], [DO:] and the rest) exactly as written, in English."
+        }
+        return "LANGUAGE: Always reply in \(language.englishName) (\(language.nativeName)), whatever language they speak to you in. Keep the bracket tags ([POINT:], [SHOW:], [DO:] and the rest) exactly as written, in English."
+    }
+
+    /// The locale to ask the Mac's speech recogniser for, or nil to use the Mac's own language.
+    /// A fixed reply language wins; otherwise the dictation language, if one is set.
+    static func recognizerLocaleIdentifier(replyLanguage: String, dictationLanguage: String?) -> String? {
+        if let fixed = language(for: replyLanguage) { return fixed.localeIdentifier }
+        return language(for: dictationLanguage)?.localeIdentifier
+    }
+
+    /// The language code to send with a transcription request, or nil to let it detect.
+    static func transcriptionLanguageCode(replyLanguage: String, dictationLanguage: String?) -> String? {
+        if let fixed = language(for: replyLanguage) { return fixed.code == "fil" ? "tl" : fixed.code }
+        return dictationLanguage
     }
 }
 
@@ -261,6 +380,33 @@ nonisolated enum TeachySettingsStorage {
         bool(TeachySettingsKey.allowBrowserCookieTools, default: false, defaults)
     }
 
+    static func replyLanguage(_ defaults: UserDefaults = .standard) -> String {
+        TeachyReplyLanguages.normalized(defaults.string(forKey: TeachySettingsKey.replyLanguage))
+    }
+
+    /// The sentence to add to the voice prompt so the reply is written in the right language.
+    static func replyLanguagePromptSentence(_ defaults: UserDefaults = .standard) -> String {
+        TeachyReplyLanguages.promptSentence(for: replyLanguage(defaults))
+    }
+
+    /// The locale to give the Mac's speech recogniser for push-to-talk, or nil to use the Mac's own language.
+    static func speechRecognizerLocale(_ defaults: UserDefaults = .standard) -> Locale? {
+        TeachyReplyLanguages.recognizerLocaleIdentifier(
+            replyLanguage: replyLanguage(defaults), dictationLanguage: dictationLanguageCode(defaults)
+        ).map(Locale.init(identifier:))
+    }
+
+    /// Always-on switches itself off after this many minutes with nobody speaking.
+    static func alwaysOnAutoOffMinutes(_ defaults: UserDefaults = .standard) -> Int {
+        guard defaults.object(forKey: TeachySettingsKey.alwaysOnAutoOffMinutes) != nil else { return 5 }
+        return min(max(defaults.integer(forKey: TeachySettingsKey.alwaysOnAutoOffMinutes), 1), 60)
+    }
+
+    /// On a call, answers become captions instead of sound (unless the talk key was held).
+    static func quietOnCallsEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        bool(TeachySettingsKey.quietOnCallsEnabled, default: true, defaults)
+    }
+
     static func shortcuts(_ defaults: UserDefaults = .standard) -> TeachyShortcutSet {
         guard let data = defaults.data(forKey: TeachySettingsKey.shortcuts),
               let decoded = try? JSONDecoder().decode(TeachyShortcutSet.self, from: data)
@@ -339,6 +485,27 @@ final class TeachySettings: ObservableObject {
         didSet { TeachySettingsStorage.saveShortcuts(shortcuts, defaults) }
     }
 
+    /// "auto" or a language code such as "es".
+    @Published var replyLanguage: String {
+        didSet {
+            let normalized = TeachyReplyLanguages.normalized(replyLanguage)
+            if normalized != replyLanguage { replyLanguage = normalized; return }
+            defaults.set(replyLanguage, forKey: TeachySettingsKey.replyLanguage)
+        }
+    }
+
+    @Published var alwaysOnAutoOffMinutes: Int {
+        didSet {
+            let clamped = min(max(alwaysOnAutoOffMinutes, 1), 60)
+            if clamped != alwaysOnAutoOffMinutes { alwaysOnAutoOffMinutes = clamped; return }
+            defaults.set(alwaysOnAutoOffMinutes, forKey: TeachySettingsKey.alwaysOnAutoOffMinutes)
+        }
+    }
+
+    @Published var quietOnCallsEnabled: Bool {
+        didSet { defaults.set(quietOnCallsEnabled, forKey: TeachySettingsKey.quietOnCallsEnabled) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         voiceName = TeachySettingsStorage.voiceName(defaults)
@@ -350,9 +517,12 @@ final class TeachySettings: ObservableObject {
         soundsEnabled = TeachySettingsStorage.soundsEnabled(defaults)
         allowBrowserCookieTools = TeachySettingsStorage.allowBrowserCookieTools(defaults)
         shortcuts = TeachySettingsStorage.shortcuts(defaults)
+        replyLanguage = TeachySettingsStorage.replyLanguage(defaults)
+        alwaysOnAutoOffMinutes = TeachySettingsStorage.alwaysOnAutoOffMinutes(defaults)
+        quietOnCallsEnabled = TeachySettingsStorage.quietOnCallsEnabled(defaults)
     }
 
     var selectedVoice: TeachyVoice {
-        TeachyVoiceCatalog.voices.first { $0.name == voiceName } ?? TeachyVoiceCatalog.voices[0]
+        TeachyVoiceCatalog.allVoices.first { $0.name == voiceName } ?? TeachyVoiceCatalog.voices[0]
     }
 }

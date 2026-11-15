@@ -249,28 +249,59 @@ struct VoiceSettingsSection: View {
     @ObservedObject private var preview: VoicePreviewPlayer
     private let startsExpanded: Bool
 
-    init(startsExpanded: Bool = false, preview: VoicePreviewPlayer? = nil) {
+    init(startsExpanded: Bool = false, preview: VoicePreviewPlayer? = nil, showsMoreVoices: Bool = false) {
         self.startsExpanded = startsExpanded
         self.preview = preview ?? .shared
+        self._showsMoreVoices = State(initialValue: showsMoreVoices)
     }
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
+    @State private var showsMoreVoices: Bool
+
+    /// The first eight, plus the chosen voice if it is one of the others, until "More voices" is opened.
+    private var visibleVoices: [TeachyVoice] {
+        if showsMoreVoices { return TeachyVoiceCatalog.allVoices }
+        let chosen = TeachyVoiceCatalog.moreVoices.filter { $0.name == settings.voiceName }
+        return TeachyVoiceCatalog.voices + chosen
+    }
+
+    private var summary: String {
+        var parts = [settings.selectedVoice.displayName, TeachySpeechSpeed.label(settings.speechSpeed)]
+        if let language = TeachyReplyLanguages.language(for: settings.replyLanguage) { parts.append(language.nativeName) }
+        if settings.captionsEnabled { parts.append("captions on") }
+        return parts.joined(separator: " · ")
+    }
 
     var body: some View {
         SettingsDisclosureCard(
             icon: "waveform",
             title: "Voice",
-            summary: "\(settings.selectedVoice.displayName) · \(TeachySpeechSpeed.label(settings.speechSpeed))"
-                + (settings.captionsEnabled ? " · captions on" : ""),
+            summary: summary,
             startsExpanded: startsExpanded
         ) {
             SettingsCaption(text: "Pick the voice Teachy answers in. Press play to hear one first.")
 
             LazyVGrid(columns: columns, spacing: 6) {
-                ForEach(TeachyVoiceCatalog.voices) { voice in
+                ForEach(visibleVoices) { voice in
                     voiceChip(voice)
                 }
             }
+
+            Button {
+                withAnimation(.smooth(duration: 0.2)) { showsMoreVoices.toggle() }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(showsMoreVoices ? "Fewer voices" : "More voices (\(TeachyVoiceCatalog.moreVoices.count))")
+                        .font(.system(size: 11, weight: .semibold))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .rotationEffect(.degrees(showsMoreVoices ? 180 : 0))
+                }
+                .foregroundColor(DS.Colors.textSecondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
 
             if let errorMessage = preview.errorMessage {
                 Text(errorMessage)
@@ -308,11 +339,92 @@ struct VoiceSettingsSection: View {
 
             SettingsDivider()
 
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Answer in")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.Colors.textPrimary)
+                    Text(settings.replyLanguage == TeachyReplyLanguages.automaticCode
+                         ? "Teachy answers in whatever language you speak to it."
+                         : "Teachy always answers in this language, and listens for it.")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Menu {
+                    Button("Same as you speak") { settings.replyLanguage = TeachyReplyLanguages.automaticCode }
+                    Divider()
+                    ForEach(TeachyReplyLanguages.all) { language in
+                        Button(language.pickerLabel) { settings.replyLanguage = language.code }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(TeachyReplyLanguages.language(for: settings.replyLanguage)?.nativeName ?? "Same as you speak")
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.white.opacity(0.1)))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .pointerCursor()
+            }
+
+            SettingsDivider()
+
             SettingsToggleRow(
                 title: "Captions while Teachy talks",
                 caption: "Shows the words at the bottom of your screen as they are spoken. Typed questions always get captions.",
                 isOn: $settings.captionsEnabled
             )
+
+            SettingsToggleRow(
+                title: "Quiet on calls",
+                caption: "While you're on a call, answers show as captions and are copied instead of spoken, unless you hold the talk key. If your Mac is muted, answers are always shown and copied.",
+                isOn: $settings.quietOnCallsEnabled
+            )
+
+            SettingsDivider()
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Always-on switches off after")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(DS.Colors.textPrimary)
+                    Text("Press Control three times to talk without holding a key. It also switches off when your Mac locks or sleeps.")
+                        .font(.system(size: 11))
+                        .foregroundColor(DS.Colors.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Menu {
+                    ForEach([1, 2, 5, 10, 15, 30], id: \.self) { minutes in
+                        Button("\(minutes) quiet minute\(minutes == 1 ? "" : "s")") { settings.alwaysOnAutoOffMinutes = minutes }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("\(settings.alwaysOnAutoOffMinutes) min")
+                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.white.opacity(0.1)))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .pointerCursor()
+            }
         }
         .onDisappear { preview.stop() }
     }
