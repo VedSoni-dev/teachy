@@ -18,6 +18,16 @@ extension BackgroundAgentTool {
     var httpMethodForPolicy: String? { nil }
 }
 
+// MARK: - Paths
+
+/// Where a file tool's `path` argument points. The permission gate works out the same answer
+/// (`PathPolicy.absolute`), so what is approved is what is touched.
+enum AgentToolPaths {
+    static func url(for path: String) -> URL {
+        URL(fileURLWithPath: PathPolicy.absolute(path, workingDirectory: AgentJobContext.current?.workingDirectory, home: NSHomeDirectory()))
+    }
+}
+
 // MARK: - Bash Tool
 
 final class BashTool: BackgroundAgentTool {
@@ -78,14 +88,14 @@ final class BashTool: BackgroundAgentTool {
 
 final class ReadFileTool: BackgroundAgentTool {
     let name = "read_file"
-    let description = "Read the contents of a file at the given path."
+    let description = "Read the contents of a file. Use an absolute path or ~/. A relative path is read from your files folder if you are a named agent, otherwise from the home folder."
 
     let jsonSchema: [String: Any] = [
         "type": "object",
         "properties": [
             "path": [
                 "type": "string",
-                "description": "Absolute path to the file"
+                "description": "Path to the file: absolute, ~/…, or relative (see the tool description)"
             ]
         ],
         "required": ["path"]
@@ -95,7 +105,7 @@ final class ReadFileTool: BackgroundAgentTool {
         guard let path = arguments["path"] as? String else {
             throw NSError(domain: "ReadFileTool", code: -1, userInfo: [NSLocalizedDescriptionKey: "Missing 'path' argument"])
         }
-        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        let url = AgentToolPaths.url(for: path)
         let data = try Data(contentsOf: url)
         guard let content = String(data: data, encoding: .utf8) else {
             throw NSError(domain: "ReadFileTool", code: -1, userInfo: [NSLocalizedDescriptionKey: "File is not valid UTF-8 text"])
@@ -108,14 +118,14 @@ final class ReadFileTool: BackgroundAgentTool {
 
 final class WriteFileTool: BackgroundAgentTool {
     let name = "write_file"
-    let description = "Write content to a file at the given path. Creates parent directories if needed. Overwrites existing files."
+    let description = "Write content to a file. Creates parent directories if needed. Overwrites existing files. Use an absolute path or ~/. A relative path is written in your files folder if you are a named agent, otherwise in the home folder."
 
     let jsonSchema: [String: Any] = [
         "type": "object",
         "properties": [
             "path": [
                 "type": "string",
-                "description": "Absolute path to the file"
+                "description": "Path to the file: absolute, ~/…, or relative (see the tool description)"
             ],
             "content": [
                 "type": "string",
@@ -132,10 +142,10 @@ final class WriteFileTool: BackgroundAgentTool {
         guard let content = arguments["content"] as? String else {
             throw NSError(domain: "WriteFileTool", code: -1, userInfo: [NSLocalizedDescriptionKey: "Missing 'content' argument"])
         }
-        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        let url = AgentToolPaths.url(for: path)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try content.write(to: url, atomically: true, encoding: .utf8)
-        return "Wrote \(content.count) characters to \(path)"
+        return "Wrote \(content.count) characters to \(url.path)"
     }
 }
 

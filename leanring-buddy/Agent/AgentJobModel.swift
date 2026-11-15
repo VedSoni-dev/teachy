@@ -10,6 +10,8 @@
 import Foundation
 
 enum AgentJobStatus: Equatable {
+    /// Four jobs are already running; this one starts when one of them ends.
+    case queued
     case planning
     case running
     case waitingForConsent
@@ -20,12 +22,23 @@ enum AgentJobStatus: Equatable {
     var isFinished: Bool {
         switch self {
         case .done, .failed, .stopped: return true
-        case .planning, .running, .waitingForConsent: return false
+        case .queued, .planning, .running, .waitingForConsent: return false
+        }
+    }
+
+    /// One word for the saved history record.
+    var historyWord: String {
+        switch self {
+        case .done: return "done"
+        case .failed: return "failed"
+        case .stopped: return "stopped"
+        case .queued, .planning, .running, .waitingForConsent: return "running"
         }
     }
 
     var label: String {
         switch self {
+        case .queued: return "Waiting its turn"
         case .planning: return "Planning"
         case .running: return "Working"
         case .waitingForConsent: return "Waiting for you"

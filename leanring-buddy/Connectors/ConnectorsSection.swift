@@ -42,6 +42,10 @@ struct ConnectorsSection: View {
     @State private var connectorPendingRemoval: String?
     @State private var connectorEditingToken: String?
     @State private var replacementToken = ""
+    @State private var catalogBusyID: String?
+    @State private var catalogKeyEntry: ConnectorCatalogEntry?
+    @State private var catalogKey = ""
+    @State private var catalogError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -64,6 +68,22 @@ struct ConnectorsSection: View {
             ForEach(center.connectors) { connector in
                 connectorRow(connector)
             }
+
+            ConnectorPopularStrip(
+                entries: ConnectorCatalog.entries,
+                addedURLs: center.remoteServerURLs,
+                busyID: catalogBusyID,
+                keyEntry: catalogKeyEntry,
+                key: $catalogKey,
+                error: catalogError,
+                onAdd: { addFromCatalog($0) },
+                onSubmitKey: { entry in addFromCatalog(entry, apiKey: catalogKey) },
+                onCancelKey: {
+                    catalogKeyEntry = nil
+                    catalogKey = ""
+                    catalogError = nil
+                }
+            )
 
             switch openPanel {
             case .none:
@@ -95,6 +115,31 @@ struct ConnectorsSection: View {
         }
         let connectedCount = center.connectors.filter { center.state(for: $0.id).isConnected }.count
         return "\(connectedCount) of \(center.connectors.count) connected. Keys and sign-ins stay in your Keychain."
+    }
+
+    // MARK: Popular (one-click add)
+
+    private func addFromCatalog(_ entry: ConnectorCatalogEntry, apiKey: String? = nil) {
+        catalogError = nil
+        if entry.auth == .apiKey, apiKey == nil {
+            // Ask for the key first; nothing is saved or contacted yet.
+            catalogKey = ""
+            catalogKeyEntry = entry
+            return
+        }
+        guard catalogBusyID == nil else { return }
+        catalogBusyID = entry.id
+        Task {
+            do {
+                // Same path as the Add form: saved, checked, then the browser sign-in if it asks.
+                try await center.addFromCatalog(entry, apiKey: apiKey ?? "")
+                catalogKeyEntry = nil
+                catalogKey = ""
+            } catch {
+                catalogError = McpConnectorState.message(for: error)
+            }
+            catalogBusyID = nil
+        }
     }
 
     // MARK: Rows
@@ -388,5 +433,145 @@ struct ConnectorsSection: View {
         }
         .buttonStyle(.plain)
         .pointerCursor()
+    }
+}
+
+/// The "Popular" row: well-known servers with an Add button each. Plain values in, closures
+/// out, so it renders without a `ConnectorCenter`.
+struct ConnectorPopularStrip: View {
+    let entries: [ConnectorCatalogEntry]
+    let addedURLs: [String]
+    var busyID: String?
+    /// Set while a key-based entry is waiting for its key.
+    var keyEntry: ConnectorCatalogEntry?
+    @Binding var key: String
+    var error: String?
+    var onAdd: (ConnectorCatalogEntry) -> Void = { _ in }
+    var onSubmitKey: (ConnectorCatalogEntry) -> Void = { _ in }
+    var onCancelKey: () -> Void = {}
+
+    var body: some View {
+        if !entries.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Popular")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(DS.Colors.textSecondary)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 8) {
+                        ForEach(entries) { entry in
+                            tile(entry)
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+
+                if let keyEntry {
+                    keyRow(keyEntry)
+                }
+
+                if let error {
+                    Text(error)
+                        .font(.system(size: 10))
+                        .foregroundColor(DS.Colors.destructiveText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func tile(_ entry: ConnectorCatalogEntry) -> some View {
+        let isAdded = ConnectorCatalog.isAdded(entry, serverURLs: addedURLs)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(entry.name)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(DS.Colors.textPrimary)
+                .lineLimit(1)
+            Text(entry.summary)
+                .font(.system(size: 10))
+                .foregroundColor(DS.Colors.textTertiary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(height: 26, alignment: .topLeading)
+
+            HStack(spacing: 6) {
+                if isAdded {
+                    Label("Added", systemImage: "checkmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(DS.Colors.success)
+                } else if busyID == entry.id {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 14, height: 14)
+                    Text("Adding…")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DS.Colors.textTertiary)
+                } else {
+                    Button { onAdd(entry) } label: {
+                        Text("Add")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(DS.Colors.textPrimary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.white.opacity(0.1)))
+                    }
+                    .buttonStyle(.plain)
+                    .pointerCursor()
+                    .disabled(busyID != nil)
+                }
+                Spacer(minLength: 0)
+                Text(authLabel(entry.auth))
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(DS.Colors.textTertiary)
+                    .lineLimit(1)
+            }
+            .frame(height: 22)
+        }
+        .padding(9)
+        .frame(width: 148, alignment: .leading)
+        .glassCard(cornerRadius: 10)
+    }
+
+    private func authLabel(_ auth: ConnectorCatalogEntry.Auth) -> String {
+        switch auth {
+        case .oauth: return "Sign in"
+        case .apiKey: return "Key"
+        case .none: return "Open"
+        }
+    }
+
+    private func keyRow(_ entry: ConnectorCatalogEntry) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(entry.name) needs a key: \((entry.keyHint ?? "paste it here").prefix(1).lowercased() + (entry.keyHint ?? "paste it here").dropFirst()). It stays in your Keychain.")
+                .font(.system(size: 10))
+                .foregroundColor(DS.Colors.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                SecureField("Key for \(entry.name)", text: $key)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(DS.Colors.textPrimary)
+                    .padding(6)
+                    .glassCard(cornerRadius: 8)
+                    .onSubmit { onSubmitKey(entry) }
+                Button { onSubmitKey(entry) } label: {
+                    Text("Add")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.white.opacity(0.1)))
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+                Button(action: onCancelKey) {
+                    Text("Cancel")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.Colors.textTertiary)
+                }
+                .buttonStyle(.plain)
+                .pointerCursor()
+            }
+        }
     }
 }

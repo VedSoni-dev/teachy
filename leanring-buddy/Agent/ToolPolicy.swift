@@ -65,6 +65,9 @@ struct ToolPolicySettings {
     var homeDirectory: String = NSHomeDirectory()
     /// Teachy's own bundle id: the agent may never drive Teachy itself.
     var ownBundleIdentifier: String = ""
+    /// The working folder of the named agent this job runs as (`~/.teachy/agents/<slug>/files`),
+    /// with symlinks resolved. Reading and writing inside it needs no yes. Empty = not an agent job.
+    var agentFilesDirectory: String = ""
 }
 
 /// Facts about the live drive session, gathered by the gate and passed in as plain values.
@@ -152,8 +155,40 @@ enum ToolPolicy {
             }
             return decision(.needsConsent, "reads a page using your sign-in", summary: "read \(host(of: url)) signed in as you", detail: url, app: host(of: url))
 
+        case "remember":
+            return decision(.safe, "adds a note to this agent's own memory file", summary: "remember a note", detail: string(arguments["note"]))
+
+        case "list_routines":
+            return decision(.safe, "only lists the routines", summary: "list your routines")
+
+        case "pause_routine":
+            // Pausing loses nothing and is undone with one tap. Resuming makes things run again, so that asks.
+            let resumes = (arguments["resume"] as? Bool) == true
+            return decision(
+                resumes ? .needsConsent : .safe,
+                resumes ? "makes a paused routine run again" : "stops a routine from running until you resume it",
+                summary: resumes ? "resume a routine" : "pause a routine",
+                detail: string(arguments["id"])
+            )
+
+        case "create_routine":
+            // Show exactly what was asked for: the schedule as sent, then the task.
+            var scheduleText = ""
+            if let schedule = arguments["schedule"] as? [String: Any],
+               let data = try? JSONSerialization.data(withJSONObject: schedule, options: [.sortedKeys]) {
+                scheduleText = (String(data: data, encoding: .utf8) ?? "") + " "
+            }
+            return decision(.needsConsent, "sets up work that runs later without you watching", summary: "set up a routine", detail: scheduleText + string(arguments["task"]))
+
+        case "delete_routine":
+            return decision(.alwaysAsk, "deletes a routine", summary: "delete a routine", detail: string(arguments["id"]))
+
         case "read_file":
             let path = string(arguments["path"])
+            if PathPolicy.isInside(path: path, directory: settings.agentFilesDirectory, home: settings.homeDirectory),
+               !PathPolicy.looksLikeCredentialPath(PathPolicy.relative(path: path, to: settings.agentFilesDirectory, home: settings.homeDirectory)) {
+                return decision(.safe, "reads a file in this agent's own folder", summary: "read a file", detail: path)
+            }
             switch PathPolicy.classifyRead(path: path, home: settings.homeDirectory) {
             case .plain:
                 return decision(.safe, "reads a normal file in your home folder", summary: "read a file", detail: path)
@@ -165,6 +200,14 @@ enum ToolPolicy {
 
         case "write_file":
             let path = string(arguments["path"])
+            // A named agent may write freely inside its own files folder. Only the part below the
+            // folder is judged for secret-looking names, so the folder's own path cannot trip it.
+            if PathPolicy.isInside(path: path, directory: settings.agentFilesDirectory, home: settings.homeDirectory) {
+                let inner = PathPolicy.relative(path: path, to: settings.agentFilesDirectory, home: settings.homeDirectory)
+                if !PathPolicy.looksLikeCredentialPath(inner), !PathPolicy.looksLikePersistencePath(inner) {
+                    return decision(.safe, "writes inside this agent's own files folder", summary: "write a file in its own folder", detail: path)
+                }
+            }
             switch PathPolicy.classifyWrite(path: path, home: settings.homeDirectory) {
             case .credential:
                 return decision(.alwaysAsk, "writing there can change sign-ins, keys or what runs at login", summary: "write a sensitive file", detail: path)
@@ -446,6 +489,34 @@ enum PathPolicy {
             parts.append(part)
         }
         return "/" + parts.joined(separator: "/")
+    }
+
+    /// Where a path a tool was given really points: "~" is the home folder, and a relative path
+    /// is taken from the job's working folder (a named agent's `files/`), or from home when the
+    /// job has none. The file tools and the permission gate both use this, so they always agree.
+    static func absolute(_ path: String, workingDirectory: String?, home: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed.hasPrefix("/") || trimmed == "~" || trimmed.hasPrefix("~/") {
+            return normalize(trimmed, home: home)
+        }
+        let base = workingDirectory.flatMap { $0.isEmpty ? nil : $0 } ?? home
+        return normalize((base.hasSuffix("/") ? base : base + "/") + trimmed, home: home)
+    }
+
+    /// True when `path` is strictly below `directory` once "~", "." and ".." are worked out.
+    /// An empty directory never contains anything.
+    static func isInside(path: String, directory: String, home: String) -> Bool {
+        let trimmedDirectory = directory.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDirectory.isEmpty, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        let base = normalize(trimmedDirectory, home: home)
+        guard base != "/" else { return false }
+        return normalize(path, home: home).hasPrefix(base + "/")
+    }
+
+    /// The part of `path` below `directory` ("" when it is not inside).
+    static func relative(path: String, to directory: String, home: String) -> String {
+        guard isInside(path: path, directory: directory, home: home) else { return "" }
+        return String(normalize(path, home: home).dropFirst(normalize(directory, home: home).count + 1))
     }
 
     static func classifyRead(path: String, home: String) -> Kind {
