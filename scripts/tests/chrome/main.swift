@@ -164,7 +164,7 @@ do {
     }
 
     // No answer: it gives up on time, and a late answer is ignored.
-    final class Box: @unchecked Sendable { var id = "" }
+    nonisolated final class Box: @unchecked Sendable { var id = "" }
     let lateBox = Box()
     let started = Date()
     do {
@@ -517,17 +517,17 @@ nonisolated final class FakeChrome: @unchecked Sendable {
         try? toHelper.fileHandleForWriting.write(contentsOf: data)
     }
 
+    private func pop(where matches: ([String: Any]) -> Bool) -> [String: Any]? {
+        lock.lock(); defer { lock.unlock() }
+        guard let index = inbox.firstIndex(where: matches) else { return nil }
+        return inbox.remove(at: index)
+    }
+
     /// Removes and returns the first message that matches.
     func take(_ seconds: Double = 5, where matches: ([String: Any]) -> Bool) async -> [String: Any]? {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
-            lock.lock()
-            if let index = inbox.firstIndex(where: matches) {
-                let found = inbox.remove(at: index)
-                lock.unlock()
-                return found
-            }
-            lock.unlock()
+            if let found = pop(where: matches) { return found }
             await sleepMilliseconds(15)
         }
         return nil
