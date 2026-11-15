@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fixture Shop</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; }
+    nav { background: #eee; padding: 8px; }
+    main { padding: 16px; }
+    .card-like { cursor: pointer; padding: 6px; border: 1px solid #ccc; display: inline-block; }
+    .spacer { height: 1600px; }
+    .gone { display: none; }
+  </style>
+</head>
+<body>
+  <nav id="site-nav"><a href="article.html">Journal</a> <a href="shop.html">Shop</a></nav>
+  <main>
+    <h1>Blue Kettle</h1>
+    <p id="pitch">A two litre kettle that pours without dripping. It boils quickly, switches itself off, and the lid stays cool. Ships in two days from our warehouse in Leeds.</p>
+
+    <button id="add" type="button">Add to cart</button>
+    <span id="cart-count">Cart: 0</span>
+    <div id="log"></div>
+
+    <button type="button" id="hidden-button" class="gone">You cannot see me</button>
+    <button type="button" id="disabled-button" disabled>Sold out</button>
+    <div class="card-like" id="details-card">See details</div>
+
+    <form id="signup" action="thanks.html" method="get">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" value="">
+      <label>Quantity
+        <select id="quantity" name="quantity">
+          <option value="1">One</option>
+          <option value="2">Two</option>
+          <option value="3">Three</option>
+        </select>
+      </label>
+      <label><input id="gift" name="gift" type="checkbox"> Gift wrap</label>
+      <label for="notes">Notes</label>
+      <textarea id="notes" name="notes"></textarea>
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" value="hunter2-do-not-read">
+      <label for="otp">Verification code</label>
+      <input id="otp" name="otp" autocomplete="one-time-code" inputmode="numeric" value="424242">
+      <label for="card">Card number</label>
+      <input id="card" name="cardnumber" autocomplete="cc-number" value="4111 1111 1111 1111">
+
+      <label for="photo">Photo</label>
+      <input id="photo" name="photo" type="file">
+      <span id="photo-name"></span>
+
+      <button type="submit" id="place-order">Place order</button>
+    </form>
+
+    <button type="button" id="ask">Ask before deleting</button>
+    <span id="ask-result"></span>
+
+    <a id="new-tab-link" href="article.html" target="_blank">Open the journal in a new tab</a>
+
+    <fancy-widget id="widget"></fancy-widget>
+
+    <iframe id="inner" src="frame.html" title="Reviews" width="400" height="90"></iframe>
+
+    <div class="spacer"></div>
+    <button type="button" id="far-button">Far away button</button>
+  </main>
+  <footer>Fixture Shop Ltd.</footer>
+
+  <script>
+    var count = 0;
+    var log = document.getElementById('log');
+    function note(text) { var line = document.createElement('div'); line.className = 'log-line'; line.textContent = text; log.appendChild(line); }
+
+    document.getElementById('add').addEventListener('click', function (clickEvent) {
+      count += 1;
+      document.getElementById('cart-count').textContent = 'Cart: ' + count;
+      note('click trusted=' + clickEvent.isTrusted);
+      if (!document.getElementById('checkout')) {
+        var checkout = document.createElement('button');
+        checkout.id = 'checkout';
+        checkout.type = 'button';
+        checkout.textContent = 'Go to checkout';
+        document.querySelector('main').insertBefore(checkout, log);
+      }
+    });
+
+    document.getElementById('email').addEventListener('input', function (inputEvent) {
+      note('input trusted=' + inputEvent.isTrusted);
+    });
+    document.getElementById('email').addEventListener('keydown', function (keyEvent) {
+      note('key ' + keyEvent.key + ' trusted=' + keyEvent.isTrusted);
+    });
+    document.getElementById('quantity').addEventListener('change', function () {
+      note('quantity=' + document.getElementById('quantity').value);
+    });
+    document.getElementById('photo').addEventListener('change', function () {
+      var files = document.getElementById('photo').files;
+      document.getElementById('photo-name').textContent = files.length ? 'Chosen: ' + files[0].name : '';
+    });
+    document.getElementById('ask').addEventListener('click', function () {
+      var yes = window.confirm('Really delete everything?');
+      document.getElementById('ask-result').textContent = yes ? 'Answered yes' : 'Answered no';
+    });
+    document.getElementById('details-card').addEventListener('click', function () {
+      setTimeout(function () { note('Details loaded late'); }, 600);
+    });
+
+    customElements.define('fancy-widget', class extends HTMLElement {
+      constructor() {
+        super();
+        var shadow = this.attachShadow({ mode: 'open' });
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Shadow hello';
+        button.addEventListener('click', function () { note('shadow clicked'); });
+        shadow.appendChild(button);
+      }
+    });
+  </script>
+</body>
+</html>

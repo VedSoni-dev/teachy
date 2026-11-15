@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Reviews frame</title></head>
+<body>
+  <p>Four reviews, all happy.</p>
+  <button type="button" id="frame-button">Frame button</button>
+  <span id="frame-result"></span>
+  <script>
+    document.getElementById('frame-button').addEventListener('click', function (clickEvent) {
+      document.getElementById('frame-result').textContent = 'frame clicked trusted=' + clickEvent.isTrusted;
+    });
+  </script>
+</body>
+</html>
