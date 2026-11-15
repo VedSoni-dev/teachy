@@ -22,6 +22,7 @@ done
 
 SOURCES=(
     "$APP/Agent/ToolPolicy.swift"
+    "$APP/Browser/BrowserRisk.swift"
     "$APP/Agent/ConsentLedger.swift"
     "$APP/Agent/AgentJobModel.swift"
     "$APP/Agent/AgentConcurrency.swift"

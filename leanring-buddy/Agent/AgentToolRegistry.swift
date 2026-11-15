@@ -63,6 +63,9 @@ final class AgentToolGate {
             }
             context = await job.drive.policyContext(toolName: toolName, arguments: arguments)
         }
+        if toolName.hasPrefix("browser_") {
+            context.browser = await BrowserBridge.shared.policyContext(toolName: toolName, arguments: arguments, jobID: job.id)
+        }
 
         // Judge file tools by where the path really leads, not by how it is spelled.
         var argumentsForPolicy = arguments
@@ -182,6 +185,7 @@ final class BackgroundAgentToolRegistry {
         register(DriveKeyTool())
         register(DriveScrollTool())
         register(DriveClickPointTool())
+        BrowserAgentTools.all.forEach { register($0) }
         // Named agents and routines.
         register(RememberTool())
         register(CreateRoutineTool())

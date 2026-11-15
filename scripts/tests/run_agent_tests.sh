@@ -8,6 +8,7 @@ cd "$(dirname "$0")/../.."
 OUT="${TMPDIR:-/tmp}/teachy-agent-tests"
 swiftc -o "$OUT" \
   leanring-buddy/Agent/ToolPolicy.swift \
+  leanring-buddy/Browser/BrowserRisk.swift \
   leanring-buddy/Agent/ConsentLedger.swift \
   leanring-buddy/Agent/AgentJobModel.swift \
   leanring-buddy/Agent/ShellRunner.swift \

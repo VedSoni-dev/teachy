@@ -9,6 +9,10 @@ protocol BackgroundAgentTool {
 
     func execute(arguments: [String: Any]) async throws -> String
 
+    /// A protocol requirement (not only an extension default) so tools that return an image,
+    /// like capture_screen and browser_screenshot, are not flattened to text by the registry.
+    func executeReturningRichResult(arguments: [String: Any]) async throws -> AgentToolResult
+
     /// For tools that are one HTTP call (connectors): the method, so the permission
     /// gate can tell a read from a delete. nil for everything else.
     var httpMethodForPolicy: String? { get }

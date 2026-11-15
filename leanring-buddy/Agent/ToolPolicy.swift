@@ -78,6 +78,8 @@ struct ToolPolicyContext {
     var driveElementDescription: String = ""
     /// HTTP method of a connector tool, when it declares one.
     var connectorHTTPMethod: String = ""
+    /// Facts about the page a browser tool is about to act on (see Browser/BrowserRisk.swift).
+    var browser = BrowserRiskContext()
 
     init(
         driveTargetAppName: String = "",
@@ -259,6 +261,11 @@ enum ToolPolicy {
 
         case _ where driveActionToolNames.contains(toolName):
             return classifyDrive(toolName: toolName, arguments: arguments, settings: settings, context: context)
+
+        case _ where toolName.hasPrefix("browser_"):
+            // One shared tool name so a single yes per site covers click, type and navigate.
+            let verdict = BrowserRiskClassifier.classify(toolName: toolName, arguments: arguments, context: context.browser)
+            return ToolPolicyDecision(toolName: "browser", risk: ToolRisk(rawValue: verdict.risk.rawValue) ?? .needsConsent, reason: verdict.reason, summary: verdict.summary, detail: verdict.detail, appScope: verdict.siteScope)
 
         default:
             return classifyUnknown(toolName: toolName, arguments: arguments, context: context)

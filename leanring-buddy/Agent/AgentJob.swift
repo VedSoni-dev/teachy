@@ -378,6 +378,7 @@ final class AgentJobCenter: ObservableObject {
         }
 
         await job.drive.end()
+        BrowserBridge.shared.jobEnded(jobID: job.id)
         releaseDrive(jobID: job.id)
         AgentToolGate.shared.ledger.endJob(job.id)
         if job.countsTowardLimit { promote(slots.release(job.id)) }
@@ -470,6 +471,9 @@ final class AgentJobCenter: ObservableObject {
             var systemPrompt = request.systemPrompt
             if allowed.contains(where: { $0.hasPrefix("drive_") }) {
                 systemPrompt += "\n\n" + DriveToolGuide.text
+            }
+            if allowed.contains(where: { $0.hasPrefix("browser_") }) {
+                systemPrompt += "\n\n" + BrowserToolGuide.text
             }
             if let agent = request.agent {
                 systemPrompt += "\n\n" + roster.promptSection(for: agent)

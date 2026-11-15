@@ -60,6 +60,8 @@ struct NotchHomeTabView: View {
 
                 ConnectorsSection()
 
+                BrowserExtensionSection()
+
                 AgentsSection()
 
                 PrivacySettingsSection()
