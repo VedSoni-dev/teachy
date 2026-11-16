@@ -536,13 +536,14 @@ final class SceneSession {
     private var heldFrameCues: Set<Int> = []
 
     private static func isPlainFrameAll(_ command: SceneCommand) -> Bool {
-        command.verb == .frame && !command.flag("auto") && command.targetIDs.isEmpty
+        command.verb == .frame && !command.flag("auto") && !command.flag("hold") && command.targetIDs.isEmpty
     }
 
     /// A script often ends "…and that is the optic nerve" with `frame all` on the same sentence.
     /// Going wide at once would skip the part the sentence is about, so when a sentence labels or
     /// moves a part of its own, its `frame all` waits: the camera shows that part while it is
     /// talked about, and the narration still ends on the whole model.
+    /// `frame all hold` explicitly keeps the overview during that sentence instead.
     private func holdsFrameAll(_ command: SceneCommand) -> Bool {
         guard Self.isPlainFrameAll(command), directsCamera, !isReplaying, !isRefining, anchor.timing == .speech, let cue = command.cue else { return false }
         let others = (linesByCue[cue] ?? []).filter { !$0.movesCamera }

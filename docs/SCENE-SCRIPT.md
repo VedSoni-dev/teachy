@@ -157,6 +157,7 @@ camera to=x,y,z look=x,y,z dur=   remove id / clear
 ```
 focus id[,id…] zoom=tight|medium|wide dur=     ease onto those parts (their combined box, with room round it)
 frame all                                       back to the whole model (frame id… is a wide focus)
+frame all hold                                  keep the fitted overview for this narration cue
 orbit id deg=120 dur=4                          a slow arc round a part (orbit all: round the model)
 ghost id id… opacity=0.14 / ghost others / ghost none      see-through, to show what is inside (alias: cutaway)
 hide id id… / show id id… / show all            show all also undoes every ghost
@@ -180,6 +181,8 @@ detail id                                       a richer sub-assembly with its o
 | No subject | eases back to the whole model |
 | End of the narration | the whole model. A `frame all` on a last sentence that labels a part of its own is kept for the end, so the part is shown while it is talked about |
 | The person is steering | nothing moves the camera until they have been idle 5 s (`gesturePause.idleResume`); never during a gesture |
+
+**Conceptual diagrams.** Use `frame all hold` in every narration cue to keep an overview that fits new nodes and labels as they appear. Unlike plain `frame all`, it is not deferred to show a part close-up. This avoids cropped layouts from guessed numeric camera positions.
 
 Lines the engine writes itself (`focus … auto`, `frame all auto`, `pulse … auto`, a double-click's `focus`, Recenter's `frame all`) go into the log like any other, so a replay or a saved video repeats them without working anything out again. `SceneSession.directsCamera = false` switches all of this off (the camera then only frames the whole model, as it used to).
 
