@@ -100,6 +100,9 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
         registerAsLoginItemIfNeeded()
         TeachySoftwareUpdater.shared.start()
+        if let notchManager {
+            TeachyAnnouncementController.shared.start(companionManager: companionManager, notchManager: notchManager)
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

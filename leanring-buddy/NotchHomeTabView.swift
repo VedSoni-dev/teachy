@@ -177,6 +177,10 @@ struct NotchHomeTabView: View {
             title: "Updates",
             summary: "Version \(softwareUpdater.shortVersionString)"
         ) {
+            Button("What’s new…") { TeachyAnnouncementController.shared.showLatest() }
+                .teachyLinkButton()
+                .accessibilityHint("Open the latest feature announcement")
+
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Teachy \(softwareUpdater.shortVersionString) (\(softwareUpdater.buildNumberString))")

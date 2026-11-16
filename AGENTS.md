@@ -74,7 +74,10 @@ npm run harness                      # validate all routes
 | File | Lines | Purpose |
 |------|-------|---------|
 | `leanring_buddyApp.swift` | ~100 | Menu bar app entry point. Starts companion + Sparkle via `TeachySoftwareUpdater`. |
-| `TeachySoftwareUpdater.swift` | ~70 | Sparkle auto-update controller — GitHub Releases feed + Check for Updates in Home settings. |
+| `TeachySoftwareUpdater.swift` | ~70 | Sparkle auto-update controller — GitHub Releases feed + Check for Updates in Settings. |
+| `Announcements/TeachyAnnouncement.swift` | ~55 | Bundled feature announcement catalog and stable-ID acknowledgement history. |
+| `Announcements/TeachyAnnouncementController.swift` | ~150 | Presents once after sign-in/setup, retains the native window, resizes it with content, and allows manual reopening. |
+| `Announcements/TeachyAnnouncementView.swift` | ~225 | Compact announcement window with live dictation shortcut and language controls. |
 | `CompanionManager.swift` | ~2820 | Central state machine. Owns dictation, shortcut monitoring, screen capture, the general voice turn and its system prompt (`buildCompanionVoiceResponseSystemPrompt`), [GUIDE:] walkthroughs, local TTS, and overlay management. Tracks voice state, conversation history, chat/agent model selection, and cursor visibility. Layer 2 `executeActStep` runs `.act` guided-task steps via the agent tool loop with announce-before-act ordering; Layer 3 `reflectAndReplaceRemainingSteps` calls the reasoning model on divergence to revise the living plan. |
 | `CompanionGuidedTask.swift` | ~160 | Ephemeral [GUIDE:] walkthrough model (`GuidedStepGoal`, `GuidedStepExecutionMode` `.coach`/`.act`, `AgenticStep`, `CompanionGuidedTask` with a replan cap) plus the [GUIDE:] / [DO:] / [CLIPBOARD:] / [REMEMBER:] tag parsers. |
 | `GuidedTaskPlanner.swift` | ~335 | Model calls behind [GUIDE:]: `GuidedTaskPlanner` (screen-grounded plan, text-only fallback, replan on divergence) and `GuidedStepScreenChecker` (pass / partial / off track + visible error). |
@@ -162,6 +165,12 @@ open leanring-buddy.xcodeproj
 Home shows recent drawings, connection status, Open chat and the voice shortcut. `NotchPanelTab.swift` defines Home, Agents, Drawings, Connections and Settings. Home/Agents share the compact root header with Drawings/Settings icon buttons; `NotchPanelView` holds the selected scrolling page. Settings includes account/logout, always-on voice and other preferences, followed by Connectors and Memory. File drag-over selects Home. Shortcut recording cancels when leaving Home.
 
 The expanded black shell is 520×240pt. Closed idle uses the real camera width plus symmetric 24pt wings and 8pt outer padding (249pt with a 185pt camera). A notchless display uses a 48pt idle indicator. Keep the real camera reservation intact in both idle and active states. Leaving the visible panel collapses after 180ms; re-entry, attachment drag and native menu tracking cancel pending closure. The full transparent hosting window is not a hover target. `scripts/tests/run_notch_hover_tests.sh` exercises the real manager with temporary stubs. Render `scripts/tests/render_home_shots.sh` for pages and notched/notchless states; its stubs read no live app data. Use Xcode GUI for the full Release build and validate live navigation after installing.
+
+## Feature announcements
+
+`TeachyAnnouncement.releases` is newest-first, bundled and available offline. Add a stable ID and the minimum marketing version for each new feature announcement; do not change an ID for copy edits or key tracking to build numbers. Existing onboarded users see the latest eligible unseen announcement once sign-in, permissions and idle voice are ready. Fresh installs baseline eligible entries and use onboarding instead. Closing or Got it acknowledges it; Settings → Updates → What’s new can always reopen it. Account switching closes the window without acknowledging an unseen announcement. Sparkle remains responsible for update discovery, downloads and installation.
+
+The dictation announcement uses `DictationShortcut` and `TeachySettings.dictationLanguage`, not duplicate preferences. Recording validates through `DictationController`, and dismissing cancels recording. The 440pt window fits content height, including long shortcuts and errors. Tests: `scripts/tests/run_announcement_tests.sh`; screenshots: `scripts/tests/render_announcement_shots.sh`. Both use isolated fixtures, not real login data.
 
 ## Drawing performance (15 Nov 2026)
 

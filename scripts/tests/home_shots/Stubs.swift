@@ -241,3 +241,8 @@ final class ConnectorCenter: ObservableObject {
     struct State { var isConnected = false }
     @Published var states: [String: State] = [:]
 }
+
+final class TeachyAnnouncementController {
+    static let shared = TeachyAnnouncementController()
+    func showLatest() {}
+}
