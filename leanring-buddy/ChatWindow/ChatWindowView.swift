@@ -12,14 +12,74 @@
 //  controls come from the design system (docs/DESIGN.md).
 //
 
+import Combine
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Scoped to the standalone window; the notch keeps its dark presentation.
+private struct ChatStandaloneKey: EnvironmentKey {
+    static let defaultValue = false
+}
+private extension EnvironmentValues {
+    var chatIsStandalone: Bool {
+        get { self[ChatStandaloneKey.self] }
+        set { self[ChatStandaloneKey.self] = newValue }
+    }
+}
+
+struct ChatSurfacePalette {
+    var isStandalone: Bool
+    static let canvas = Color.white
+    static let sidebar = Color(white: 0.91)
+    static let bubble = Color(white: 0.92)
+    static let field = Color(white: 0.95)
+    static let border = Color(white: 0.78)
+    static let dots = Color(white: 0.88)
+    static let ink = Color(white: 0.10)
+    static let mutedInk = Color(white: 0.45)
+    static let glossTop = Color(red: 0.96, green: 0.98, blue: 1)
+    static let glossBottom = Color(red: 0.55, green: 0.74, blue: 0.96)
+    var primary: Color { isStandalone ? Self.ink : DS.Colors.textPrimary }
+    var secondary: Color { isStandalone ? Self.mutedInk : DS.Colors.textSecondary }
+    var tertiary: Color { isStandalone ? Self.mutedInk : DS.Colors.textTertiary }
+    var placeholder: Color { isStandalone ? Self.mutedInk : DS.Colors.textQuaternary }
+    var assistantBubble: Color { isStandalone ? Self.bubble : DS.Colors.surface3 }
+}
+
+private struct ChatDotCanvas: View {
+    var body: some View {
+        Canvas { context, size in
+            for x in stride(from: 14.0, to: size.width, by: 16) {
+                for y in stride(from: 14.0, to: size.height, by: 16) {
+                    context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 1.5, height: 1.5)),
+                                 with: .color(ChatSurfacePalette.dots))
+                }
+            }
+        }
+        .background(ChatSurfacePalette.canvas)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct ChatLightIconStyle: ButtonStyle {
+    var side: CGFloat = 26
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(DS.Fonts.control)
+            .foregroundStyle(ChatSurfacePalette.mutedInk)
+            .frame(width: side, height: side)
+            .background(configuration.isPressed ? ChatSurfacePalette.border : Color.clear, in: Circle())
+            .contentShape(Circle())
+            .pointerCursor()
+    }
+}
+
 /// Sizes used only by the chat window. Colours and fonts come from the design system.
 enum ChatStyle {
-    /// The window is not part of the notch, so it is the macOS dark window grey, not pure black.
-    static let windowBackground = DS.Colors.background
+    /// Standalone chat has a light reading canvas; notch chat chooses its own dark surface.
+    static let windowBackground = ChatSurfacePalette.canvas
     /// The size of the conversation's text: Teachy's replies, the person's bubbles and the composer.
     static let bodySize: CGFloat = 13.5
     static let bodyLineSpacing: CGFloat = 4
@@ -46,6 +106,7 @@ final class ChatComposerDraft: ObservableObject {
 }
 
 struct ChatWindowView: View {
+    private let palette = ChatSurfacePalette(isStandalone: true)
     @ObservedObject var timeline: ChatTimeline
     @ObservedObject var shelf: AttachmentShelf
     /// No longer read: Teachy's marks use `DS.Colors.pointer`, which follows the
@@ -109,22 +170,24 @@ struct ChatWindowView: View {
                 if sidebarVisible { sidebar.frame(width: 200) }
                 VStack(spacing: 0) {
                     header.zIndex(2)
-                    TeachyRule().zIndex(2)
+                    Rectangle().fill(ChatSurfacePalette.border.opacity(0.35)).frame(height: 1).zIndex(2)
                     thread
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
                     composerArea.zIndex(1)
                 }
                 .frame(maxWidth: .infinity)
+                .background(ChatDotCanvas())
             }
             .onAppear { if geometry.size.width < 640 { sidebarVisible = false } }
             .onChange(of: geometry.size.width) { _, width in
                 if width < 640 { sidebarVisible = false }
             }
         }
-        .background(ChatStyle.windowBackground)
+        .background(ChatSurfacePalette.canvas)
         .attachmentDropTarget(shelf: shelf, cornerRadius: 12)
-        .preferredColorScheme(.dark)
+        .environment(\.chatIsStandalone, true)
+        .preferredColorScheme(.light)
         .onReceive(NotificationCenter.default.publisher(for: PushToTalkShortcutKeys.shortcutDidChangeNotification)) { _ in
             keyLabels = talkKeyLabels()
         }
@@ -133,7 +196,7 @@ struct ChatWindowView: View {
 
     private var sidebarToggle: some View {
         Button { sidebarVisible.toggle() } label: { Image(systemName: "sidebar.left") }
-            .teachyIconButton(sideLength: 26)
+            .buttonStyle(ChatLightIconStyle())
             .help(sidebarVisible ? "Hide sidebar" : "Show sidebar")
             .accessibilityLabel(sidebarVisible ? "Hide sidebar" : "Show sidebar")
     }
@@ -153,16 +216,16 @@ struct ChatWindowView: View {
                     Spacer()
                 }
                 .padding(DS.Spacing.md)
-                .background(sidebarEntryHovered ? DS.Colors.fillPrimary : DS.Colors.fillSecondary, in: RoundedRectangle(cornerRadius: DS.CornerRadius.small))
+                .background(sidebarEntryHovered ? ChatSurfacePalette.canvas : ChatSurfacePalette.glossTop, in: RoundedRectangle(cornerRadius: DS.CornerRadius.small))
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .foregroundStyle(DS.Colors.textPrimary)
+            .foregroundStyle(palette.primary)
             .padding(DS.Spacing.sm)
             .onHover { sidebarEntryHovered = $0 }
             .help("Your conversation with Teachy")
             Spacer()
-            TeachyRule()
+            Rectangle().fill(ChatSurfacePalette.border).frame(height: 1).padding(.horizontal, 12)
             Button(action: onOpenSettings) {
                 HStack(spacing: DS.Spacing.sm) {
                     Image(systemName: "person.crop.circle").font(DS.Fonts.title)
@@ -175,12 +238,12 @@ struct ChatWindowView: View {
             }
             .buttonStyle(.plain)
             .pointerCursor()
-            .foregroundStyle(DS.Colors.textSecondary)
-            .background(sidebarSettingsHovered ? DS.Colors.fillQuaternary : Color.clear)
+            .foregroundStyle(palette.secondary)
+            .background(sidebarSettingsHovered ? ChatSurfacePalette.border.opacity(0.3) : Color.clear)
             .onHover { sidebarSettingsHovered = $0 }
             .help("Open Teachy settings")
         }
-        .background(DS.Colors.surface2)
+        .background(ChatSurfacePalette.sidebar)
     }
 
     // MARK: Header
@@ -194,8 +257,8 @@ struct ChatWindowView: View {
 
             ChatTeachyMark(color: DS.Colors.pointer, size: 12)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Teachy").font(DS.Fonts.title).foregroundColor(DS.Colors.textPrimary)
-                Text("Your chat").font(DS.Fonts.caption).foregroundColor(DS.Colors.textSecondary)
+                Text("Teachy").font(DS.Fonts.title).foregroundColor(palette.primary)
+                Text("Your chat").font(DS.Fonts.caption).foregroundColor(palette.secondary)
             }
 
             Spacer(minLength: 12)
@@ -204,28 +267,28 @@ struct ChatWindowView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: ChatStyle.headerHeight)
-        .background(ChatStyle.windowBackground)
+        .background(ChatSurfacePalette.canvas)
     }
 
     private var searchField: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(DS.Fonts.sans(11.5, weight: .semibold))
-                .foregroundColor(DS.Colors.textTertiary)
+                .foregroundColor(palette.tertiary)
             TextField(
                 "Search this chat",
                 text: $searchText,
-                prompt: Text("Search this chat").foregroundColor(DS.Colors.textQuaternary)
+                prompt: Text("Search this chat").foregroundColor(palette.placeholder)
             )
             .textFieldStyle(.plain)
             .font(DS.Fonts.body)
-            .foregroundColor(DS.Colors.textPrimary)
+            .foregroundColor(palette.primary)
             .focused($searchFocused)
             if isSearching {
                 Button { searchText = "" } label: {
                     Image(systemName: "xmark")
                 }
-                .teachyIconButton(sideLength: 18)
+                .buttonStyle(ChatLightIconStyle(side: 18))
                 .accessibilityLabel("Clear search")
             }
         }
@@ -233,11 +296,12 @@ struct ChatWindowView: View {
         .padding(.trailing, isSearching ? 5 : 9)
         .frame(height: 28)
         .frame(maxWidth: 230)
-        .teachyWell()
+        .background(ChatSurfacePalette.field, in: RoundedRectangle(cornerRadius: DS.CornerRadius.well))
         .overlay(
             // The well takes a tint edge while the field has the keyboard.
             RoundedRectangle(cornerRadius: DS.CornerRadius.well, style: .continuous)
                 .strokeBorder(searchFocused ? DS.Colors.pointer : Color.clear, lineWidth: 1.5)
+                .allowsHitTesting(false)
         )
         .animation(DS.Motion.hover, value: searchFocused)
         // Command+F from anywhere in the window.
@@ -263,7 +327,7 @@ struct ChatWindowView: View {
                         if isSearching {
                             Text("\(items.count) \(items.count == 1 ? "match" : "matches") for “\(searchText.trimmingCharacters(in: .whitespaces))”")
                                 .font(DS.Fonts.data)
-                                .foregroundColor(DS.Colors.textTertiary)
+                                .foregroundColor(palette.tertiary)
                                 .padding(.top, 16)
                         }
                         ForEach(ChatThread.days(items)) { day in
@@ -312,15 +376,15 @@ struct ChatWindowView: View {
             if isSearching {
                 Text("Nothing in this chat matches “\(searchText.trimmingCharacters(in: .whitespaces))”")
                     .font(DS.Fonts.display)
-                    .foregroundColor(DS.Colors.textPrimary)
+                    .foregroundColor(palette.primary)
                     .multilineTextAlignment(.center)
             } else {
                 Text("Ask Teachy anything")
                     .font(DS.Fonts.display)
-                    .foregroundColor(DS.Colors.textPrimary)
+                    .foregroundColor(palette.primary)
                 Text("Type below, hold your talk keys, or drop a file here to ask about it.")
                     .font(DS.Fonts.body)
-                    .foregroundColor(DS.Colors.textSecondary)
+                    .foregroundColor(palette.secondary)
                     .multilineTextAlignment(.center)
             }
             Spacer()
@@ -356,94 +420,81 @@ struct ChatWindowView: View {
 
     private var composerArea: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // The chips sit above the field, not inside it: no box inside a box.
             AttachmentChipsView(shelf: shelf)
-
-            HStack(alignment: .bottom, spacing: 8) {
-                Button(action: chooseFiles) {
-                    Image(systemName: "plus")
-                }
-                .teachyIconButton(sideLength: ChatStyle.composerButtonSideLength)
-                .help("Attach a file")
-                .accessibilityLabel("Attach a file")
-
-                ZStack(alignment: .topLeading) {
-                    if draft.isEmpty {
-                        Text("Ask Teachy…")
-                            .font(DS.Fonts.sans(ChatStyle.bodySize))
-                            .foregroundColor(DS.Colors.textQuaternary)
-                            .padding(.top, 2)
-                            .allowsHitTesting(false)
-                    }
-                    ChatComposerTextView(text: $composerDraft.text, height: $composerHeight, fontSize: ChatStyle.bodySize, onSubmit: send)
-                        .frame(height: composerHeight)
-                }
-                .padding(.vertical, 2)
-
-                Button(action: send) {
-                    Image(systemName: "arrow.up")
-                }
-                .buttonStyle(ChatSendButtonStyle())
-                .disabled(!canSend)
-                .help("Send (Return)")
-                .accessibilityLabel("Send")
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .teachyWell(cornerRadius: 16, isEdged: true)
-
+                .environment(\.colorScheme, .dark)
+                .background(shelf.items.isEmpty ? Color.clear : DS.Colors.surface2,
+                            in: RoundedRectangle(cornerRadius: 12))
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 0) {
-                    talkHint
-                    Spacer(minLength: 16)
-                    sendHint
+                HStack(alignment: .bottom, spacing: 10) {
+                    talkHint.frame(minWidth: 235)
+                    composerField.frame(minWidth: 220)
                 }
-                HStack(spacing: 0) {
+                VStack(spacing: 8) {
                     talkHint
-                    Spacer(minLength: 0)
+                    composerField
                 }
             }
-            .padding(.horizontal, 4)
         }
         .frame(maxWidth: ChatStyle.columnWidth)
         .padding(.horizontal, 24)
-        .padding(.top, 8)
-        .padding(.bottom, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 14)
         .frame(maxWidth: .infinity)
-        .background(ChatStyle.windowBackground)
+        .background(LinearGradient(colors: [ChatSurfacePalette.canvas.opacity(0), ChatSurfacePalette.canvas],
+                                   startPoint: .top, endPoint: .bottom))
     }
 
-    private var talkHint: some View {
-        HStack(spacing: 5) {
-            Text("Hold")
-            ForEach(Array(keyLabels.enumerated()), id: \.offset) { _, label in
-                KeyboardKeyLabel(text: label)
+    private var composerField: some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            Button(action: chooseFiles) { Image(systemName: "plus") }
+                .buttonStyle(ChatLightIconStyle())
+                .help("Attach a file")
+                .accessibilityLabel("Attach a file")
+            ZStack(alignment: .topLeading) {
+                if draft.isEmpty {
+                    Text("Ask Teachy…")
+                        .font(DS.Fonts.sans(ChatStyle.bodySize))
+                        .foregroundStyle(palette.placeholder)
+                        .padding(.top, 2)
+                        .allowsHitTesting(false)
+                }
+                ChatComposerTextView(text: $composerDraft.text, height: $composerHeight,
+                                     fontSize: ChatStyle.bodySize, textColor: ChatSurfacePalette.ink,
+                                     onSubmit: send)
+                    .frame(height: composerHeight)
             }
-            Text("to talk")
+            .padding(.vertical, 2)
+            Button(action: send) { Image(systemName: "arrow.up") }
+                .buttonStyle(ChatSendButtonStyle())
+                .disabled(!canSend)
+                .help("Send (Return); Shift + Return for a new line")
+                .accessibilityLabel("Send")
         }
-        .font(DS.Fonts.caption)
-        .foregroundColor(DS.Colors.textSecondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .frame(minHeight: 44)
+        .background(ChatSurfacePalette.field, in: RoundedRectangle(cornerRadius: 23))
+        .overlay(RoundedRectangle(cornerRadius: 23).strokeBorder(ChatSurfacePalette.border, lineWidth: 1).allowsHitTesting(false))
+    }
+
+    /// An informative shortcut card: holding these real keys invokes the existing voice shortcut.
+    private var talkHint: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "mic.fill")
+            Text("Hold \(keyLabels.joined(separator: " + ")) to talk")
+        }
+        .font(DS.Fonts.bodyEmphasized)
+        .foregroundStyle(ChatSurfacePalette.ink)
         .lineLimit(1)
-        .fixedSize()
+        .minimumScaleFactor(0.8)
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .background(LinearGradient(colors: [ChatSurfacePalette.glossTop, ChatSurfacePalette.glossBottom],
+                                   startPoint: .top, endPoint: .bottom), in: Capsule())
+        .overlay(Capsule().strokeBorder(DS.Colors.pointer.opacity(0.65), lineWidth: 1.3).allowsHitTesting(false))
+        .overlay(Capsule().inset(by: 2).strokeBorder(ChatSurfacePalette.canvas.opacity(0.7), lineWidth: 1).allowsHitTesting(false))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Hold \(keyLabels.joined(separator: " and ")) to talk")
-    }
-
-    private var sendHint: some View {
-        HStack(spacing: 5) {
-            KeyboardKeyLabel(text: "return")
-            Text("to send")
-                .padding(.trailing, 7)
-            KeyboardKeyLabel(text: "shift")
-            KeyboardKeyLabel(text: "return")
-            Text("for a new line")
-        }
-        .font(DS.Fonts.caption)
-        .foregroundColor(DS.Colors.textSecondary)
-        .lineLimit(1)
-        .fixedSize()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Return to send  ·  Shift + Return for a new line")
     }
 }
 
@@ -549,6 +600,8 @@ private struct ChatSendButtonStyle: ButtonStyle {
 
 /// A view (not just a style) so it can read whether the button is enabled.
 private struct ChatSendButtonBody<Label: View>: View {
+    @Environment(\.chatIsStandalone) private var isStandalone
+    private var palette: ChatSurfacePalette { ChatSurfacePalette(isStandalone: isStandalone) }
     let label: Label
     let isPressed: Bool
 
@@ -557,7 +610,7 @@ private struct ChatSendButtonBody<Label: View>: View {
     var body: some View {
         label
             .font(DS.Fonts.sans(12, weight: .bold))
-            .foregroundColor(isEnabled ? DS.Colors.onPointer : DS.Colors.textQuaternary)
+            .foregroundColor(isEnabled ? DS.Colors.onPointer : palette.placeholder)
             .frame(width: ChatStyle.composerButtonSideLength, height: ChatStyle.composerButtonSideLength)
             .background(Circle().fill(isEnabled ? DS.Colors.pointer : DS.Colors.fillSecondary))
             .contentShape(Circle())
@@ -572,13 +625,15 @@ private struct ChatSendButtonBody<Label: View>: View {
 
 /// The day a stretch of the conversation happened on, centred above it.
 struct ChatDaySeparator: View {
+    @Environment(\.chatIsStandalone) private var isStandalone
+    private var palette: ChatSurfacePalette { ChatSurfacePalette(isStandalone: isStandalone) }
     let label: String
 
     var body: some View {
         Text(label)
             .font(DS.Fonts.caption)
             .fontWeight(.semibold)
-            .foregroundColor(DS.Colors.textSecondary)
+            .foregroundColor(palette.secondary)
             .frame(maxWidth: .infinity, alignment: .center)
             .accessibilityAddTraits(.isHeader)
     }
@@ -595,6 +650,8 @@ enum ChatTimeFormat {
 
 /// "Copy" that turns into "Copied" for a moment.
 struct ChatCopyButton: View {
+    @Environment(\.chatIsStandalone) private var isStandalone
+    private var palette: ChatSurfacePalette { ChatSurfacePalette(isStandalone: isStandalone) }
     let text: String
     var showsLabel = true
     @State private var didCopy = false
@@ -614,7 +671,7 @@ struct ChatCopyButton: View {
             }
         }
         // Grey, not the tint: it repeats under every reply, so it should recede.
-        .teachyLinkButton(color: DS.Colors.textSecondary)
+        .teachyLinkButton(color: palette.secondary)
         .accessibilityLabel("Copy")
     }
 }
@@ -681,6 +738,8 @@ struct ChatRowGroup: View {
 
 /// What the person said: a bubble in their pointer colour, on the right.
 struct ChatUserBubble: View {
+    @Environment(\.chatIsStandalone) private var isStandalone
+    private var palette: ChatSurfacePalette { ChatSurfacePalette(isStandalone: isStandalone) }
     let text: String
     let date: Date
 
@@ -697,7 +756,7 @@ struct ChatUserBubble: View {
                 .frame(maxWidth: 520, alignment: .trailing)
             Text(ChatTimeFormat.time.string(from: date))
                 .font(DS.Fonts.data)
-                .foregroundColor(DS.Colors.textTertiary)
+                .foregroundColor(palette.tertiary)
                 .padding(.trailing, 4)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -708,6 +767,8 @@ struct ChatUserBubble: View {
 
 /// A charcoal reply bubble shared by the notch and standalone conversation.
 struct ChatAssistantMessage: View {
+    @Environment(\.chatIsStandalone) private var isStandalone
+    private var palette: ChatSurfacePalette { ChatSurfacePalette(isStandalone: isStandalone) }
     let text: String
     let date: Date
     var isStreaming: Bool
@@ -716,8 +777,8 @@ struct ChatAssistantMessage: View {
         replyBlocks(streamingCaretColor: isStreaming ? DS.Colors.pointer : nil)
             .padding(.horizontal, DS.Spacing.md)
             .padding(.vertical, DS.Spacing.sm)
-            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(DS.Colors.surface3))
-            .frame(maxWidth: ChatStyle.readingWidth, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(palette.assistantBubble))
+            .frame(maxWidth: isStandalone ? 420 : ChatStyle.readingWidth, alignment: .leading)
             .padding(.trailing, DS.Spacing.xxxl)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contextMenu {
@@ -755,6 +816,8 @@ struct ChatAssistantMessage: View {
 /// A paragraph of a reply. Bulleted and numbered lines get a hanging indent;
 /// everything else flows as text.
 struct ChatProseView: View {
+    @Environment(\.chatIsStandalone) private var isStandalone
+    private var palette: ChatSurfacePalette { ChatSurfacePalette(isStandalone: isStandalone) }
     let text: String
     var fontSize: CGFloat
     var lineSpacing: CGFloat
@@ -772,12 +835,12 @@ struct ChatProseView: View {
                         let isLastPieceOfReply = groupPosition == groups.count - 1 && piecePosition == pieces.count - 1
                         switch piece {
                         case .text(let body):
-                            styled(Text(attributedText(body, endsWithCaret: isLastPieceOfReply)), color: DS.Colors.textPrimary)
+                            styled(Text(attributedText(body, endsWithCaret: isLastPieceOfReply)), color: palette.primary)
                         case .listItem(let marker, let body):
                             HStack(alignment: .firstTextBaseline, spacing: 0) {
-                                styled(Text(marker), color: DS.Colors.textTertiary)
+                                styled(Text(marker), color: palette.tertiary)
                                     .frame(width: markerColumnWidth(for: marker), alignment: .leading)
-                                styled(Text(attributedText(body, endsWithCaret: isLastPieceOfReply)), color: DS.Colors.textPrimary)
+                                styled(Text(attributedText(body, endsWithCaret: isLastPieceOfReply)), color: palette.primary)
                             }
                         }
                     }
@@ -870,7 +933,6 @@ enum ChatProse {
             if presentationIntent.contains(.code) {
                 // Mono looks larger than the text around it at the same size.
                 attributed[run.range].font = DS.Fonts.mono(fontSize - 1)
-                attributed[run.range].foregroundColor = DS.Colors.textPrimary
             } else if presentationIntent.contains(.stronglyEmphasized) {
                 // The weight is set here, so the "bold" intent is taken off the run:
                 // left on, it would be applied on top and give a heavier weight than semibold.
@@ -884,6 +946,8 @@ enum ChatProse {
 
 /// A block of code in a reply: mono, in a well, with its language and a Copy link.
 struct ChatCodeBlock: View {
+    @Environment(\.chatIsStandalone) private var isStandalone
+    private var palette: ChatSurfacePalette { ChatSurfacePalette(isStandalone: isStandalone) }
     let language: String?
     let code: String
 
@@ -896,7 +960,7 @@ struct ChatCodeBlock: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(language ?? "code")
                     .font(DS.Fonts.data)
-                    .foregroundColor(DS.Colors.textTertiary)
+                    .foregroundColor(palette.tertiary)
                 Spacer()
                 ChatCopyButton(text: code)
             }
@@ -907,7 +971,7 @@ struct ChatCodeBlock: View {
                 Text(code)
                     .font(DS.Fonts.mono(12.5))
                     .lineSpacing(3.5)
-                    .foregroundColor(DS.Colors.textPrimary)
+                    .foregroundColor(palette.primary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, 14)
@@ -923,13 +987,15 @@ struct ChatCodeBlock: View {
 
 /// Shown between a question and the first words of its answer.
 struct ChatThinkingRow: View {
+    @Environment(\.chatIsStandalone) private var isStandalone
+    private var palette: ChatSurfacePalette { ChatSurfacePalette(isStandalone: isStandalone) }
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
             ChatLivePointerMark()
                 .frame(width: ChatStyle.gutterWidth, alignment: .leading)
             Text("Thinking")
                 .font(DS.Fonts.data)
-                .foregroundColor(DS.Colors.textSecondary)
+                .foregroundColor(palette.secondary)
         }
     }
 }
@@ -939,6 +1005,8 @@ struct ChatThinkingRow: View {
 /// A drawing Teachy made, as a row of a grouped list: its picture, its name and
 /// when. The whole row opens the drawing.
 struct ChatDrawingRow: View {
+    @Environment(\.chatIsStandalone) private var isStandalone
+    private var palette: ChatSurfacePalette { ChatSurfacePalette(isStandalone: isStandalone) }
     let row: ChatTimelineRow
     let date: Date
     let onOpen: () -> Void
@@ -961,7 +1029,7 @@ struct ChatDrawingRow: View {
                     } else {
                         Image(systemName: "scribble.variable")
                             .font(DS.Fonts.sans(18, weight: .medium))
-                            .foregroundColor(DS.Colors.textTertiary)
+                            .foregroundColor(palette.tertiary)
                     }
                 }
                 .frame(width: 84, height: 56)
@@ -970,12 +1038,12 @@ struct ChatDrawingRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(row.title)
                         .font(DS.Fonts.itemTitle)
-                        .foregroundColor(DS.Colors.textPrimary)
+                        .foregroundColor(palette.primary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                     Text("Drawing · \(ChatTimeFormat.time.string(from: date))")
                         .font(DS.Fonts.data)
-                        .foregroundColor(DS.Colors.textSecondary)
+                        .foregroundColor(palette.secondary)
                 }
                 Spacer(minLength: 8)
                 // Drawn like `.teachyLinkButton()` (tint, brighter on hover), but it is
@@ -1007,6 +1075,8 @@ struct ChatDrawingRow: View {
 /// An agent job in the conversation, as a row of a grouped list: a status
 /// mark, the job's name, its state and time, what it answered, and "Open job".
 struct ChatJobRow: View {
+    @Environment(\.chatIsStandalone) private var isStandalone
+    private var palette: ChatSurfacePalette { ChatSurfacePalette(isStandalone: isStandalone) }
     let row: ChatTimelineRow
     let date: Date
     let onOpen: () -> Void
@@ -1041,13 +1111,13 @@ struct ChatJobRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(row.title)
                             .font(DS.Fonts.itemTitle)
-                            .foregroundColor(DS.Colors.textPrimary)
+                            .foregroundColor(palette.primary)
                             .lineLimit(1)
                         HStack(alignment: .firstTextBaseline, spacing: 0) {
                             Text(status.label)
-                                .foregroundColor(DS.Colors.textSecondary)
+                                .foregroundColor(palette.secondary)
                             Text(" · \(ChatTimeFormat.time.string(from: date))")
-                                .foregroundColor(DS.Colors.textTertiary)
+                                .foregroundColor(palette.tertiary)
                         }
                         .font(DS.Fonts.data)
                     }
@@ -1060,7 +1130,7 @@ struct ChatJobRow: View {
                         Text(ChatProse.attributed(answer, fontSize: ChatStyle.voiceSize))
                             .font(DS.Fonts.voice)
                             .lineSpacing(ChatStyle.voiceLineSpacing)
-                            .foregroundColor(DS.Colors.textPrimary)
+                            .foregroundColor(palette.primary)
                             .textSelection(.enabled)
                             .lineLimit(6)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1105,12 +1175,14 @@ struct ChatTextButton: View {
 
 /// Something that happened ("Attached report.pdf"): one small centred line.
 struct ChatNoteRow: View {
+    @Environment(\.chatIsStandalone) private var isStandalone
+    private var palette: ChatSurfacePalette { ChatSurfacePalette(isStandalone: isStandalone) }
     let text: String
 
     var body: some View {
         Text(text)
             .font(DS.Fonts.caption)
-            .foregroundColor(DS.Colors.textTertiary)
+            .foregroundColor(palette.tertiary)
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity, alignment: .center)
     }

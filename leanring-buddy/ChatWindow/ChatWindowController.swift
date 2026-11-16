@@ -110,8 +110,8 @@ final class ChatWindowController: NSObject, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = false
         window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(DS.Colors.background)
+        window.appearance = NSAppearance(named: .aqua)
+        window.backgroundColor = NSColor(ChatSurfacePalette.sidebar)
         window.collectionBehavior = [.fullScreenPrimary]
         window.tabbingMode = .disallowed
         // The traffic lights sit centred in the 52-point header drawn by the content.

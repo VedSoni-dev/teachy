@@ -9,10 +9,9 @@ struct NotchChatView: View {
     @ObservedObject private var shelf = AttachmentShelf.shared
     @ObservedObject private var composerDraft = ChatWindowController.shared.composerDraft
     @ObservedObject private var dictationManager: BuddyDictationManager
-    @State private var composerHeight: CGFloat = 22
     @State private var microphoneTask: Task<Void, Never>?
     @State private var isAtBottom = true
-    @State private var composerFocused = false
+    @FocusState private var composerFocused: Bool
     @State private var isVisible = false
     @State private var isChoosingFiles = false
 
@@ -29,8 +28,17 @@ struct NotchChatView: View {
                 .clipped()
             composer
         }
-        .background(DS.Colors.surface1)
-        .attachmentDropTarget(shelf: shelf, cornerRadius: 16)
+        .background {
+            DS.Colors.workspaceBackground
+            Canvas { context, size in
+                for x in stride(from: CGFloat(12), to: size.width, by: 16) {
+                    for y in stride(from: CGFloat(12), to: size.height, by: 16) {
+                        context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 1, height: 1)), with: .color(.white.opacity(0.06)))
+                    }
+                }
+            }
+            .allowsHitTesting(false)
+        }
         .preferredColorScheme(.dark)
         .onAppear {
             isVisible = true
@@ -132,20 +140,15 @@ struct NotchChatView: View {
                         .teachyIconButton(sideLength: 28)
                         .help("Attach files")
                         .accessibilityLabel("Attach files")
-                    ZStack(alignment: .topLeading) {
-                        if composerDraft.text.isEmpty {
-                            Text("Ask Teachy…")
-                                .font(DS.Fonts.body)
-                                .foregroundStyle(DS.Colors.textTertiary)
-                                .padding(.top, 2)
-                                .allowsHitTesting(false)
-                        }
-                        ChatComposerTextView(text: $composerDraft.text, height: $composerHeight,
-                                             fontSize: ChatStyle.bodySize, maximumHeight: 66,
-                                             automaticallyFocus: true,
-                                             onFocusChange: { composerFocused = $0 }, onSubmit: send)
-                            .frame(height: composerHeight)
-                    }
+                    TextField("Ask Teachy", text: $composerDraft.text,
+                              prompt: Text("Ask Teachy…").foregroundColor(DS.Colors.textTertiary))
+                        .textFieldStyle(.plain)
+                        .font(DS.Fonts.sans(ChatStyle.bodySize))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .focused($composerFocused)
+                        .onSubmit(send)
+                        .frame(height: 22)
+                        .accessibilityLabel("Ask Teachy")
                     .padding(.vertical, 3)
                     Button { companionManager.speechSynthesizer.stopPlayback() } label: {
                         Image(systemName: "speaker.slash")
@@ -162,7 +165,7 @@ struct NotchChatView: View {
                 }
                 .padding(5)
                 .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 22))
-                .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(DS.Colors.hairlineStrong, lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(composerFocused ? DS.Colors.pointer : DS.Colors.hairlineStrong, lineWidth: composerFocused ? 2 : 1).allowsHitTesting(false))
 
                 Button {
                     notchManager.collapse()

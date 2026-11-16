@@ -35,7 +35,6 @@ func runShots() {
     _ = NSApplication.shared
     NSApp.setActivationPolicy(.prohibited)
 
-    let panelWidth = ClickyNotchSizing.openNotchSize.width
     let companionManager = CompanionManager()
     let notchManager = NotchWindowManager()
     notchManager.notchGeometry = NotchScreenGeometry(
@@ -45,29 +44,35 @@ func runShots() {
     )
     func panel() -> some View {
         ClickyNotchRootView(companionManager: companionManager, notchManager: notchManager)
-            .frame(width: panelWidth, height: ClickyNotchSizing.windowSize.height)
+            .frame(width: notchManager.hostingSize.width, height: notchManager.hostingSize.height)
             .background(Color(white: 0.7))
     }
     notchManager.expand()
-    render(panel(), width: panelWidth, name: "01-home")
+    render(panel(), width: notchManager.hostingSize.width, name: "01-home")
     companionManager.globalPushToTalkShortcutMonitor.isRecordingNewShortcut = true
-    render(panel(), width: panelWidth, name: "02-home-recording-new-keys")
+    render(panel(), width: notchManager.hostingSize.width, name: "02-home-recording-new-keys")
     companionManager.globalPushToTalkShortcutMonitor.isRecordingNewShortcut = false
-    for tab in [NotchPanelTab.agents, .drawings, .connections, .settings] {
+    for tab in [NotchPanelTab.chat, .agents, .drawings, .connections, .settings] {
         notchManager.selectedTab = tab
-        render(panel(), width: panelWidth, name: "03-" + tab.rawValue)
+        switch tab {
+        case .agents: notchManager.settingsPage = .agents
+        case .drawings: notchManager.settingsPage = .drawings
+        case .connections: notchManager.settingsPage = .integrations
+        default: notchManager.settingsPage = .account
+        }
+        render(panel(), width: notchManager.hostingSize.width, name: "03-" + tab.rawValue)
     }
     notchManager.collapse()
-    render(panel(), width: panelWidth, name: "04-idle-notched")
+    render(panel(), width: notchManager.hostingSize.width, name: "04-idle-notched")
     companionManager.voiceState = .listening
-    render(panel(), width: panelWidth, name: "05-live-notched")
+    render(panel(), width: notchManager.hostingSize.width, name: "05-live-notched")
     companionManager.voiceState = .idle
     notchManager.notchGeometry = NotchScreenGeometry(
         screenFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
         notchHeight: 0, notchWidth: 0, notchLeftEdgeX: 960, notchCenterX: 960,
         leftAuxiliaryAreaWidth: 960, hasNotch: false
     )
-    render(panel(), width: panelWidth, name: "06-idle-external-display")
+    render(panel(), width: notchManager.hostingSize.width, name: "06-idle-external-display")
 
     if failureCount > 0 {
         print("\(failureCount) FAILED")

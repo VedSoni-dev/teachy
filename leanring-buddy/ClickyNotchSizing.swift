@@ -10,7 +10,16 @@ import SwiftUI
 
 enum ClickyNotchSizing {
     /// Compact expanded shell; longer sections scroll below pinned navigation.
-    static let openNotchSize = CGSize(width: 520, height: 240)
+    static let openNotchSize = CGSize(width: 520, height: 160)
+
+    static func expandedSize(for tab: NotchPanelTab, setup: Bool = false) -> CGSize {
+        if setup { return CGSize(width: 520, height: 440) }
+        switch tab {
+        case .home: return openNotchSize
+        case .chat: return CGSize(width: 520, height: 402)
+        default: return CGSize(width: 800, height: 650)
+        }
+    }
 
     /// Extra height so soft shadows aren't clipped by the window.
     static let shadowPadding: CGFloat = 24
@@ -26,7 +35,7 @@ enum ClickyNotchSizing {
         opened: (top: CGFloat, bottom: CGFloat),
         closed: (top: CGFloat, bottom: CGFloat)
     ) = (
-        opened: (top: 19, bottom: 24),
+        opened: (top: 6, bottom: 18),
         closed: (top: 6, bottom: 14)
     )
 

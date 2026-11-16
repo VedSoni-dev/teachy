@@ -88,6 +88,11 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         ChatWindowController.shared.install(onSubmit: { [weak self] text in
             self?.companionManager.submitSyntheticCompanionRequest(text)
         })
+        ChatWindowController.shared.onOpenSettings = { [weak self] in
+            guard let self else { return }
+            self.notchManager?.collapse()
+            TeachySettingsWindowController.shared.show(companionManager: self.companionManager)
+        }
         TeachyUIExtras.start()
         // Press Control three times for hands-free (always-on) voice.
         VoiceModeController.shared.installHotkey()

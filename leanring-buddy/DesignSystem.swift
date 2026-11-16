@@ -35,6 +35,10 @@ enum DS {
     // MARK: - Color Tokens
 
     enum Colors {
+        static let workspaceBackground = Color(hex: "#1F1F1F")
+        static let workspaceCard = Color(hex: "#272727")
+        static let workspaceBorder = Color.white.opacity(0.09)
+
 
         // ── Surfaces ─────────────────────────────────────────────────
         // The Dark Mode system greys, written out so off-screen renders match.
@@ -153,6 +157,9 @@ enum DS {
 
     /// SF Pro at macOS sizes. Nothing under 11 pt.
     enum Fonts {
+        static let workspaceTitle = Font.system(size: 18, weight: .semibold)
+        static let workspaceBody = Font.system(size: 13)
+
         static func sans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
             .system(size: size, weight: weight)
         }

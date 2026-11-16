@@ -15,7 +15,8 @@ struct TeachyAccountSettingsPage: View {
                         Text("Available balance").font(DS.Fonts.caption).foregroundColor(DS.Colors.textSecondary)
                     }
                     if let url = URL(string: wallet.topUpURL) {
-                        Button("Open publik wallet") { NSWorkspace.shared.open(url) }.teachyButton(.primary)
+                        Button("Open publik wallet") { NSWorkspace.shared.open(url) }
+                            .buttonStyle(SettingsGlossyButtonStyle(isSelected: true)).pointerCursor()
                     }
                 }
                 Button("Change how I pay for AI") { session.changePaymentChoice() }
@@ -54,6 +55,7 @@ struct TeachyGeneralSettingsPage: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject private var settings = TeachySettings.shared
     @ObservedObject private var updater = TeachySoftwareUpdater.shared
+    @State private var showsAbout = false
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SettingsPageGroup(title: "Behavior") {
@@ -64,10 +66,12 @@ struct TeachyGeneralSettingsPage: View {
                     SettingsPageLabel(title: "App updates", caption: "You're on version \(updater.shortVersionString) (\(updater.buildNumberString)).")
                     Spacer(minLength: 8)
                     Button("Check for updates") { updater.checkForUpdates() }
-                        .teachyButton(.secondary, size: .compact).disabled(!updater.canCheckForUpdates)
+                        .buttonStyle(SettingsGlossyButtonStyle()).pointerCursor().disabled(!updater.canCheckForUpdates)
                 }
                 TeachyRule()
                 actionRow("What's new", caption: "See the latest features in Teachy.") { TeachyAnnouncementController.shared.showLatest() }
+                TeachyRule()
+                actionRow("About Teachy", caption: "Version, updates, and what Teachy can do.") { showsAbout = true }
             }
             SettingsPageGroup(title: "Browser") { BrowserExtensionSection(startsExpanded: true) }
             SettingsPageGroup(title: "Privacy") { PrivacySettingsSection(startsExpanded: true) }
@@ -80,6 +84,7 @@ struct TeachyGeneralSettingsPage: View {
             }
             SettingsPageGroup(title: "Advanced") { AdvancedSettingsSection(startsExpanded: true) }
         }
+        .sheet(isPresented: $showsAbout) { TeachyAboutSettingsView() }
     }
     private func actionRow(_ title: String, caption: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -123,10 +128,12 @@ struct TeachyVoiceSettingsPage: View {
                 HStack(spacing: 8) {
                     ForEach([0.5, 0.75, 1, 1.25, 1.5], id: \.self) { speed in
                         Button(TeachySpeechSpeed.label(speed)) { settings.speechSpeed = speed }
-                            .teachyButton(settings.speechSpeed == speed ? .primary : .secondary, size: .compact)
+                            .buttonStyle(SettingsGlossyButtonStyle(isSelected: settings.speechSpeed == speed))
+                            .pointerCursor()
                     }
                 }
             }
+            .fixedSize(horizontal: true, vertical: false)
             VStack(alignment: .leading, spacing: 10) {
                 SettingsPageHeading(title: "Voices")
                 LazyVGrid(columns: columns, spacing: 10) {
@@ -203,16 +210,19 @@ struct TeachyCursorSettingsPage: View {
                             companionManager.setSelectedCursorColor(color)
                             settings.cursorColor = color
                         } label: {
-                            ZStack(alignment: .topTrailing) {
-                                TeachyPointerShape().fill(color.displayColor).frame(width: 26, height: 30)
-                                    .shadow(color: color.displayColor, radius: 14)
-                                    .frame(maxWidth: .infinity).frame(height: 108)
-                                if companionManager.selectedCursorColor == color {
-                                    Image(systemName: "checkmark.circle.fill").foregroundColor(DS.Colors.pointer).padding(10)
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(DS.Colors.workspaceCard)
+                                .aspectRatio(1, contentMode: .fit)
+                                .overlay {
+                                    TeachyPointerShape().fill(color.displayColor).frame(width: 26, height: 30)
+                                        .shadow(color: color.displayColor, radius: 14)
                                 }
-                            }
-                            .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 20))
-                            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(companionManager.selectedCursorColor == color ? DS.Colors.pointer : DS.Colors.hairline, lineWidth: companionManager.selectedCursorColor == color ? 2 : 1))
+                                .overlay(alignment: .topTrailing) {
+                                    if companionManager.selectedCursorColor == color {
+                                        Image(systemName: "checkmark.circle.fill").foregroundColor(DS.Colors.pointer).padding(10)
+                                    }
+                                }
+                                .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(companionManager.selectedCursorColor == color ? DS.Colors.pointer : DS.Colors.workspaceBorder, lineWidth: companionManager.selectedCursorColor == color ? 2 : 1))
                         }.buttonStyle(.plain).pointerCursor().accessibilityLabel("\(color.rawValue) cursor")
                             .accessibilityAddTraits(companionManager.selectedCursorColor == color ? .isSelected : [])
                     }
@@ -222,5 +232,61 @@ struct TeachyCursorSettingsPage: View {
                 SettingsToggleRow(title: "Hide floating cursor", caption: "Hide the cursor until your next interaction.", isOn: Binding(get: { !companionManager.isClickyCursorEnabled }, set: { companionManager.setClickyCursorEnabled(!$0) }))
             }
         }
+    }
+}
+
+/// A compact About surface, backed by the installed app's version and updater.
+struct TeachyAboutSettingsView: View {
+    @ObservedObject private var updater = TeachySoftwareUpdater.shared
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 14) {
+            if let icon = NSImage(named: "AppIcon") ?? NSApp.applicationIconImage {
+                Image(nsImage: icon).resizable().scaledToFit().frame(width: 64, height: 64)
+            }
+            Text("Teachy").font(DS.Fonts.sans(22, weight: .bold)).foregroundColor(DS.Colors.textPrimary)
+            Text("Version \(updater.shortVersionString) (\(updater.buildNumberString))")
+                .font(DS.Fonts.body).foregroundColor(DS.Colors.textSecondary)
+            Text("Ask about your screen, dictate into any app, and work with agents, routines, and connected tools.")
+                .font(DS.Fonts.caption).foregroundColor(DS.Colors.textSecondary)
+                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button("Check for updates") { updater.checkForUpdates() }
+                    .buttonStyle(SettingsGlossyButtonStyle()).pointerCursor()
+                    .disabled(!updater.canCheckForUpdates)
+                Button("Done") { dismiss() }
+                    .buttonStyle(SettingsGlossyButtonStyle(isSelected: true)).pointerCursor()
+                    .keyboardShortcut(.defaultAction)
+            }.padding(.top, 4)
+        }
+        .padding(28).frame(width: 340)
+        .background(DS.Colors.workspaceBackground)
+        .environment(\.colorScheme, .dark)
+    }
+}
+
+/// Local treatment for the reference's pale, highlighted capsule controls.
+private struct SettingsGlossyButtonStyle: ButtonStyle {
+    var isSelected = false
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(DS.Fonts.controlCompact)
+            .foregroundColor(DS.Colors.notchBlack)
+            .padding(.horizontal, 13).padding(.vertical, 6)
+            .background {
+                Capsule().fill(LinearGradient(
+                    colors: [DS.Colors.textPrimary, isSelected ? DS.Colors.pointer.opacity(0.65) : DS.Colors.textPrimary.opacity(0.58)],
+                    startPoint: .top, endPoint: .bottom
+                ))
+            }
+            .overlay(Capsule().strokeBorder(isSelected ? DS.Colors.pointer : DS.Colors.hairlineStrong, lineWidth: 1))
+            .shadow(color: DS.Colors.notchBlack.opacity(0.18), radius: 2, y: 1)
+            .brightness(isHovered ? 0.05 : 0)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
+            .onHover { isHovered = $0 }
     }
 }

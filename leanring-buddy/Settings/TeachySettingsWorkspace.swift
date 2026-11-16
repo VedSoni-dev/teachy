@@ -32,7 +32,7 @@ struct TeachySettingsWorkspace: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(selection.rawValue).font(DS.Fonts.sans(20, weight: .bold))
+                        Text(selection.rawValue).font(DS.Fonts.workspaceTitle)
                             .foregroundColor(DS.Colors.textPrimary)
                         Text(selection.subtitle).font(DS.Fonts.body)
                             .foregroundColor(DS.Colors.textSecondary)
@@ -47,7 +47,7 @@ struct TeachySettingsWorkspace: View {
             }
             .id(selection)
         }
-        .background(DS.Colors.surface1)
+        .background(DS.Colors.workspaceBackground)
         .environment(\.settingsStandalone, true)
         .environment(\.colorScheme, .dark)
     }
@@ -96,7 +96,7 @@ private struct SettingsSidebarButton: View {
                 Spacer(minLength: 0)
             }
             .foregroundColor(isSelected ? DS.Colors.textPrimary : DS.Colors.textSecondary)
-            .padding(.horizontal, 10).frame(height: 35)
+            .padding(.horizontal, 10).frame(height: 39)
             .background(isSelected ? DS.Colors.surface3 : (isHovered ? DS.Colors.fillQuaternary : .clear), in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }

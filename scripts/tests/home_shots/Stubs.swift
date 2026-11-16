@@ -74,6 +74,21 @@ final class NotchWindowManager: ObservableObject {
     @Published private(set) var isExpanded = false
     @Published private(set) var isHoveringNotch = false
     @Published var selectedTab: NotchPanelTab = .home
+    @Published var settingsPage: TeachySettingsPage = .account
+    @Published var setupMode = false
+    var expandedSize: CGSize { ClickyNotchSizing.expandedSize(for: selectedTab, setup: setupMode) }
+    var hostingSize: CGSize {
+        let size = isExpanded ? expandedSize : ClickyNotchSizing.openNotchSize
+        return CGSize(width: size.width, height: size.height + ClickyNotchSizing.shadowPadding)
+    }
+    func openSettings(_ page: TeachySettingsPage = .account) {
+        settingsPage = page
+        selectedTab = .settings
+        expand()
+    }
+    func setInteractionPinned(_ pinned: Bool) {}
+    func setSetupMode(_ needed: Bool) { setupMode = needed }
+    func makePanelKey() {}
     var notchGeometry = NotchScreenGeometry(
         screenFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
         notchHeight: 0, notchWidth: 0, notchLeftEdgeX: 0, notchCenterX: 960,
@@ -115,11 +130,17 @@ struct NotchPanelView: View {
     @ObservedObject var notchManager: NotchWindowManager
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView(.vertical, showsIndicators: true) {
-            NotchHomeTabView(companionManager: companionManager, notchManager: notchManager)
-                .padding(.horizontal, 8)
-                .padding(.bottom, 8)
+        Group {
+            switch notchManager.selectedTab {
+            case .home:
+                NotchHomeTabView(companionManager: companionManager, notchManager: notchManager)
+            case .chat:
+                SectionPlaceholder(title: "Chat shell", detail: "Conversation content is tested in the chat render harness.")
+                    .padding(24)
+            default:
+                SectionPlaceholder(title: notchManager.settingsPage.rawValue,
+                                   detail: "Settings content is tested in the settings render harness.")
+                    .padding(24)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
