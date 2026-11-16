@@ -14,7 +14,7 @@ Teachy grew from Farza's open-source [Clicky](https://github.com/farzaa/clicky).
 
 **→ [Download Teachy.dmg](https://github.com/VedSoni-dev/teachy-releases/releases/latest/download/Teachy.dmg)** · [All releases](https://github.com/VedSoni-dev/teachy-releases/releases) · [Changelog](https://www.tryteachy.com/changelog.html)
 
-Free, for macOS 14.2 or later.
+Free, for Macs with Apple silicon on macOS 14.2 or later.
 
 ### First open
 
