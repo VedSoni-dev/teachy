@@ -139,6 +139,8 @@ final class CameraInputWindowController: NSObject, NSWindowDelegate {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 700),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Teachy · Camera input"
+        // Capture policy excludes this window so camera frames stay local.
+        window.sharingType = .none
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(DS.Colors.workspaceBackground)

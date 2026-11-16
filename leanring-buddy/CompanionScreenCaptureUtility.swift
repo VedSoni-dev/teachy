@@ -11,6 +11,7 @@ import AppKit
 import ScreenCaptureKit
 
 struct CompanionScreenCapture {
+    var displayID: CGDirectDisplayID? = nil
     let imageData: Data
     let label: String
     let isCursorScreen: Bool
@@ -27,7 +28,7 @@ enum CompanionScreenCaptureUtility {
     /// Captures all connected displays as JPEG data, labeling each with
     /// whether the user's cursor is on that screen. This gives the AI
     /// full context across multiple monitors.
-    static func captureAllScreensAsJPEG() async throws -> [CompanionScreenCapture] {
+    static func captureAllScreensAsJPEG(maxDimension: Int = 1280) async throws -> [CompanionScreenCapture] {
         try WindowPositionManager.ensureScreenCaptureAccessBeforeCapture()
 
         let content: SCShareableContent
@@ -48,11 +49,17 @@ enum CompanionScreenCaptureUtility {
 
         let mouseLocation = NSEvent.mouseLocation
 
-        // Exclude all windows belonging to this app so the AI sees
-        // only the user's content, not our overlays or panels.
-        let ownBundleIdentifier = Bundle.main.bundleIdentifier
-        let ownAppWindows = content.windows.filter { window in
-            window.owningApplication?.bundleIdentifier == ownBundleIdentifier
+        // Include visible Teachy content so names in chat, settings and drawings
+        // can be marked too. Exclude click-through overlays and private surfaces.
+        // Use process identity, not a possibly missing bundle identifier. Other
+        // native surfaces (such as menu windows) remain visible to the model.
+        let excludedOwnWindowIDs = Set(NSApp.windows.filter {
+            $0.windowNumber > 0 && !ScreenAnnotationCapturePolicy.includesOwnWindow(
+                ignoresMouseEvents: $0.ignoresMouseEvents, isPrivate: $0.sharingType == .none)
+        }.map { CGWindowID($0.windowNumber) })
+        let excludedWindows = content.windows.filter { window in
+            window.owningApplication?.processID == ProcessInfo.processInfo.processIdentifier
+                && excludedOwnWindowIDs.contains(window.windowID)
         }
 
         // Build a lookup from display ID to NSScreen so we can use AppKit-coordinate
@@ -89,10 +96,10 @@ enum CompanionScreenCaptureUtility {
                           width: CGFloat(display.width), height: CGFloat(display.height))
             let isCursorScreen = displayFrame.contains(mouseLocation)
 
-            let filter = SCContentFilter(display: display, excludingWindows: ownAppWindows)
+            let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
 
             let configuration = SCStreamConfiguration()
-            let maxDimension = 1280
+            let maxDimension = min(max(maxDimension, 640), 2560)
             let aspectRatio = CGFloat(display.width) / CGFloat(display.height)
             if display.width >= display.height {
                 configuration.width = maxDimension
@@ -122,6 +129,7 @@ enum CompanionScreenCaptureUtility {
             }
 
             capturedScreens.append(CompanionScreenCapture(
+                displayID: display.displayID,
                 imageData: jpegData,
                 label: screenLabel,
                 isCursorScreen: isCursorScreen,

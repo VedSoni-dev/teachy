@@ -958,7 +958,7 @@ final class CompanionManager: ObservableObject {
         Your job is to get them unstuck and get the thing done:
         - Answer what they actually asked, directly, in the first sentence. Usually 1–2 short sentences in total; three only if they asked for detail.
         - Be specific to WHAT YOU SEE on screen — name the real button, tab, menu, or window.
-        - When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there —
+        - When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there (unless they explicitly ask for a circle, underline, highlight or another drawn mark: use [MARK:] even for one target) —
           and say "here" / "right here" / "this one" ONLY when you're including that [POINT:...] tag
           in the same reply. If you can't confidently identify a specific, pointable target (vague
           references like "that tab" without a clear match), describe it in words instead — don't
@@ -1204,11 +1204,35 @@ final class CompanionManager: ObservableObject {
                     try? await self.speechSynthesizer.speakText(sentence)  // returns when the sentence has played
                 }
                 SceneDirector.shared.cancelSpeech = { [weak self] in self?.speechSynthesizer.stopPlayback() }
-                if let showRequest = SceneDirector.extractShowRequest(from: fullResponseText).request {
+                if let markRequest = SceneDirector.extractMarkRequest(from: fullResponseText).request {
+                    let mark = ScreenAnnotationRequest(markRequest)
+                    if let index = mark.captureIndex(count: screenCaptures.count,
+                                                     cursorIndex: screenCaptures.firstIndex(where: { $0.isCursorScreen })) {
+                        let original = screenCaptures[index]
+                        // Chat and other windows may have changed while the first reply streamed.
+                        // Ground marks in a fresh image of the SAME physical display.
+                        do {
+                            let fresh = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(maxDimension: 1920)
+                            guard !Task.isCancelled else { return }
+                            if let capture = fresh.first(where: {
+                                if let id = original.displayID { return $0.displayID == id }
+                                return $0.displayFrame == original.displayFrame
+                            }) {
+                                SceneDirector.shared.annotate(
+                                    question: mark.instruction + "\nOriginal request: " + transcript,
+                                    screenshotJPEG: capture.imageData, displayFrame: capture.displayFrame)
+                            } else {
+                                speakErrorMessage("That display is no longer available. Ask again on the screen you want marked.")
+                            }
+                        } catch {
+                            guard !Task.isCancelled else { return }
+                            speakErrorMessage("I couldn't get a fresh view of that screen to mark it. Please try again.")
+                        }
+                    } else {
+                        speakErrorMessage("I couldn't identify which screen to mark. Please tell me which one.")
+                    }
+                } else if let showRequest = SceneDirector.extractShowRequest(from: fullResponseText).request {
                     SceneDirector.shared.show(showRequest)
-                } else if let markRequest = SceneDirector.extractMarkRequest(from: fullResponseText).request,
-                          let markCapture = screenCaptures.first(where: { $0.isCursorScreen }) ?? screenCaptures.first {
-                    SceneDirector.shared.annotate(question: markRequest, screenshotJPEG: markCapture.imageData, displayFrame: markCapture.displayFrame)
                 }
 
                 // [JOB: …] hands real multi-step work to a background agent job: it shows its

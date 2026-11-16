@@ -3,7 +3,7 @@
 //
 //  Checks "draw on the real screen": does the model put its mark on the right thing?
 //
-//  Ten made-up screenshots are drawn in-process (a code editor, a geometry diagram, a
+//  Twelve made-up screenshots are drawn in-process (a code editor, a geometry diagram, a
 //  toolbar, a spreadsheet…), each with a question and the rectangle the answer must land
 //  in. Each screenshot goes to the model exactly as the app sends it (TeachyAIRouter, job
 //  .scene, with the image, SceneScriptPrompt.annotateRequestBody). The first shape in the
@@ -18,6 +18,12 @@
 import AppKit
 import SwiftUI
 import simd
+
+// This standalone eval uses Publik only; never prompt for an unused OpenRouter
+// Keychain credential from a freshly compiled command-line executable.
+enum TeachyAPIKeyStore {
+    static var apiKey: String? { nil }
+}
 
 // MARK: - Drawing screenshots
 
@@ -121,6 +127,15 @@ struct AnnotateCase {
     let shot: Shot
     /// Where the answer must land, in screenshot pixels (origin top left).
     let target: CGRect
+    let expectedVerb: SceneVerb?
+
+    init(name: String, question: String, shot: Shot, target: CGRect, expectedVerb: SceneVerb? = nil) {
+        self.name = name
+        self.question = question
+        self.shot = shot
+        self.target = target
+        self.expectedVerb = expectedVerb
+    }
 }
 
 @MainActor
@@ -128,7 +143,43 @@ enum AnnotateCases {
     static let desktop = NSColor(srgbRed: 0.36, green: 0.52, blue: 0.70, alpha: 1)
 
     static func all() -> [AnnotateCase] {
-        [code(), triangle(), toolbar(), spreadsheet(), login(), chart(), settings(), terminal(), browser(), calendar()]
+        [code(), triangle(), toolbar(), spreadsheet(), login(), chart(), settings(), terminal(), browser(), calendar(), name(), teachy()]
+    }
+
+    static func name() -> AnnotateCase {
+        let shot = Shot(width: 1440, height: 900, background: desktop)
+        let content = shot.window(CGRect(x: 180, y: 100, width: 1080, height: 650), title: "Project documents")
+        shot.text("Shared documents", at: CGPoint(x: content.minX + 36, y: content.minY + 24), size: 26, weight: .semibold)
+        shot.text("Document", at: CGPoint(x: content.minX + 40, y: content.minY + 100), size: 16, weight: .semibold)
+        shot.text("Owner", at: CGPoint(x: content.minX + 570, y: content.minY + 100), size: 16, weight: .semibold)
+        var target = CGRect.zero
+        for (index, entry) in [("Design notes", "Morgan Lee"), ("Launch checklist", "Avery Chen"), ("Meeting summary", "Sam Rivera"), ("Research plan", "Jordan Park")].enumerated() {
+            let y = content.minY + 150 + CGFloat(index) * 86
+            shot.fill(CGRect(x: content.minX + 28, y: y - 18, width: content.width - 56, height: 66), NSColor(white: index % 2 == 0 ? 0.95 : 0.99, alpha: 1), radius: 8)
+            shot.text(entry.0, at: CGPoint(x: content.minX + 40, y: y), size: 20)
+            let bounds = shot.text(entry.1, at: CGPoint(x: content.minX + 570, y: y), size: 20)
+            if entry.1 == "Avery Chen" { target = bounds.insetBy(dx: -8, dy: -5) }
+        }
+        return AnnotateCase(name: "name", question: "Circle the name Avery Chen in the document list.", shot: shot, target: target, expectedVerb: .ring)
+    }
+
+    static func teachy() -> AnnotateCase {
+        let shot = Shot(width: 1440, height: 900, background: desktop)
+        let content = shot.window(CGRect(x: 260, y: 80, width: 920, height: 720), title: "Teachy · Settings", dark: true)
+        shot.fill(CGRect(x: content.minX, y: content.minY, width: 230, height: content.height), NSColor(white: 0.1, alpha: 1))
+        var target = CGRect.zero
+        for (index, label) in ["Account", "General", "Voice", "Microphone", "Shortcuts", "Camera input", "Drawings"].enumerated() {
+            let bounds = shot.text(label, at: CGPoint(x: content.minX + 28, y: content.minY + 35 + CGFloat(index) * 70), size: 19, color: .white, weight: .medium)
+            if label == "Microphone" { target = bounds.insetBy(dx: -8, dy: -5) }
+        }
+        shot.text("General", at: CGPoint(x: content.minX + 270, y: content.minY + 35), size: 28, color: .white, weight: .semibold)
+        shot.text("Make Teachy feel at home.", at: CGPoint(x: content.minX + 270, y: content.minY + 80), size: 17, color: NSColor(white: 0.65, alpha: 1))
+        for (index, label) in ["Open at login", "Appearance", "Reply language"].enumerated() {
+            let row = CGRect(x: content.minX + 270, y: content.minY + 140 + CGFloat(index) * 90, width: 600, height: 70)
+            shot.fill(row, NSColor(white: 0.19, alpha: 1), radius: 12)
+            shot.text(label, at: CGPoint(x: row.minX + 20, y: row.minY + 23), size: 19, color: .white)
+        }
+        return AnnotateCase(name: "teachy", question: "Circle the Microphone name in Teachy's settings sidebar.", shot: shot, target: target, expectedVerb: .ring)
     }
 
     static func code() -> AnnotateCase {
@@ -333,6 +384,8 @@ struct AnnotateResult {
     var anyHit = false
     var shapes = 0
     var onlyOverlay = true
+    var shapeMatches = true
+    var parseRate = 0.0
     var says = 0
     var firstCommand: Double?
     var total = 0.0
@@ -345,24 +398,55 @@ struct AnnotateResult {
 enum AnnotateEval {
     static func main() async {
         let arguments = CommandLine.arguments
-        func value(_ flag: String) -> String? { arguments.firstIndex(of: flag).flatMap { arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil } }
-        let only = value("--only")
+        func value(_ flag: String) -> String? { arguments.firstIndex(of: flag).flatMap { arguments.indices.contains($0 + 1) && !arguments[$0 + 1].hasPrefix("--") ? arguments[$0 + 1] : nil } }
+        if arguments.contains("--score"), value("--score") == nil {
+            print("--score requires a directory of saved answers.")
+            exit(2)
+        }
+        let strict = arguments.contains("--strict")
+        let only = value("--only").map { Set($0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }) }
+        let allCases = AnnotateCases.all()
+        if arguments.contains("--only"), only == nil || only?.isEmpty == true {
+            print("--only requires a comma-separated list of case names.")
+            exit(2)
+        }
+        if let only {
+            let unknown = only.subtracting(allCases.map(\.name))
+            guard unknown.isEmpty else {
+                print("Unknown cases: " + unknown.sorted().joined(separator: ", "))
+                exit(2)
+            }
+        }
         let folder = URL(fileURLWithPath: value("--out") ?? NSTemporaryDirectory() + "annotate-eval", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let cases = AnnotateCases.all().filter { only == nil || only == $0.name }
+        let cases = allCases.filter { only == nil || only!.contains($0.name) }
         for testCase in cases { try? testCase.shot.png.write(to: folder.appendingPathComponent("\(testCase.name).png")) }
         if arguments.contains("--draw-only") {
             print("drew \(cases.count) screenshots in \(folder.path)")
             return
         }
-        guard TeachyAIRouter.isReadyForAI else {
+        let scoreFolder = value("--score").map { URL(fileURLWithPath: $0, isDirectory: true) }
+        guard scoreFolder != nil || TeachyAIRouter.isReadyForAI else {
             print("Teachy isn't signed in to publik on this Mac, so there is no model to ask.")
             exit(2)
         }
 
         var results: [AnnotateResult] = []
         for testCase in cases {
-            let result = await run(testCase, folder: folder)
+            let result: AnnotateResult
+            if let scoreFolder {
+                if let text = try? String(contentsOf: scoreFolder.appendingPathComponent("\(testCase.name).txt"), encoding: .utf8) {
+                    let parser = SceneScriptParser()
+                    let commands = parser.feed(text) + parser.finish()
+                    result = score(testCase, commands: commands, parseRate: parser.stats.parseRate, result: AnnotateResult(name: testCase.name), folder: folder)
+                } else {
+                    var missing = AnnotateResult(name: testCase.name)
+                    missing.note = "missing saved answer"
+                    result = missing
+                }
+            } else {
+                result = await run(testCase, folder: folder)
+            }
             results.append(result)
             print(row(result))
         }
@@ -373,6 +457,7 @@ enum AnnotateEval {
         print(String(format: "\nhit rate %d/%d (%.0f%%)   any shape on target %d/%d   only-overlay replies %d/%d   median first mark %.1f s   pictures in %@",
                      hits, results.count, results.isEmpty ? 0 : Double(hits) / Double(results.count) * 100, any, results.count,
                      results.filter(\.onlyOverlay).count, results.count, firsts.isEmpty ? .nan : firsts[firsts.count / 2], folder.path))
+        if strict, results.isEmpty || results.contains(where: { !$0.hit || !$0.onlyOverlay || !$0.shapeMatches || $0.parseRate < 1 || !$0.note.isEmpty }) { exit(1) }
     }
 
     static func row(_ r: AnnotateResult) -> String {
@@ -383,7 +468,9 @@ enum AnnotateEval {
 
     static func run(_ testCase: AnnotateCase, folder: URL) async -> AnnotateResult {
         var result = AnnotateResult(name: testCase.name)
-        let body = SceneScriptPrompt.annotateRequestBody(question: testCase.question, screenshotJPEG: testCase.shot.jpeg)
+        let screenshot = testCase.shot.jpeg
+        let visibleText = await SceneAnnotationText.context(imageData: screenshot, question: testCase.question)
+        let body = SceneScriptPrompt.annotateRequestBody(question: testCase.question, screenshotJPEG: screenshot, visibleText: visibleText)
         let started = Date()
         var text = ""
         let parser = SceneScriptParser()
@@ -405,7 +492,10 @@ enum AnnotateEval {
                     if result.firstCommand == nil, fresh.contains(where: { $0.verb != .say }) { result.firstCommand = Date().timeIntervalSince(started) }
                     commands += fresh
                 }
-                if choice["finish_reason"] is String { break }
+                if let reason = choice["finish_reason"] as? String {
+                    if reason != "stop" { result.note = "incomplete response: \(reason)" }
+                    break
+                }
             }
             session.invalidateAndCancel()
         } catch {
@@ -417,6 +507,13 @@ enum AnnotateEval {
         if result.firstCommand == nil, commands.contains(where: { $0.verb != .say }) { result.firstCommand = result.total }
         try? text.write(to: folder.appendingPathComponent("\(testCase.name).txt"), atomically: true, encoding: .utf8)
 
+        return score(testCase, commands: commands, parseRate: parser.stats.parseRate, result: result, folder: folder)
+    }
+
+    static func score(_ testCase: AnnotateCase, commands: [SceneCommand], parseRate: Double, result initial: AnnotateResult, folder: URL) -> AnnotateResult {
+        var result = initial
+        result.parseRate = parseRate
+        if parseRate < 1 { result.note += " parse failure" }
         let size = CGSize(width: testCase.shot.width, height: testCase.shot.height)
         let low = SceneScreenMapping.normalized(pixel: CGPoint(x: testCase.target.minX, y: testCase.target.minY), screenshotSize: size)
         let high = SceneScreenMapping.normalized(pixel: CGPoint(x: testCase.target.maxX, y: testCase.target.maxY), screenshotSize: size)
@@ -427,6 +524,10 @@ enum AnnotateEval {
         let marks = commands.filter { $0.verb.family == .overlay }
         let shapes = marks.filter { $0.verb != .label }
         result.shapes = shapes.count
+        if let expected = testCase.expectedVerb {
+            result.shapeMatches = shapes.first?.verb == expected
+            if !result.shapeMatches { result.note += " expected \(expected.rawValue), got \(shapes.first?.verb.rawValue ?? "no shape")" }
+        }
         // The first shape is the answer; a reply with only pills is judged by its first pill.
         if let first = shapes.first ?? marks.first, let focus = SceneScreenMapping.focus(of: first) {
             result.focus = focus
