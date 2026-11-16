@@ -67,8 +67,13 @@ final class AgentJob: ObservableObject, Identifiable {
     nonisolated let routineID: String?
     /// Nobody is watching (a routine): the gate never asks, it refuses.
     nonisolated let isUnattended: Bool
-    /// The agent's `files/` folder, symlinks resolved. Relative file paths start here.
+    /// Where relative file paths, bash and searches start: the code project when the job has
+    /// one, else the named agent's `files/` folder. Symlinks resolved.
     nonisolated let workingDirectory: String?
+    /// The named agent's `files/` folder (read and written freely), symlinks resolved.
+    nonisolated let agentFilesDirectory: String?
+    /// The git project the person pointed this job at, symlinks resolved. Read freely, edited with a yes.
+    nonisolated let projectDirectory: String?
     let startedAt = Date()
 
     @Published var title: String
@@ -112,6 +117,8 @@ final class AgentJob: ObservableObject, Identifiable {
         agentSlug: String? = nil,
         agentName: String? = nil,
         workingDirectory: String? = nil,
+        agentFilesDirectory: String? = nil,
+        projectDirectory: String? = nil,
         routineID: String? = nil,
         isUnattended: Bool = false
     ) {
@@ -123,6 +130,10 @@ final class AgentJob: ObservableObject, Identifiable {
         self.agentSlug = agentSlug
         self.agentName = agentName
         self.workingDirectory = workingDirectory
+        // Before projects, the working folder WAS the agent's files folder; callers that only
+        // pass workingDirectory keep that meaning.
+        self.agentFilesDirectory = agentFilesDirectory ?? (projectDirectory == nil ? workingDirectory : nil)
+        self.projectDirectory = projectDirectory
         self.routineID = routineID
         self.isUnattended = isUnattended
         self.title = title ?? AgentJobTitle.fallback(from: request)
@@ -193,8 +204,12 @@ struct AgentJobRequest {
     var showsCard = false
     var maxIterations = AgentJobBudget.defaultMaxIterations
     var maxWallTime = AgentJobBudget.defaultMaxWallTime
-    /// Run as this named agent: its AGENT.md and MEMORY.md go in the prompt, its `files/` is the working folder.
+    /// Run as this named agent: its AGENT.md and MEMORY.md go in the prompt, its `files/` is the working folder
+    /// (unless the job also has a project, which then is).
     var agent: AgentProfile?
+    /// A code project folder (absolute or ~/) to work in: it becomes the working folder, its
+    /// AGENTS.md / CLAUDE.md go in the prompt, and reading it needs no yes. Ignored if it is not a folder.
+    var projectDirectory: String?
     var routineID: String?
     /// A routine run: nobody can be asked, so anything needing a yes is refused.
     var isUnattended = false
@@ -256,12 +271,13 @@ final class AgentJobCenter: ObservableObject {
     /// `request.onFinished` and the published job.
     @discardableResult
     func start(_ request: AgentJobRequest, registry: BackgroundAgentToolRegistry) -> AgentJob {
-        var workingDirectory: String?
+        var agentFilesDirectory: String?
         if let agent = request.agent {
             let files = roster.filesDirectory(for: agent.slug)
             try? FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
-            workingDirectory = files.resolvingSymlinksInPath().path
+            agentFilesDirectory = files.resolvingSymlinksInPath().path
         }
+        let projectDirectory = Self.existingDirectory(request.projectDirectory)
         let job = AgentJob(
             request: request.transcript,
             showsCard: request.showsCard,
@@ -269,7 +285,9 @@ final class AgentJobCenter: ObservableObject {
             maxWallTime: request.maxWallTime,
             agentSlug: request.agent?.slug,
             agentName: request.agent?.name,
-            workingDirectory: workingDirectory,
+            workingDirectory: projectDirectory ?? agentFilesDirectory,
+            agentFilesDirectory: agentFilesDirectory,
+            projectDirectory: projectDirectory,
             routineID: request.routineID,
             isUnattended: request.isUnattended
         )
@@ -278,6 +296,29 @@ final class AgentJobCenter: ObservableObject {
         add(job)
         launch(job, isResume: false)
         return job
+    }
+
+    /// `path` expanded, standardized and with symlinks resolved, if it names an existing folder.
+    static func existingDirectory(_ path: String?) -> String? {
+        guard let path, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let expanded = (path.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
+        let url = URL(fileURLWithPath: expanded).standardizedFileURL.resolvingSymlinksInPath()
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else { return nil }
+        return url.path
+    }
+
+    /// The prompt section for a job working in a code project: its AGENTS.md / CLAUDE.md
+    /// (capped) and how to work on code. Read when the job starts, so edits to those files count.
+    static func projectPromptSection(projectDirectory: String) -> String {
+        let instructionFiles = CodingProjectDetection.instructionFileNames.compactMap { fileName -> (name: String, contents: String)? in
+            let url = URL(fileURLWithPath: projectDirectory).appendingPathComponent(fileName)
+            // Only small text files: a huge or binary "CLAUDE.md" is not instructions.
+            guard let data = try? Data(contentsOf: url), data.count < 512 * 1024, !CodingFileReading.looksBinary(data),
+                  let contents = String(data: data, encoding: .utf8) else { return nil }
+            return (fileName, contents)
+        }
+        return CodingProjectDetection.promptSection(projectDirectory: projectDirectory, instructionFiles: instructionFiles)
     }
 
     /// Starts a job and waits for its answer (guided steps and other callers that need the result inline).
@@ -486,6 +527,9 @@ final class AgentJobCenter: ObservableObject {
             }
             if let agent = request.agent {
                 systemPrompt += "\n\n" + roster.promptSection(for: agent)
+            }
+            if let projectDirectory = job.projectDirectory {
+                systemPrompt += "\n\n" + Self.projectPromptSection(projectDirectory: projectDirectory)
             }
             if request.isUnattended {
                 systemPrompt += "\n\n" + Self.unattendedGuide
@@ -741,8 +785,16 @@ enum AgentToolActivity {
         case "capture_screen": return "Looking at the screen"
         case "web_search": return "Searching the web"
         case "web_fetch": return "Reading a page"
-        case "read_file": return "Reading a file"
-        case "write_file": return "Writing a file"
+        case "read_file": return fileActivity("Reading", arguments: arguments, fallback: "Reading a file")
+        case "write_file": return fileActivity("Writing", arguments: arguments, fallback: "Writing a file")
+        case "edit_file": return fileActivity("Editing", arguments: arguments, fallback: "Editing a file")
+        case "list_directory": return fileActivity("Looking in", arguments: arguments, fallback: "Looking in the folder")
+        case "grep":
+            let pattern = ToolPolicy.string(arguments["pattern"])
+            return pattern.isEmpty ? "Searching the code" : "Searching for \u{201C}\(pattern.count > 40 ? String(pattern.prefix(40)) + "…" : pattern)\u{201D}"
+        case "glob":
+            let pattern = ToolPolicy.string(arguments["pattern"])
+            return pattern.isEmpty ? "Finding files" : "Finding \(pattern.count > 40 ? String(pattern.prefix(40)) + "…" : pattern)"
         case "bash": return "Running a command"
         case "run_applescript": return "Running a script"
         case "open_browser_tab", "control_browser": return "Working in the browser"
@@ -754,5 +806,13 @@ enum AgentToolActivity {
         case "pause_routine", "delete_routine": return "Changing a routine"
         default: return "Using \(toolName.replacingOccurrences(of: "_", with: " "))"
         }
+    }
+
+    /// "Editing Foo.swift": the verb and the file or folder name from the `path` argument.
+    private static func fileActivity(_ verb: String, arguments: [String: Any], fallback: String) -> String {
+        let path = ToolPolicy.string(arguments["path"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (path as NSString).lastPathComponent
+        guard !path.isEmpty, !name.isEmpty, name != "/" else { return fallback }
+        return "\(verb) \(name)"
     }
 }

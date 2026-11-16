@@ -109,6 +109,8 @@ struct ChatWindowView: View {
     private let palette = ChatSurfacePalette(isStandalone: true)
     @ObservedObject var timeline: ChatTimeline
     @ObservedObject var shelf: AttachmentShelf
+    /// Every saved chat, for the sidebar (New chat, history, search across chats).
+    @ObservedObject var sessionList: ChatSessionList
     /// No longer read: Teachy's marks use `DS.Colors.pointer`, which follows the
     /// person's colour choice the next time the view is drawn. Kept because
     /// `ChatWindowController` passes it.
@@ -121,7 +123,6 @@ struct ChatWindowView: View {
     var leadingHeaderInset: CGFloat
     var onOpenSettings: () -> Void
     @State private var sidebarVisible = true
-    @State private var sidebarEntryHovered = false
     @State private var sidebarSettingsHovered = false
 
     @State private var searchText = ""
@@ -137,6 +138,7 @@ struct ChatWindowView: View {
     init(
         timeline: ChatTimeline,
         shelf: AttachmentShelf? = nil,
+        sessionList: ChatSessionList? = nil,
         accentColor: Color = DS.Colors.pointer,
         talkKeyLabels: @escaping () -> [String] = { PushToTalkShortcutKeys.currentKeyCapsuleLabels },
         leadingHeaderInset: CGFloat = 84,
@@ -148,6 +150,7 @@ struct ChatWindowView: View {
     ) {
         self.timeline = timeline
         self.shelf = shelf ?? .shared
+        self.sessionList = sessionList ?? .shared
         self.accentColor = accentColor
         self.talkKeyLabels = talkKeyLabels
         self.leadingHeaderInset = leadingHeaderInset
@@ -156,6 +159,10 @@ struct ChatWindowView: View {
         self._searchText = State(initialValue: initialSearchText)
         self._composerDraft = StateObject(wrappedValue: composerDraft ?? ChatComposerDraft(text: initialDraft))
         self._keyLabels = State(initialValue: talkKeyLabels())
+    }
+
+    private var openChatTitle: String {
+        sessionList.items.first { $0.id == sessionList.currentSessionID }?.title ?? "New chat"
     }
 
     private var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -209,22 +216,8 @@ struct ChatWindowView: View {
                 Spacer(minLength: 0)
             }
             .frame(height: ChatStyle.headerHeight)
-            Button { searchText = "" } label: {
-                HStack(spacing: DS.Spacing.sm) {
-                    ChatTeachyMark(color: DS.Colors.pointer, size: 19)
-                    Text("Teachy").font(DS.Fonts.itemTitle)
-                    Spacer()
-                }
-                .padding(DS.Spacing.md)
-                .background(sidebarEntryHovered ? ChatSurfacePalette.canvas : ChatSurfacePalette.glossTop, in: RoundedRectangle(cornerRadius: DS.CornerRadius.small))
-            }
-            .buttonStyle(.plain)
-            .pointerCursor()
-            .foregroundStyle(palette.primary)
-            .padding(DS.Spacing.sm)
-            .onHover { sidebarEntryHovered = $0 }
-            .help("Your conversation with Teachy")
-            Spacer()
+            ChatSessionSidebarList(sessionList: sessionList)
+                .frame(maxHeight: .infinity)
             Rectangle().fill(ChatSurfacePalette.border).frame(height: 1).padding(.horizontal, 12)
             Button(action: onOpenSettings) {
                 HStack(spacing: DS.Spacing.sm) {
@@ -258,7 +251,7 @@ struct ChatWindowView: View {
             ChatTeachyMark(color: DS.Colors.pointer, size: 12)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Teachy").font(DS.Fonts.title).foregroundColor(palette.primary)
-                Text("Your chat").font(DS.Fonts.caption).foregroundColor(palette.secondary)
+                Text(openChatTitle).font(DS.Fonts.caption).foregroundColor(palette.secondary).lineLimit(1)
             }
 
             Spacer(minLength: 12)

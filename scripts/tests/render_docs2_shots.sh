@@ -21,6 +21,7 @@ swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/ChatWindow/ChatTimelineModel.swift" \
   "$APP/ChatWindow/ChatTimeline.swift" \
   "$APP/ChatWindow/ChatComposerTextView.swift" \
+  "$APP/ChatWindow/ChatSessionList.swift" \
   "$APP/ChatWindow/ChatWindowView.swift" \
   "$APP/ChatWindow/ChatWindowController.swift" \
   scripts/tests/docs2_shots/main.swift \

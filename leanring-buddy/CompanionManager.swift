@@ -740,7 +740,9 @@ final class CompanionManager: ObservableObject {
                 } else if isRecording {
                     self.voiceState = .listening
                 } else if isPreparing {
-                    self.voiceState = .processing
+                    // The key is held and the mic is starting (a fraction of a second): from the
+                    // person's side it is already listening, so show that, not "thinking".
+                    self.voiceState = .listening
                 } else {
                     self.voiceState = .idle
                     // If the user pressed and released the hotkey without
@@ -803,9 +805,17 @@ final class CompanionManager: ObservableObject {
     private func handleShortcutTransition(_ transition: BuddyPushToTalkShortcut.ShortcutTransition) {
         switch transition {
         case .pressed:
-            guard !buddyDictationManager.isDictationInProgress else { return }
+            // Already listening (or warming up) from this key: a repeated press changes nothing.
+            if buddyDictationManager.isActivelyRecordingAudio || buddyDictationManager.isPreparingToRecord { return }
             // Don't register push-to-talk while the onboarding video is playing.
             guard !(showOnboardingVideo && besideCursorVideoBlocksPushToTalk) else { return }
+            // The last question is still being turned into text. Pressing again used to be
+            // ignored silently, so the key looked broken; a new press means a new question.
+            if buddyDictationManager.isFinalizingTranscript {
+                buddyDictationManager.cancelCurrentDictation(preserveDraftText: false)
+            }
+            DS.Haptics.stateChanged()
+            DS.Sounds.listeningStarted()
             // Pressing the talk key always gets a spoken answer, and pauses hands-free listening.
             SpokenOutputGate.shared.noteTalkKeyPressed()
             VoiceModeController.shared.suspend(reason: "talkKey")
@@ -1226,9 +1236,13 @@ final class CompanionManager: ObservableObject {
             if !documentContext.text.isEmpty { transcriptWithSpatialHint += "\n\n" + documentContext.text }
             labeledImages += documentContext.images
 
-            let historyForAPI = conversationHistory.map { entry in
+            // The open chat is the source of truth (it can be switched in the chat window):
+            // its recent exchanges word for word; the older part arrives as a summary below.
+            let historyForAPI = BrainStore.shared.sessions.historyForVoiceTurn().map { entry in
                 (userPlaceholder: entry.userTranscript, assistantResponse: entry.assistantResponse)
             }
+            // Memory across a long chat and across days: chat summary, previous chat, journal, recalled chats.
+            let chatMemorySection = BrainStore.shared.sessions.contextPromptSection(forQuestion: transcript)
 
             do {
                 // Built once into a local so `pendingGuidedTaskVerificationResult` (read
@@ -1236,7 +1250,10 @@ final class CompanionManager: ObservableObject {
                 // after — it's only meant to influence this single turn's prompt.
                 // Teaching / explaining / debugging gets more thought and more room; commands stay instant.
                 let turnDepth = VoiceTurnDepth.classify(transcript)
-                let systemPromptForThisTurn = buildCompanionVoiceResponseSystemPrompt(depth: turnDepth)
+                var systemPromptForThisTurn = buildCompanionVoiceResponseSystemPrompt(depth: turnDepth)
+                if !chatMemorySection.isEmpty {
+                    systemPromptForThisTurn += "\n\nCONVERSATION MEMORY (use it naturally; never read it out; if they ask what you did on a day, answer from the journal):\n" + chatMemorySection
+                }
                 pendingGuidedTaskVerificationResult = nil
                 currentBrowserTabContext = nil
 
@@ -1385,6 +1402,9 @@ final class CompanionManager: ObservableObject {
                         userTranscript: transcript,
                         assistantResponse: spokenText
                     ))
+                    BrainStore.shared.appendMessage(role: .user, text: transcript)
+                    BrainStore.shared.appendMessage(role: .assistant, text: spokenText)
+                    ChatMemoryKeeper.shared.scheduleMaintenance()
                     if conversationHistory.count > 10 {
                         conversationHistory.removeFirst(conversationHistory.count - 10)
                     }
@@ -1441,6 +1461,8 @@ final class CompanionManager: ObservableObject {
                 // Kept on disk too, so tomorrow's conversation remembers today's.
                 BrainStore.shared.appendMessage(role: .user, text: transcript)
                 BrainStore.shared.appendMessage(role: .assistant, text: finalSpokenText)
+                // Fold a long chat, title a new one, journal quiet ones — in the background.
+                ChatMemoryKeeper.shared.scheduleMaintenance()
                 if conversationHistory.count > 10 {
                     conversationHistory.removeFirst(conversationHistory.count - 10)
                 }

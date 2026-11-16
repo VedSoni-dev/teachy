@@ -16,10 +16,10 @@ import Foundation
 nonisolated enum AgentCompaction {
     struct Budget: Equatable, Sendable {
         /// Roughly characters of text; an image counts as `imageCost`. About 4 per token.
-        var maxCost = 120_000
+        var maxCost = 60_000
         /// Compaction brings the conversation down to this, not just under the maximum,
         /// so it does not run again on the very next step.
-        var targetCost = 60_000
+        var targetCost = 30_000
         /// The request body must also stay well under the router's size limit (images are big).
         var maxBytes = 2_800_000
         var targetBytes = 1_400_000
@@ -97,15 +97,28 @@ nonisolated enum AgentCompaction {
 
     // MARK: The budget rule
 
-    /// Nothing while under the maximum. Over it: drop tool results oldest first (never the
-    /// newest few), then strip pictures from older user messages, until under the target.
+    /// Always: only the newest screenshot stays. Every model call re-sends the whole job,
+    /// so a job that took a screenshot per step was paying for every old picture again on
+    /// every later step; the model only ever acts on the newest one (its capture_id).
+    /// Then, while over the maximum: drop tool results oldest first (never the newest few),
+    /// then strip pictures from older user messages, until under the target.
     static func plan(_ entries: [Entry], budget: Budget = Budget()) -> [Action] {
         var (cost, bytes) = total(entries)
-        guard cost > budget.maxCost || bytes > budget.maxBytes else { return [] }
+        var actions: [Action] = []
+        var strippedIndices: Set<Int> = []
+
+        let newestPictureIndex = entries.indices.last { entries[$0].hasImages }
+        for index in entries.indices where entries[index].hasImages && index != newestPictureIndex {
+            actions.append(.stripImages(index: index))
+            strippedIndices.insert(index)
+            cost -= min(entries[index].cost, budget.imageCost)
+            bytes = max(0, bytes - entries[index].bytes)
+        }
+
+        guard cost > budget.maxCost || bytes > budget.maxBytes else { return actions }
 
         func isUnderTarget() -> Bool { cost <= budget.targetCost && bytes <= budget.targetBytes }
 
-        var actions: [Action] = []
         let toolIndices = entries.indices.filter { entries[$0].kind == .tool }
         let protected = Set(toolIndices.suffix(max(0, budget.keepRecentToolResults)))
         for index in toolIndices where !protected.contains(index) && !entries[index].isCompacted {
@@ -119,7 +132,7 @@ nonisolated enum AgentCompaction {
 
         if !isUnderTarget() {
             let lastUser = entries.indices.last { entries[$0].kind == .user }
-            for index in entries.indices where entries[index].kind == .user && entries[index].hasImages && index != lastUser {
+            for index in entries.indices where entries[index].kind == .user && entries[index].hasImages && index != lastUser && !strippedIndices.contains(index) {
                 if isUnderTarget() { break }
                 actions.append(.stripImages(index: index))
                 // Only the pictures go; the words stay.
@@ -144,10 +157,13 @@ nonisolated enum AgentCompaction {
     static func compact(_ messages: inout [[String: Any]], budget: Budget = Budget()) -> Outcome {
         let actions = plan(messages.map { entry(for: $0, budget: budget) }, budget: budget)
         guard !actions.isEmpty else { return Outcome() }
-        var outcome = Outcome(didCompact: true)
+        // Taking out old screenshots happens on most steps and loses no words, so only
+        // dropped tool results count as compacting (that is what re-reads the notes).
+        var outcome = Outcome()
         for action in actions {
             switch action {
             case .dropToolResult(let index):
+                outcome.didCompact = true
                 let summary = toolSummary(forToolMessageAt: index, in: messages)
                 outcome.summaries.append(summary)
                 messages[index]["content"] = droppedPrefix + " " + summary

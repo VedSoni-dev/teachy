@@ -76,6 +76,8 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             notchManager: notchManager!
         )
         companionManager.start()
+        // Saved chats: compacts long ones, titles new ones and keeps the day-by-day journal.
+        ChatMemoryKeeper.shared.start()
         // Fn+Control dictation: waits for the publik gate and for the Accessibility
         // and Microphone permissions before it listens for the hotkey.
         DictationController.shared.startWhenReady()

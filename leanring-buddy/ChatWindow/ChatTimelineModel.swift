@@ -58,6 +58,8 @@ nonisolated struct ChatTimelineRow: Codable, Equatable, Identifiable, Sendable {
     var answer: String?
     /// File path of a drawing's preview picture.
     var thumbnailPath: String?
+    /// The saved chat that was open when this was posted. nil for rows from before chats existed.
+    var sessionID: String?
 }
 
 /// Reads and writes `timeline.jsonl`: one JSON row per line, newest last.
@@ -79,7 +81,7 @@ nonisolated final class ChatTimelineStore: @unchecked Sendable {
 
     /// Adds the event, or updates the row that has the same id (keeping its place and time).
     @discardableResult
-    func post(_ event: ChatTimelineEvent, date: Date = Date()) -> ChatTimelineRow {
+    func post(_ event: ChatTimelineEvent, date: Date = Date(), sessionID: String? = nil) -> ChatTimelineRow {
         lock.lock()
         defer { lock.unlock() }
         var rows = load()
@@ -92,8 +94,11 @@ nonisolated final class ChatTimelineStore: @unchecked Sendable {
         case .note(let text):
             row = ChatTimelineRow(id: "note-" + UUID().uuidString, kind: .note, title: text, date: date)
         }
+        row.sessionID = sessionID
         if let position = rows.firstIndex(where: { $0.id == row.id }) {
             row.date = rows[position].date
+            // A job keeps the chat it started in, even if another chat is open when it finishes.
+            row.sessionID = rows[position].sessionID ?? sessionID
             if row.thumbnailPath == nil { row.thumbnailPath = rows[position].thumbnailPath }
             if row.answer == nil { row.answer = rows[position].answer }
             rows[position] = row

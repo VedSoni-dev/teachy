@@ -636,6 +636,140 @@ enum BrainTests {
             checkEqual(store.rememberedCount, 0, "import does not run twice")
         }
 
+        section("saved chats: store, switch, idle split, legacy import") {
+            let directory = makeTemporaryDirectory()
+            // The older single conversation becomes the first saved chat.
+            let legacyURL = directory.appendingPathComponent("conversation.jsonl")
+            let legacy = [
+                BrainMessage(role: .user, text: "help me plan the food truck menu", date: fixedDate.addingTimeInterval(-90_000)),
+                BrainMessage(role: .assistant, text: "Tacos first.", date: fixedDate.addingTimeInterval(-89_990)),
+            ]
+            try! BrainConversationLog.encode(legacy).write(to: legacyURL, atomically: true, encoding: .utf8)
+            var clock = fixedDate
+            let store = ChatSessionStore(
+                directoryURL: directory.appendingPathComponent("sessions"),
+                journalFileURL: directory.appendingPathComponent("JOURNAL.md"),
+                legacyConversationFileURL: legacyURL,
+                now: { clock }
+            )
+            let imported = store.index()
+            checkEqual(imported.sessions.count, 1, "legacy conversation imported as one chat")
+            checkEqual(store.currentMessages().count, 2, "with its messages")
+            checkEqual(imported.sessions.first?.title, "help me plan the food truck menu", "titled from its first question")
+
+            // Recent enough: the next message goes into the same chat.
+            store.append(BrainMessage(role: .user, text: "and drinks?", date: fixedDate.addingTimeInterval(-89_000)))
+            checkEqual(store.index().sessions.count, 1, "same chat while active")
+            // Idle past the gap: a new chat starts by itself.
+            let idleID = store.currentSessionID
+            store.append(BrainMessage(role: .user, text: "Fix the failing login test in ~/code/teachy", date: fixedDate))
+            store.append(BrainMessage(role: .assistant, text: "Looking at LoginTests.swift now.", date: fixedDate.addingTimeInterval(5)))
+            checkEqual(store.index().sessions.count, 2, "idle chat → new chat on the next question")
+            check(store.currentSessionID != idleID, "the new chat is open")
+            checkEqual(store.currentMessages().map(\.text), ["Fix the failing login test in ~/code/teachy", "Looking at LoginTests.swift now."], "new chat holds only its messages")
+            checkEqual(store.messages(in: idleID!).count, 3, "old chat kept whole")
+
+            // New chat button: an empty open chat is reused, not stacked.
+            let fresh = store.startNewSession()
+            let again = store.startNewSession()
+            checkEqual(fresh.id, again.id, "an empty new chat is reused")
+            checkEqual(store.currentMessages(), [], "new chat is empty")
+            // Switching away from an empty chat drops it.
+            check(store.switchToSession(idleID!), "switch to an old chat")
+            checkEqual(store.index().sessions.count, 2, "the empty chat left behind is removed")
+            checkEqual(store.currentMessages().count, 3, "the old chat's messages are back")
+            check(!store.switchToSession("nope"), "unknown chat refused")
+
+            // Rename: a typed title is not overwritten by a model title.
+            store.renameSession(idleID!, to: "Food truck")
+            store.renameSession(idleID!, to: "Menu planning", isAutomatic: true)
+            checkEqual(store.currentSession?.title, "Food truck", "person's title wins")
+
+            // Search across chats.
+            let hits = store.search("what did we do on the login test")
+            checkEqual(hits.first?.sessionID == idleID, false, "search finds the other chat")
+            check(hits.first?.snippet.lowercased().contains("login") == true, "snippet shows the match")
+            checkEqual(store.search("zzzz nothing"), [], "no false hits")
+
+            // Forget removes from every chat and resets the summary.
+            store.saveCompactSummary("They like tacos.", for: idleID!, throughMessageCount: 2)
+            checkEqual(store.currentSession?.summarizedMessageCount, 2, "summary saved")
+            store.removeMessages(mentioning: "food truck")
+            checkEqual(store.currentMessages().count, 2, "forgotten message gone")
+            checkEqual(store.currentSession?.compactSummary, "", "summary cleared after forgetting")
+
+            // Delete the open chat: the newest other one opens.
+            store.deleteSession(idleID!)
+            checkEqual(store.index().sessions.count, 1, "deleted")
+            check(store.currentSessionID != nil && store.currentSessionID != idleID, "another chat opens")
+            clock = fixedDate.addingTimeInterval(60)
+            _ = clock
+        }
+
+        section("context window: what is sent, when to compact") {
+            var messages: [BrainMessage] = []
+            for turn in 0..<30 {
+                messages.append(BrainMessage(role: .user, text: "question \(turn) " + String(repeating: "q", count: 500), date: fixedDate))
+                messages.append(BrainMessage(role: .assistant, text: "answer \(turn) " + String(repeating: "a", count: 500), date: fixedDate))
+            }
+            let range = ChatContextWindow.messagesToCompact(allMessages: messages, summarizedMessageCount: 0)
+            checkEqual(range, 0..<48, "fold all but the last 12")
+            checkEqual(messages[range!.upperBound].role, .user, "the kept part starts on a question")
+            checkEqual(ChatContextWindow.messagesToCompact(allMessages: messages, summarizedMessageCount: 48), nil, "nothing more to fold right after")
+            checkEqual(ChatContextWindow.messagesToCompact(allMessages: Array(messages.prefix(6)), summarizedMessageCount: 0), nil, "a short chat is never folded")
+
+            let recent = ChatContextWindow.recentMessagesForModel(allMessages: messages, summarizedMessageCount: 48)
+            checkEqual(recent.count, 12, "everything after the summary fits")
+            var budget = ChatContextWindow.Budget()
+            budget.recentCharacters = 2_000
+            let trimmed = ChatContextWindow.recentMessagesForModel(allMessages: messages, summarizedMessageCount: 0, budget: budget)
+            check(trimmed.count < 6 && trimmed.first?.role == .user, "budget trims from the old end, starting on a question")
+            checkEqual(trimmed.last?.text.hasPrefix("answer 29"), true, "newest kept")
+
+            let pairs = ChatContextWindow.exchanges(from: Array(messages.suffix(4)))
+            checkEqual(pairs.count, 2, "pairs built")
+            check(ChatContextWindow.questionWantsRecall("what did we do yesterday on the deck?"), "recall cue spotted")
+            check(!ChatContextWindow.questionWantsRecall("open spotify"), "no recall for a command")
+
+            let section = ChatContextWindow.promptSection(
+                sessionSummary: "They are fixing LoginTests.",
+                journal: "2026-11-13 (Friday):\n- Fixed the login test.",
+                previousSession: ("Menu", fixedDate.addingTimeInterval(-86_400), [BrainMessage(role: .user, text: "tacos?", date: fixedDate)]),
+                recalled: [],
+                now: fixedDate
+            )
+            check(section.contains("EARLIER IN THIS CHAT") && section.contains("YOUR JOURNAL") && section.contains("yesterday"), "prompt section has summary, previous chat and journal")
+            checkEqual(ChatContextWindow.promptSection(sessionSummary: "", journal: "", previousSession: nil, recalled: [], now: fixedDate), "", "empty when nothing to say")
+            checkEqual(ChatSessionSummary.automaticTitle(fromFirstQuestion: "  short\nquestion "), "short question", "title on one line")
+            check(ChatSessionSummary.automaticTitle(fromFirstQuestion: String(repeating: "word ", count: 40)).hasSuffix("…"), "long title cut at a word")
+        }
+
+        section("journal: day by day, read back within budget") {
+            var journal = ""
+            journal = ChatJournal.appending(lines: ["- Planned the food truck menu."], on: fixedDate.addingTimeInterval(-2 * 86_400), to: journal)
+            journal = ChatJournal.appending(lines: ["Fixed the login test in teachy.", "- Fixed the login test in teachy."], on: fixedDate, to: journal)
+            journal = ChatJournal.appending(lines: ["- Booked the Bergen flight."], on: fixedDate.addingTimeInterval(-86_400), to: journal)
+            let parsed = ChatJournal.parse(journal)
+            checkEqual(parsed.days.map(\.key), ["2026-11-12", "2026-11-13", "2026-11-14"], "days in date order")
+            checkEqual(parsed.days.last?.lines, ["- Fixed the login test in teachy."], "bullets normalised and de-duplicated")
+            check(journal.hasPrefix("# Journal"), "has the header")
+            let recent = ChatJournal.recent(journal, now: fixedDate, budgetCharacters: 90)
+            check(recent.contains("login test") && !recent.contains("food truck"), "budget keeps the newest days")
+            checkEqual(ChatJournal.lines(fromModelAnswer: "NOTHING"), [], "NOTHING writes nothing")
+            checkEqual(ChatJournal.lines(fromModelAnswer: "• one\n* two\nthree\nfour"), ["- one", "- two", "- three"], "at most three lines")
+
+            let directory = makeTemporaryDirectory()
+            var clock = fixedDate
+            let store = ChatSessionStore(directoryURL: directory.appendingPathComponent("sessions"), journalFileURL: directory.appendingPathComponent("JOURNAL.md"), now: { clock })
+            let chatID = store.append(BrainMessage(role: .user, text: "rename my screenshots", date: fixedDate))!
+            checkEqual(store.sessionsNeedingJournal().count, 0, "the open chat waits until it goes quiet")
+            clock = fixedDate.addingTimeInterval(30 * 60)
+            checkEqual(store.sessionsNeedingJournal().map(\.id), [chatID], "quiet chat needs journaling")
+            store.addJournalLines(["- Renamed the screenshots."], on: fixedDate, for: chatID, throughMessageCount: 1)
+            checkEqual(store.sessionsNeedingJournal().count, 0, "journaled")
+            check(store.recentJournal().contains("Renamed the screenshots"), "journal read back")
+        }
+
         let realBrainExistsAfter = FileManager.default.fileExists(atPath: realBrainPath)
         checkEqual(realBrainExistsAfter, realBrainExistedBefore, "tests must not create the real ~/.teachy/brain")
 

@@ -265,6 +265,18 @@ enum DS {
             NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
         }
     }
+
+    // MARK: - Sounds
+
+    /// A quiet system sound for the one moment that must never be missed: Teachy
+    /// started listening. Without it a held talk key gave no sign it had worked.
+    enum Sounds {
+        static func listeningStarted() {
+            guard let sound = NSSound(named: "Pop")?.copy() as? NSSound else { return }
+            sound.volume = 0.35
+            sound.play()
+        }
+    }
 }
 
 // MARK: - Buttons

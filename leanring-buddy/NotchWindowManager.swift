@@ -26,28 +26,59 @@ final class NotchWindowManager: NSObject, ObservableObject {
             }
             interactionPinned = false
             window?.makeFirstResponder(nil)
-            positionAtTopCenter(animated: false)
+            holdWindowEnvelopeDuringPageResize(fromPageSize: clampedExpandedSize(for: oldValue, setup: setupMode))
         }
     }
     @Published var settingsPage: TeachySettingsPage = .account
     @Published private(set) var setupMode = false
     private var interactionPinned = false
 
-    var expandedSize: CGSize {
-        let desired = ClickyNotchSizing.expandedSize(for: selectedTab, setup: setupMode)
+    var expandedSize: CGSize { clampedExpandedSize(for: selectedTab, setup: setupMode) }
+
+    private func clampedExpandedSize(for tab: NotchPanelTab, setup: Bool) -> CGSize {
+        let desired = ClickyNotchSizing.expandedSize(for: tab, setup: setup)
         guard let screen = window?.screen ?? NSScreen.main else { return desired }
         return CGSize(width: min(desired.width, screen.frame.width - 24),
                       height: min(desired.height, screen.frame.height - 40))
     }
+
+    /// While Home, Chat and Settings spring between their sizes, the panel holds the
+    /// larger of the two so SwiftUI can animate the silhouette inside it without clipping.
+    /// Cleared once the spring has settled, so the panel never covers more screen than needed.
+    private var pageResizeWindowEnvelope: CGSize?
+    private var pageResizeEnvelopeTask: Task<Void, Never>?
+
     var hostingSize: CGSize {
         // Keep the coordinate space stable throughout the reveal and retraction.
-        let size = expandedSize
+        var size = expandedSize
+        if let pageResizeWindowEnvelope {
+            size.width = max(size.width, pageResizeWindowEnvelope.width)
+            size.height = max(size.height, pageResizeWindowEnvelope.height)
+        }
         return CGSize(width: size.width, height: size.height + ClickyNotchSizing.shadowPadding)
     }
+
+    private func holdWindowEnvelopeDuringPageResize(fromPageSize previousPageSize: CGSize) {
+        pageResizeEnvelopeTask?.cancel()
+        let currentEnvelope = pageResizeWindowEnvelope ?? .zero
+        pageResizeWindowEnvelope = CGSize(
+            width: max(previousPageSize.width, expandedSize.width, currentEnvelope.width),
+            height: max(previousPageSize.height, expandedSize.height, currentEnvelope.height)
+        )
+        positionAtTopCenter(animated: false)
+        pageResizeEnvelopeTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(650))
+            guard !Task.isCancelled else { return }
+            self.pageResizeWindowEnvelope = nil
+            self.positionAtTopCenter(animated: false)
+        }
+    }
+
     func setSetupMode(_ needed: Bool) {
         guard setupMode != needed else { return }
+        let previousPageSize = expandedSize
         setupMode = needed
-        positionAtTopCenter(animated: false)
+        holdWindowEnvelopeDuringPageResize(fromPageSize: previousPageSize)
     }
     func setInteractionPinned(_ pinned: Bool) {
         guard interactionPinned != pinned else { return }
@@ -103,6 +134,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
     deinit {
         hoverOpenTask?.cancel()
         hoverCloseTask?.cancel()
+        pageResizeEnvelopeTask?.cancel()
         for observer in menuTrackingObservers { NotificationCenter.default.removeObserver(observer) }
         if let screenConfigurationObserver {
             NotificationCenter.default.removeObserver(screenConfigurationObserver)

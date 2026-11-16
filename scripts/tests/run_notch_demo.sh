@@ -5,10 +5,11 @@
 # yourself. It never launches or touches the installed app, and reads nothing
 # from ~/.teachy.
 #
-#   scripts/tests/run_notch_demo.sh [--seconds 30] [--notched] [--record DIR]
+#   scripts/tests/run_notch_demo.sh [--seconds 30] [--notched] [--pages] [--record DIR]
 #
 #   --seconds N     how long the window stays up (default 30)
 #   --notched       draw a camera housing, as on a MacBook Pro
+#   --pages         switch Home -> Chat -> Settings and back while open
 #   --record DIR    also write DIR/notch.mp4 and DIR/notch.gif (needs ffmpeg)
 set -e
 cd "$(dirname "$0")/../.."
@@ -21,6 +22,7 @@ swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/Dictation/DictationHotkeyStateMachine.swift" \
   "$APP/PushToTalkShortcutKeys.swift" \
   "$APP/Settings/TeachySettings.swift" \
+  "$APP/Touch/ScreenTapSignalProcessing.swift" \
   "$APP/Settings/TeachySettings+CursorColor.swift" \
   "$APP/Settings/VoicePreviewPlayer.swift" \
   "$APP/Settings/SettingsSections.swift" \
