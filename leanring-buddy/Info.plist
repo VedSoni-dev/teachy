@@ -33,6 +33,8 @@
 	<string>https://raw.githubusercontent.com/VedSoni-dev/teachy-releases/main/registry.json</string>
 	<key>ClickyAcademyWebsiteURL</key>
 	<string>https://vedsoni-dev.github.io/teachy/</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Teachy uses your camera for local hand and eye tracking when you start camera input setup. Frames are not recorded or uploaded.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Teachy uses your microphone so you can talk to your tutor</string>
 	<key>NSScreenCaptureUsageDescription</key>
