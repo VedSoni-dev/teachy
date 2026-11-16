@@ -40,7 +40,8 @@ final class NotchWindowManager: NSObject, ObservableObject {
                       height: min(desired.height, screen.frame.height - 40))
     }
     var hostingSize: CGSize {
-        let size = isExpanded ? expandedSize : ClickyNotchSizing.openNotchSize
+        // Keep the coordinate space stable throughout the reveal and retraction.
+        let size = expandedSize
         return CGSize(width: size.width, height: size.height + ClickyNotchSizing.shadowPadding)
     }
     func setSetupMode(_ needed: Bool) {
@@ -144,7 +145,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
     func expand() {
         hoverOpenTask?.cancel()
         hoverCloseTask?.cancel()
-        withAnimation(openSpring) {
+        withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : openSpring) {
             isExpanded = true
         }
         positionAtTopCenter(animated: false)
@@ -154,7 +155,7 @@ final class NotchWindowManager: NSObject, ObservableObject {
     func collapse() {
         hoverOpenTask?.cancel()
         hoverCloseTask?.cancel()
-        withAnimation(closeSpring) {
+        withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : closeSpring) {
             isExpanded = false
             isHoveringNotch = false
         }

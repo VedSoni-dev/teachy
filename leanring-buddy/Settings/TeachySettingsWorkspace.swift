@@ -19,7 +19,7 @@ struct TeachySettingsWorkspace: View {
                         sidebarHeading("WORK")
                         ForEach([TeachySettingsPage.integrations, .agents, .routines, .drawings, .memory]) { categoryButton($0) }
                     }
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, 20)
                     .padding(.top, 12)
                 }
                 Text("Teachy \(updater.shortVersionString) (\(updater.buildNumberString))")
@@ -41,8 +41,9 @@ struct TeachySettingsWorkspace: View {
                     page
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 24)
-                .padding(.top, 17)
+                .padding(.leading, 28)
+                .padding(.trailing, 36)
+                .padding(.top, 22)
                 .padding(.bottom, 28)
             }
             .id(selection)
@@ -97,7 +98,7 @@ private struct SettingsSidebarButton: View {
             }
             .foregroundColor(isSelected ? DS.Colors.textPrimary : DS.Colors.textSecondary)
             .padding(.horizontal, 10).frame(height: 39)
-            .background(isSelected ? DS.Colors.surface3 : (isHovered ? DS.Colors.fillQuaternary : .clear), in: RoundedRectangle(cornerRadius: 8))
+            .background(isSelected ? DS.Colors.surface3 : (isHovered ? DS.Colors.fillQuaternary : .clear), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain).pointerCursor().onHover { isHovered = $0 }

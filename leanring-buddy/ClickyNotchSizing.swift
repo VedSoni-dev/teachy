@@ -35,14 +35,14 @@ enum ClickyNotchSizing {
         opened: (top: CGFloat, bottom: CGFloat),
         closed: (top: CGFloat, bottom: CGFloat)
     ) = (
-        opened: (top: 6, bottom: 18),
+        opened: (top: 10, bottom: 26),
         closed: (top: 6, bottom: 14)
     )
 
     /// Hover chin under the closed notch — nearly invisible hit target.
     static let chinHeight: CGFloat = 12
 
-    static let openSpring = Animation.spring(response: 0.42, dampingFraction: 0.8, blendDuration: 0)
-    static let closeSpring = Animation.spring(response: 0.45, dampingFraction: 1.0, blendDuration: 0)
+    static let openSpring = Animation.spring(response: 0.38, dampingFraction: 0.9, blendDuration: 0)
+    static let closeSpring = Animation.spring(response: 0.32, dampingFraction: 1.0, blendDuration: 0)
     static let interactiveSpring = Animation.interactiveSpring(response: 0.38, dampingFraction: 0.8, blendDuration: 0)
 }

@@ -88,7 +88,9 @@ struct NotchChatView: View {
                                                        value: geometry.frame(in: .named("notch-chat-scroll")).maxY)
                             })
                     }
-                    .padding(DS.Spacing.md)
+                    .padding(.horizontal, DS.Spacing.xxl)
+                    .padding(.top, DS.Spacing.lg)
+                    .padding(.bottom, DS.Spacing.lg)
                 }
                 .coordinateSpace(name: "notch-chat-scroll")
                 .onPreferenceChange(ChatBottomPositionKey.self) { bottom in
@@ -177,8 +179,10 @@ struct NotchChatView: View {
                     .accessibilityLabel("Open chat window")
             }
         }
-        .padding(DS.Spacing.md)
-        .background(DS.Colors.surface1)
+        .padding(.horizontal, DS.Spacing.xxl)
+        .padding(.top, DS.Spacing.lg)
+        .padding(.bottom, DS.Spacing.xl)
+        .background(DS.Colors.workspaceBackground)
     }
 
     private func updateInteractionPin() {

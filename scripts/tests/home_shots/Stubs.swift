@@ -78,7 +78,7 @@ final class NotchWindowManager: ObservableObject {
     @Published var setupMode = false
     var expandedSize: CGSize { ClickyNotchSizing.expandedSize(for: selectedTab, setup: setupMode) }
     var hostingSize: CGSize {
-        let size = isExpanded ? expandedSize : ClickyNotchSizing.openNotchSize
+        let size = expandedSize
         return CGSize(width: size.width, height: size.height + ClickyNotchSizing.shadowPadding)
     }
     func openSettings(_ page: TeachySettingsPage = .account) {

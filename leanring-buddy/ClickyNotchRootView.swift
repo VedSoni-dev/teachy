@@ -14,6 +14,7 @@ struct ClickyNotchRootView: View {
     @ObservedObject var companionManager: CompanionManager
     @ObservedObject var notchManager: NotchWindowManager
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var notchNamespace
     @State private var gestureProgress: CGFloat = 0
 
@@ -72,25 +73,24 @@ struct ClickyNotchRootView: View {
     var body: some View {
         ZStack(alignment: .top) {
             VStack(spacing: 0) {
-                let mainLayout = notchLayout
-                    .frame(alignment: .top)
-                    .padding(.horizontal, notchManager.isExpanded ? 0 : closedHorizontalPadding)
-                    .frame(width: notchManager.isExpanded ? notchManager.expandedSize.width : nil,
-                           height: notchManager.isExpanded ? notchManager.expandedSize.height : nil,
+                notchLayout
+                    .frame(width: notchManager.isExpanded ? notchManager.expandedSize.width : chinWidth,
+                           height: notchManager.isExpanded ? notchManager.expandedSize.height : closedNotchHeight,
                            alignment: .top)
+                    .background(DS.Colors.notchBlack)
                     .clipShape(currentNotchShape)
-                    // No drawn shadow and no black hairline: glass brings its own
-                    // depth, and either would show through it as a smudge.
-                    .background { notchSurface }
-
-                mainLayout
-                    .animation(
-                        notchManager.isExpanded
-                            ? ClickyNotchSizing.openSpring
-                            : ClickyNotchSizing.closeSpring,
-                        value: notchManager.isExpanded
-                    )
-                    .contentShape(Rectangle())
+                    .animation(reduceMotion ? nil : (notchManager.isExpanded
+                        ? ClickyNotchSizing.openSpring : ClickyNotchSizing.closeSpring),
+                        value: notchManager.isExpanded)
+                    // Limit file-drop handling to the visible shell, not its animation canvas.
+                    .attachmentDropTarget(cornerRadius: 24, showsHighlight: notchManager.isExpanded) { isOver in
+                        notchManager.setAttachmentDragTargeted(isOver)
+                        if isOver {
+                            notchManager.selectedTab = .chat
+                            if !notchManager.isExpanded { notchManager.expand() }
+                        }
+                    }
+                    .contentShape(currentNotchShape)
                     .onTapGesture {
                         if !notchManager.isExpanded {
                             notchManager.expand()
@@ -150,29 +150,7 @@ struct ClickyNotchRootView: View {
         )
         .animation(.smooth, value: gestureProgress)
         .preferredColorScheme(.dark)
-        // Drop a file on the notch to attach it to the conversation.
-        .attachmentDropTarget(cornerRadius: 24, showsHighlight: notchManager.isExpanded) { isOver in
-            notchManager.setAttachmentDragTargeted(isOver)
-            if isOver {
-                notchManager.selectedTab = .chat
-                if !notchManager.isExpanded { notchManager.expand() }
-            }
-        }
-    }
 
-    /// A quiet black utility panel when open; clear glass around the camera at rest.
-    @ViewBuilder
-    private var notchSurface: some View {
-        if notchManager.isExpanded {
-            currentNotchShape.fill(notchManager.selectedTab == .home ? DS.Colors.notchBlack : DS.Colors.workspaceBackground)
-        } else {
-            TeachyGlassSurface(shape: currentNotchShape, dimming: notchSurfaceDimming, isClear: true)
-        }
-    }
-
-    private var notchSurfaceDimming: Double {
-        if notchManager.isExpanded { return TeachyGlass.panelDimming }
-        return notchManager.isHoveringNotch ? TeachyGlass.restingDimming * 0.5 : TeachyGlass.restingDimming
     }
 
     private var gestureScale: CGFloat {
@@ -184,36 +162,29 @@ struct ClickyNotchRootView: View {
 
     @ViewBuilder
     private var notchLayout: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            closedOrHeaderRow
-                .zIndex(2)
-
+        ZStack(alignment: .top) {
             if notchManager.isExpanded {
-                NotchPanelView(
-                    companionManager: companionManager,
-                    notchManager: notchManager
-                )
-                .transition(
-                    .scale(scale: 0.8, anchor: .top)
-                        .combined(with: .opacity)
-                        .animation(.smooth(duration: 0.35))
-                )
-                .zIndex(1)
-                .opacity(gestureProgress != 0 ? 1 - min(abs(gestureProgress) * 0.1, 0.3) : 1)
+                // Lay out once at the destination size. The surrounding silhouette
+                // reveals it from the camera, instead of scaling or reflowing text.
+                VStack(spacing: 0) {
+                    clickyNotchHeader
+                        .frame(height: notchManager.selectedTab == .home || notchManager.selectedTab == .chat ? 44 : 50)
+                        .background(DS.Colors.notchBlack)
+                    NotchPanelView(companionManager: companionManager, notchManager: notchManager)
+                }
+                // The notch shoulders occupy real horizontal space; keep all
+                // content inside their straight edges before applying page gutters.
+                .padding(.horizontal, ClickyNotchSizing.cornerRadiusInsets.opened.top)
+                .frame(width: notchManager.expandedSize.width, height: notchManager.expandedSize.height, alignment: .top)
+                .transition(.opacity)
+            } else {
+                Group {
+                    if isLiveActivityActive { liveActivityRow }
+                    else { idleClosedRow }
+                }
+                .padding(.horizontal, closedHorizontalPadding)
+                .transition(.opacity)
             }
-        }
-    }
-
-    @ViewBuilder
-    private var closedOrHeaderRow: some View {
-        if notchManager.isExpanded {
-            clickyNotchHeader
-                .frame(height: notchManager.selectedTab == .home || notchManager.selectedTab == .chat ? 44 : 50)
-                .background(Color.black)
-        } else if isLiveActivityActive {
-            liveActivityRow
-        } else {
-            idleClosedRow
         }
     }
 

@@ -41,9 +41,14 @@ Task { @MainActor in
     expect(ClickyNotchSizing.expandedSize(for: .chat, setup: true) == CGSize(width: 520, height: 440),
            "setup overrides the selected page size")
     manager.setSetupMode(false)
+    let expandedHostingSize = manager.hostingSize
     manager.collapse()
-    expect(manager.hostingSize == CGSize(width: 520, height: 160 + ClickyNotchSizing.shadowPadding),
-           "collapse returns the hosting frame to compact dimensions")
+    expect(manager.hostingSize == expandedHostingSize,
+           "collapse preserves the host coordinate space so the shell retracts into the notch")
+    manager.expand()
+    expect(manager.hostingSize == expandedHostingSize,
+           "reopening preserves the same top-center animation canvas")
+    manager.collapse()
     manager.selectedTab = .home
     manager.handleNotchHover(true)
     await pause(450)

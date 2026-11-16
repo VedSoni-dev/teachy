@@ -87,7 +87,7 @@ enum ChatStyle {
     /// as numbers because bold and inline code inside the answer are set from them.
     static let voiceSize: CGFloat = 13
     static let voiceLineSpacing: CGFloat = 3
-    static let columnWidth: CGFloat = 760
+    static let columnWidth: CGFloat = 680
     /// How wide a reply runs before it wraps.
     static let readingWidth: CGFloat = 600
     /// The margin left of the reading column. Teachy's pointer mark hangs in it.
@@ -750,8 +750,8 @@ struct ChatUserBubble: View {
                 .lineSpacing(ChatStyle.bodyLineSpacing - 1)
                 .foregroundColor(DS.Colors.onPointer)
                 .textSelection(.enabled)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
+                .padding(.horizontal, DS.Spacing.lg)
+                .padding(.vertical, DS.Spacing.sm + 2)
                 .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(DS.Colors.pointer))
                 .frame(maxWidth: 520, alignment: .trailing)
             Text(ChatTimeFormat.time.string(from: date))
@@ -775,10 +775,10 @@ struct ChatAssistantMessage: View {
 
     var body: some View {
         replyBlocks(streamingCaretColor: isStreaming ? DS.Colors.pointer : nil)
-            .padding(.horizontal, DS.Spacing.md)
-            .padding(.vertical, DS.Spacing.sm)
+            .padding(.horizontal, DS.Spacing.lg)
+            .padding(.vertical, DS.Spacing.md)
             .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(palette.assistantBubble))
-            .frame(maxWidth: isStandalone ? 420 : ChatStyle.readingWidth, alignment: .leading)
+            .frame(maxWidth: 390, alignment: .leading)
             .padding(.trailing, DS.Spacing.xxxl)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contextMenu {
