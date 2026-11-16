@@ -207,6 +207,8 @@ final class BackgroundAgentToolRegistry {
         register(GrepTool())
         register(GlobTool())
         register(ListDirectoryTool())
+        // Earlier chats with Teachy, across days (Brain/ChatSessionStore).
+        register(SearchPastChatsTool())
         register(RunAppleScriptTool())
         register(OpenBrowserTabTool())
         register(CaptureScreenTool())
