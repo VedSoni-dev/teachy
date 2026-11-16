@@ -91,6 +91,9 @@ enum TeachyAIRouter {
     }
 
     static func routes(for job: TeachyAIJob, hasImages: Bool) throws -> [TeachyAIRoute] {
+        guard !TeachyPublikSession.shared.isSwitchingAccount else { throw TeachyAINotReadyError() }
+        let hasEnvironmentKey = !(ProcessInfo.processInfo.environment["PUBLIK_API_KEY"] ?? "").isEmpty
+        guard hasEnvironmentKey || Publik.readCredential()?.choice != nil else { throw TeachyAINotReadyError() }
         let ownKey = TeachyAPIKeyStore.apiKey.flatMap { $0.isEmpty ? nil : (baseURL: openRouterBaseURL, apiKey: $0) }
         switch Publik.resolveProvider(userKey: ownKey) {
         case let .publik(baseURL, apiKey):
@@ -141,6 +144,7 @@ enum TeachyAIRouter {
     }
 
     static func makeRequest(for route: TeachyAIRoute, job: TeachyAIJob? = nil, body: [String: Any], timeout: TimeInterval) throws -> URLRequest {
+        try validateCurrentAccount(for: route)
         var request = URLRequest(url: route.url)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
@@ -178,6 +182,13 @@ enum TeachyAIRouter {
         return request
     }
 
+    private static func validateCurrentAccount(for route: TeachyAIRoute) throws {
+        let currentRoutes = try routes(for: .coach, hasImages: false)
+        guard currentRoutes.contains(where: {
+            $0.apiKey == route.apiKey && $0.baseURL == route.baseURL && $0.isPublik == route.isPublik
+        }) else { throw CancellationError() }
+    }
+
     /// Non-streaming call. Returns the response body of the first tier that answers.
     static func sendJSON(
         job: TeachyAIJob,
@@ -198,6 +209,7 @@ enum TeachyAIRouter {
                 lastError = error
                 continue
             }
+            try validateCurrentAccount(for: route)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             switch try classify(status: status, body: data, route: route, hasImages: hasImages) {
             case .ok:
@@ -235,6 +247,7 @@ enum TeachyAIRouter {
                 lastError = error
                 continue
             }
+            try validateCurrentAccount(for: route)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             if (200...299).contains(status) {
                 recordSuccess(route: route, job: job, response: response)
@@ -398,84 +411,6 @@ enum TeachyHubBeacon {
         request.httpBody = bodyData
         Task.detached(priority: .background) {
             _ = try? await URLSession.shared.data(for: request)
-        }
-    }
-}
-
-// MARK: - Session (gate + account state for the UI)
-
-/// Runs publik's sign-in gate at launch and holds the account state the panel shows.
-@MainActor
-final class TeachyPublikSession: ObservableObject {
-    static let shared = TeachyPublikSession()
-
-    let gate = GateModel()
-
-    @Published private(set) var isReady = false
-    @Published private(set) var wallet: Publik.Wallet?
-    @Published private(set) var choice: String?
-    @Published private(set) var billingNotice: TeachyAIBillingError?
-
-    private var gateTask: Task<Void, Never>?
-    private var activeSessionTask: Task<Void, Never>?
-
-    private init() {}
-
-    /// Starts the gate. `PUBLIK_SELF_TEST=1` makes the gate print its line and exit here.
-    func start() {
-        guard gateTask == nil else { return }
-        gateTask = Task { [weak self] in
-            guard let self else { return }
-            let result = await Publik.ensureSignedIn(self.gate)
-            self.wallet = result.wallet
-            self.choice = result.choice
-            self.isReady = true
-            self.gate.screen = nil
-            self.startHubBeacons()
-        }
-    }
-
-    /// Settings → "Change": ask again how to pay for AI.
-    func changePaymentChoice() {
-        Publik.setChoice(nil)
-        restartGate()
-    }
-
-    func restartGate() {
-        gateTask?.cancel()
-        gateTask = nil
-        isReady = false
-        start()
-    }
-
-    func refreshWallet() async {
-        guard let credential = Publik.readCredential(),
-              let (_, freshWallet, _) = try? await Publik.readWallet(credential.key),
-              let freshWallet
-        else { return }
-        wallet = freshWallet
-        if freshWallet.planKind != "none" || freshWallet.balanceMicros > 0 {
-            billingNotice = nil
-        }
-    }
-
-    func reportBilling(_ error: TeachyAIBillingError) {
-        billingNotice = error
-    }
-
-    func openTopUp() {
-        let url = billingNotice?.topUpURL ?? wallet.flatMap { URL(string: $0.topUpURL) }
-        if let url { NSWorkspace.shared.open(url) }
-    }
-
-    private func startHubBeacons() {
-        guard activeSessionTask == nil else { return }
-        TeachyHubBeacon.send(event: "app_opened", usingPublik: TeachyAIRouter.isUsingPublik)
-        activeSessionTask = Task.detached(priority: .background) {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_800 * 1_000_000_000)
-                TeachyHubBeacon.send(event: "active_session", usingPublik: TeachyAIRouter.isUsingPublik)
-            }
         }
     }
 }

@@ -7,9 +7,9 @@ Tokens and components live in `leanring-buddy/DesignSystem.swift`. See them rend
 ## The rules
 
 1. **System type.** SF Pro everywhere, at macOS sizes (`DS.Fonts`). Hierarchy comes from weight and from the label colours: `textPrimary` is the thing itself, `textSecondary` explains it, `textTertiary` is a detail. Sentence case. No serif, no rounded, no capitals with tracking. SF Mono (`DS.Fonts.mono`) only for real code, commands and file paths. Numbers that change use `DS.Fonts.data` (digits that do not jump).
-2. **Glass everywhere, black only for the camera.**
-   - **The notch is system glass, closed and open** (`TeachyGlassSurface` in the notch's silhouette), and so is everything else that floats over the screen (job cards, the question card, captions, the reply bubble, pills): `.teachyTile()`. It is Liquid Glass on macOS 26, a material before that, and solid black with Reduce Transparency or Increase Contrast. The only black left is the camera housing on a notched Mac, which is hardware.
-   - **Closed**, the notch is the *clear* glass variant, barely dimmed, so it reads as a transparent pane at rest and lightens a little under the pointer. **Open**, the same pane grows and turns to the frosted *regular* variant with more dimming, so small text stays readable. Tiles are frosted too.
+2. **Glass for floating overlays; black for the expanded utility panel.**
+   - **The closed notch is system glass** (`TeachyGlassSurface` in the notch's silhouette), as are the other floating overlays (job cards, the question card, captions, the reply bubble, pills): `.teachyTile()`. The expanded notch uses `DS.Colors.notchBlack`, following the compact utility reference. It is Liquid Glass on macOS 26, a material before that, and solid black with Reduce Transparency or Increase Contrast.
+   - **Closed**, the notch is the *clear* glass variant, barely dimmed, so it reads as a transparent pane at rest and lightens a little under the pointer. **Open**, it becomes a quiet solid black panel. Floating tiles remain frosted.
    - Teachy's labels are white, so its glass carries a black dimming layer (`TeachyGlass.restingDimming`, `panelDimming`, `tileDimming`) to stay readable over a white document. Do not rely on a glass `tint` for this: it makes no visible difference.
    - Never glass on glass: groups and controls on glass use the translucent fills. No drawn shadows and no black hairlines on glass: they show through it as smudges.
 3. **Grouped lists.** A heading (`TeachySectionTitle`), then the rows of that section in one rounded container (`.teachyGroup()` on a `VStack(spacing: 0)`), with dividers (`TeachyRule`) between rows. The container's fill is translucent, so the glass shows through it. This is how System Settings and iOS Settings look. Never one card per row, never a group inside a group. Inside a group the only other box is a field or a quoted command (`.teachyWell()`).
@@ -71,3 +71,11 @@ Tiles go solid with Reduce Transparency and gain an edge with Increase Contrast 
 ## Checking your work
 
 Render the view to a PNG (`scripts/tests/render_*_shots.sh`) and look at it. Off-screen renders cannot show real glass, so the notch and tiles appear as a dark frosted stand-in. To see real glass, run `scripts/tests/run_notch_demo.sh`: it shows the real notch view in a window on screen over a stand-in desktop, opens and closes it on a loop, and with `--record DIR` writes a video and a GIF of the window (only that window is captured). `--notched` adds a camera housing. Ask: would this pass for a screen Apple made, is every row in a group, is there a colour that is not the tint, orange, red or green, is anything hand-rolled that the design system already has.
+
+## Notch navigation
+
+Home is a compact utility dashboard: recent drawing previews, connection status, Open chat and the voice shortcut. Keep introductory paragraphs out of the everyday panel. Home and Agents share the header with Drawings and Settings icon buttons; longer pages scroll independently. Connections opens directly from Home. Account, always-on voice, preferences and memory live in Settings. Dragging a file returns to Home so progress remains visible.
+
+The open shell is 520×240pt with a solid black surface, matching the requested compact utility reference. Passive chrome hugs the physical camera: 24pt wings and 8pt outside padding, without an extra one-sided gap. On screens without a notch, show only a 48pt indicator; never reserve an imaginary camera. Preserve clearance for active microphone bars as well.
+
+Leaving the visible panel collapses it after 180ms; re-entering cancels collapse. File drags and native menu tracking temporarily keep it open. The transparent remainder of the hosting window must not extend the hover region. Verify with `scripts/tests/run_notch_hover_tests.sh`.

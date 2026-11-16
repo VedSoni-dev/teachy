@@ -21,7 +21,7 @@ swiftc -O -swift-version 5 -default-isolation MainActor -parse-as-library \
   leanring-buddy/DesignSystem.swift \
   $S/*.swift \
   leanring-buddy/Core/SceneDirector.swift leanring-buddy/Core/StreamIdleGuard.swift \
-  leanring-buddy/TeachyAIRouter.swift leanring-buddy/Publik.swift leanring-buddy/TeachyAPIKeyStore.swift \
+  leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyPublikSession.swift leanring-buddy/Publik.swift leanring-buddy/TeachyAPIKeyStore.swift \
   scripts/eval/scene_eval.swift \
   -o "$OUT/scene_eval" 2>&1 | grep -E ' error' || true
 # The eval is not a person using Teachy: keep it out of the usage counts.

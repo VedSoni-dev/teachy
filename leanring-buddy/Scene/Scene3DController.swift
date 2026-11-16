@@ -53,6 +53,14 @@ final class Scene3DModel: ObservableObject {
 
 final class Scene3DSCNView: SCNView {
     /// A click on the view that was not a drag or the first half of a double-click.
+    var onViewportChanged: (() -> Void)?
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = frame.size != newSize
+        super.setFrameSize(newSize)
+        if changed { onViewportChanged?() }
+    }
+
     var onTap: ((CGPoint) -> Void)?
     var onDoubleTap: ((CGPoint) -> Void)?
     /// A drag began, turned the model (dx, dy in points), slid it, ended.
@@ -299,7 +307,7 @@ final class Scene3DController: NSObject {
     private var fitCenter = simd_float3(0, 0, 0)
     private var fitRadius: Float = 2
     private var hasFit = false
-    private var autoRotate = true
+    private var autoRotate = false
     private var fitCountdown = 0.0
     private var shownCenter: simd_float3 { simd_float3(pose.center) }
     private var shownDistance: Float { Float(pose.distance) }
@@ -351,6 +359,83 @@ final class Scene3DController: NSObject {
     private var timer: Timer?
     private var lastTick: CFTimeInterval = 0
     private var plotCountdown = 0.0
+    private var renderUntil: CFTimeInterval = 0
+    private var isStopped = false
+    private var spatialLayoutDirty = true
+    private var previouslyHadTransformMotion = false
+    private var actionNodeIDs: Set<String> = []
+    private var hitTestingNeedsFlush = true
+
+    private final class LocalGeometryBounds: NSObject {
+        let low: SCNVector3
+        let high: SCNVector3
+        init(_ bounds: (min: SCNVector3, max: SCNVector3)) {
+            low = bounds.min
+            high = bounds.max
+        }
+    }
+    // Geometry is immutable after construction. Weak keys release replaced spring meshes.
+    private let geometryBounds = NSMapTable<SCNGeometry, LocalGeometryBounds>(
+        keyOptions: [.weakMemory, .objectPointerPersonality], valueOptions: .strongMemory
+    )
+    private(set) var geometryBoundsReadCount = 0
+    private(set) var hitTestFlushCount = 0
+    var isRenderingContinuously: Bool { timer != nil }
+
+    private func localBounds(of geometry: SCNGeometry) -> (SCNVector3, SCNVector3) {
+        if let cached = geometryBounds.object(forKey: geometry) { return (cached.low, cached.high) }
+        let bounds = geometry.boundingBox
+        geometryBoundsReadCount += 1
+        geometryBounds.setObject(LocalGeometryBounds(bounds), forKey: geometry)
+        return bounds
+    }
+
+    private func invalidateSpatialLayout() {
+        spatialLayoutDirty = true
+        hitTestingNeedsFlush = true
+        labelBoxes.removeAll(keepingCapacity: true)
+        leaderOffsets.removeAll(keepingCapacity: true)
+        fitCountdown = 0
+    }
+
+    private func requestFrames(for duration: Double = 2) {
+        guard !isHeadless, !isStopped else { return }
+        renderUntil = max(renderUntil, now + duration)
+        if timer == nil { startTicking() }
+        view.isPlaying = true
+        view.rendersContinuously = true
+        view.needsDisplay = true
+    }
+
+    func resume() {
+        isStopped = false
+        invalidateSpatialLayout()
+        requestFrames()
+    }
+
+    private func pauseRendering() {
+        timer?.invalidate()
+        timer = nil
+        view.rendersContinuously = false
+        view.isPlaying = false
+        view.needsDisplay = true
+    }
+
+    private var hasTransformMotion: Bool {
+        if !actionNodeIDs.isEmpty { return true }
+        guard speed > 1e-6 else { return false }
+        return spins.values.contains { abs($0.rpm) > 1e-6 }
+            || solvedRPM.values.contains { abs($0) > 1e-6 }
+            || pistons.values.contains { abs($0.rpm) > 1e-6 }
+            || beats.values.contains { $0.amount > 1e-6 }
+            || flows.values.contains { flow in
+                if let driver = flow.driver { return abs(solvedRPM[driver] ?? spins[driver]?.rpm ?? 0) > 1e-6 }
+                return abs(flow.speed) > 1e-6
+            }
+            || !orbits.isEmpty
+            || coils.values.contains { $0.stiffness > 0 }
+            || movingIDs.contains { nodes[$0]?.physicsBody?.isResting == false }
+    }
 
     static let fieldOfView: CGFloat = 30
 
@@ -372,7 +457,7 @@ final class Scene3DController: NSObject {
             view.isPlaying = false
             view.rendersContinuously = false
         } else {
-            startTicking()
+            requestFrames()
         }
     }
 
@@ -389,11 +474,15 @@ final class Scene3DController: NSObject {
         // drags, scrolls and pinches are clamped and never fight an automatic move).
         view.allowsCameraControl = false
         view.autoenablesDefaultLighting = false
-        view.isPlaying = true
-        view.rendersContinuously = true
+        view.isPlaying = false
+        view.rendersContinuously = false
         view.preferredFramesPerSecond = 60
         view.wantsLayer = true
         view.layer?.isOpaque = false
+        view.onViewportChanged = { [weak self] in
+            self?.invalidateSpatialLayout()
+            self?.requestFrames()
+        }
         view.onTap = { [weak self] point in self?.handleTap(at: point) }
         view.onDoubleTap = { [weak self] point in self?.handleDoubleTap(at: point) }
         view.onDragBegan = { [weak self] in self?.userBeganDrag() }
@@ -483,6 +572,7 @@ final class Scene3DController: NSObject {
     }
 
     private func startTicking() {
+        guard timer == nil else { return }
         lastTick = CACurrentMediaTime()
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
@@ -494,13 +584,17 @@ final class Scene3DController: NSObject {
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
-        view.isPlaying = false
+        isStopped = true
+        pauseRendering()
     }
 
     /// Empties the scene, keeping the view.
     func reset() {
+        geometryBounds.removeAllObjects()
+        actionNodeIDs.removeAll()
+        previouslyHadTransformMotion = false
+        invalidateSpatialLayout()
+        requestFrames()
         for node in contentRoot.childNodes { node.removeFromParentNode() }
         for node in labelRoot.childNodes { node.removeFromParentNode() }
         scene.physicsWorld.removeAllBehaviors()
@@ -513,7 +607,7 @@ final class Scene3DController: NSObject {
         labels = [:]; chipTargets = [:]; springVelocity = [:]; bodyMass = [:]; joints = [:]; forces = [:]; sliderBindings = [:]; plotSources = [:]; plotBuffers = [:]
         isSimulation = false; speed = 1; movingIDs = []; lastPositions = [:]; measuredVelocity = [:]; labelBoxes = [:]
         pose = SceneCameraPose(center: .zero, azimuth: 0.5, elevation: 0.30, distance: 9)
-        baseAzimuth = 0.5; baseElevation = 0.30; swayPhase = 0; swayAmount = Self.wholeSway; hasFit = false; autoRotate = true
+        baseAzimuth = 0.5; baseElevation = 0.30; swayPhase = 0; swayAmount = Self.wholeSway; hasFit = false; autoRotate = false
         cameraMode = .whole; cameraMove = nil; focusIDs = []; focusBox = nil; pendingAuto = nil
         fitCenter = .zero; fitRadius = 2
         ghosts = [:]; hiddenIDs = []; highlights = [:]; flashes = []; detailed = []; sources = [:]; macroOf = [:]; labelTexts = [:]; bulkBuild = false
@@ -527,6 +621,8 @@ final class Scene3DController: NSObject {
     // MARK: Commands
 
     func apply(_ original: SceneCommand) {
+        invalidateSpatialLayout()
+        requestFrames()
         if let expansion = SceneMacros.expand(original) {
             // A whole object (jet, rocket, heart…): draw the simpler commands it stands for.
             let bulk = expansion.count > 120
@@ -660,6 +756,7 @@ final class Scene3DController: NSObject {
     }
 
     private func addNode(for part: ScenePart) {
+        invalidateSpatialLayout()
         nodes[part.id]?.removeFromParentNode()
         // A scene past the node budget keeps its named parts and drops further small unnamed pieces.
         if nodes.count >= Self.maximumNodes, nodes[part.id] == nil, part.id.contains("."), part.label == nil, part.name == nil { return }
@@ -800,7 +897,7 @@ final class Scene3DController: NSObject {
             if node.isHidden { return }
             if let geometry = node.geometry {
                 // (A merged node's own box is not reliable, so the box of the pieces it was made from is kept.)
-                let (minimum, maximum) = bulkBoxes[node.name ?? ""].map { (SCNVector3($0.low), SCNVector3($0.high)) } ?? geometry.boundingBox
+                let (minimum, maximum) = bulkBoxes[node.name ?? ""].map { (SCNVector3($0.low), SCNVector3($0.high)) } ?? localBounds(of: geometry)
                 let a = simd_float3(minimum), b = simd_float3(maximum)
                 // Only physics moves a node without us setting its transform; reading
                 // `presentation` takes SceneKit's lock, so skip it for everything else.
@@ -908,7 +1005,7 @@ final class Scene3DController: NSObject {
         if let axle, axle.spinner == id {
             return axle.origin + axle.axis * simd_dot(center - axle.origin, axle.axis)
         }
-        if let landing = leaderLanding(id), !refresh || axle != nil { return landing }
+        if let landing = leaderLanding(id) { return landing }
         // Aim at the nearest piece of the part, then stop where the line first touches it.
         prepareForHitTesting()
         var aim = center
@@ -919,7 +1016,7 @@ final class Scene3DController: NSObject {
             if let name = child.name, let part = parts[name], case .tube(let path, _, _) = part.shape, !path.isEmpty {
                 point = child.simdConvertPosition(simd_float3(path[path.count / 2]), to: nil)
             } else if let geometry = child.geometry {
-                let (low, high) = geometry.boundingBox
+                let (low, high) = self.localBounds(of: geometry)
                 point = child.simdConvertPosition((simd_float3(low) + simd_float3(high)) / 2, to: nil)
             }
             let distance = simd_length(point - chipEnd)
@@ -1167,6 +1264,7 @@ final class Scene3DController: NSObject {
     // MARK: Motion
 
     private func move(_ c: SceneCommand) {
+        actionNodeIDs.insert(c.id)
         guard let node = nodes[c.id] else { return }
         let duration = max(c.number("dur", "t", "time") ?? 1.2, 0.01)
         let action: SCNAction
@@ -1238,7 +1336,7 @@ final class Scene3DController: NSObject {
     private func updateFlashes(now: CFTimeInterval) {
         // The part being talked about glows softly, breathing about once every second and a half.
         for highlight in highlights.values {
-            let wave = 0.5 - 0.5 * cos((now - highlight.start) / 1.5 * 2 * Double.pi)
+            let wave = 0.5 - 0.5 * cos(min(now - highlight.start, 3) / 1.5 * 2 * Double.pi)
             for material in highlight.materials { material.emission.intensity = CGFloat(0.14 + 0.3 * wave) }
         }
         guard !flashes.isEmpty else { return }
@@ -1296,7 +1394,7 @@ final class Scene3DController: NSObject {
         // The container's own shape is a base the parts sit on.
         var base: (center: SceneVec3, size: SceneVec3)?
         if container !== contentRoot, let geometry = container.geometry {
-            let (low, high) = geometry.boundingBox
+            let (low, high) = self.localBounds(of: geometry)
             base = (SceneVec3((simd_float3(low) + simd_float3(high)) / 2), SceneVec3(simd_float3(high) - simd_float3(low)))
         }
         var axis: SceneVec3
@@ -1327,6 +1425,7 @@ final class Scene3DController: NSObject {
             explodedOffsets[node.name ?? ""] = offset
             let action = SCNAction.move(to: SCNVector3(homes[index] + offset), duration: duration)
             action.timingMode = .easeInEaseOut
+            if let name = node.name { actionNodeIDs.insert(name) }
             node.runAction(action, forKey: "explode")
         }
         labelBoxes = [:]
@@ -1557,6 +1656,8 @@ final class Scene3DController: NSObject {
     }
 
     func setSlider(_ id: String, value: Double, fromUser: Bool) {
+        invalidateSpatialLayout()
+        requestFrames()
         guard let index = model.sliders.firstIndex(where: { $0.id == id }) else { return }
         let clamped = min(max(value, model.sliders[index].minimum), model.sliders[index].maximum)
         if model.sliders[index].value != clamped { model.sliders[index].value = clamped }
@@ -1790,6 +1891,11 @@ final class Scene3DController: NSObject {
         lastTick = time
         processPendingAuto()
         step(wall: wall)
+        let highlightAnimating = highlights.values.contains { time - $0.start < 3 }
+        if time >= renderUntil, !hasTransformMotion, cameraMove == nil,
+           pendingAuto == nil, flashes.isEmpty, !highlightAnimating {
+            pauseRendering()
+        }
     }
 
     /// Headless only: moves motion, simulation and the camera on by `seconds`.
@@ -1805,6 +1911,7 @@ final class Scene3DController: NSObject {
     /// A new request about the model that is already up: the camera rules start afresh and the
     /// person's lines are obeyed even if they were steering a moment ago.
     func beginRefinement() {
+        requestFrames()
         policy.reset()
         gesturePause.resume()
         pendingAuto = nil
@@ -1814,7 +1921,15 @@ final class Scene3DController: NSObject {
     private func step(wall: Double) {
         let now = self.now
         let dt = wall * speed
-        guard hasContent else { return }
+        actionNodeIDs = actionNodeIDs.filter { nodes[$0]?.hasActions == true }
+        guard hasContent else {
+            updateFlashes(now: now)
+            return
+        }
+        let transformMotion = hasTransformMotion
+        if previouslyHadTransformMotion && !transformMotion { invalidateSpatialLayout() }
+        previouslyHadTransformMotion = transformMotion
+        if transformMotion { hitTestingNeedsFlush = true }
 
         if dt > 1e-5 {
             for id in movingIDs {
@@ -1901,6 +2016,8 @@ final class Scene3DController: NSObject {
                                                   radius: coil.wire, sides: 6)
                 let materials = node.geometry?.materials ?? []
                 node.geometry = Scene3DAssets.geometry(from: mesh)
+                hasUnpreparedGeometry = true
+                hitTestingNeedsFlush = true
                 node.geometry?.materials = materials
             }
             if coil.stiffness > 0, dt > 0 {
@@ -1935,12 +2052,26 @@ final class Scene3DController: NSObject {
 
         fitCountdown -= wall
         var refreshed = false
-        if fitCountdown <= 0 {
+        if spatialLayoutDirty || (fitCountdown <= 0 && (transformMotion || now < refitUntil)) {
+            spatialLayoutDirty = false
             // While parts are flying apart the frame follows them closely.
             fitCountdown = now < refitUntil ? 0.05 : 0.25
             refit()
             followFocus()
             refreshed = true
+            if transformMotion {
+                // Rigid transforms preserve an anchor in the part's local coordinates;
+                // moving children and rebuilt spring meshes change the enclosing surface.
+                let changingIDs = Set(spins.keys).union(movingIDs).union(actionNodeIDs)
+                    .union(beats.keys).union(orbits.keys).union(pistons.keys)
+                    .union(flows.values.flatMap(\.markers))
+                for id in changingIDs {
+                    for ancestor in lineage(of: id) where ancestor != id { leaderOffsets[ancestor] = nil }
+                }
+                for id in coils.keys {
+                    for ancestor in lineage(of: id) { leaderOffsets[ancestor] = nil }
+                }
+            }
         }
         updateCamera(dt: wall)
         updateLabels(refresh: refreshed)
@@ -2053,7 +2184,13 @@ final class Scene3DController: NSObject {
     private var labelsTop: Float = 0
 
     /// The size of the picture: the view's, or the frame being rendered when headless.
-    var viewportSize: CGSize?
+    var viewportSize: CGSize? {
+        didSet {
+            guard viewportSize != oldValue else { return }
+            invalidateSpatialLayout()
+            requestFrames()
+        }
+    }
     private var viewportAspect: Float {
         let size = viewportSize ?? view.bounds.size
         return Float(max(size.width, 1) / max(size.height, 1))
@@ -2071,7 +2208,9 @@ final class Scene3DController: NSObject {
             return (fitRadius + labelHeadroom * 0.5) / sin(min(halfVertical, atan(tanHorizontal))) * 1.05
         }
         var needed: Float = 0.1
-        let angles = autoRotate ? [baseAzimuth - Self.wholeSway, baseAzimuth, baseAzimuth + Self.wholeSway] : [baseAzimuth]
+        // Keep the established opening frame even when idle sway is disabled.
+        // Narration uses this envelope to decide whether a part deserves a closer view.
+        let angles = [baseAzimuth - Self.wholeSway, baseAzimuth, baseAzimuth + Self.wholeSway]
         for angle in angles {
             let toCamera = cameraDirection(azimuth: angle)
             let right = simd_normalize(simd_cross(simd_float3(0, 1, 0), toCamera))
@@ -2152,6 +2291,7 @@ final class Scene3DController: NSObject {
 
     /// Eases the camera to `target` (ease in, ease out). The sway is folded into the start so nothing jumps.
     private func startMove(to target: SceneCameraPose, duration: Double, sway: Double, then: CameraMode, turn: Double = 0) {
+        requestFrames(for: max(duration, 0) + 2)
         var from = pose
         from.azimuth = displayedAzimuth
         pose = from
@@ -2173,6 +2313,8 @@ final class Scene3DController: NSObject {
 
     /// Sets the turntable angle (radians) and stops auto-rotation; used for repeatable snapshots of the whole model.
     func freezeCamera(azimuth: Double? = nil, elevation: Double? = nil) {
+        invalidateSpatialLayout()
+        requestFrames()
         if let azimuth { baseAzimuth = azimuth }
         if let elevation { baseElevation = elevation }
         autoRotate = false
@@ -2317,7 +2459,11 @@ final class Scene3DController: NSObject {
     /// A part that was just added (or a scene that is built off screen and never drawn) is prepared here first.
     private func prepareForHitTesting() {
         // What was moved this turn of the run loop is hit where it is now, not where it was last drawn.
-        SCNTransaction.flush()
+        if hitTestingNeedsFlush {
+            SCNTransaction.flush()
+            hitTestFlushCount += 1
+            hitTestingNeedsFlush = false
+        }
         guard hasUnpreparedGeometry else { return }
         hasUnpreparedGeometry = false
         let renderer: SCNRenderer
@@ -2351,7 +2497,7 @@ final class Scene3DController: NSObject {
                 if case .tube(let path, _, _) = part.shape, !path.isEmpty {
                     anchors.append(SceneVec3(child.simdConvertPosition(simd_float3(path[path.count / 2]), to: nil)))
                 } else {
-                    let (low, high) = bulkBoxes[name].map { (SCNVector3($0.low), SCNVector3($0.high)) } ?? geometry.boundingBox
+                    let (low, high) = bulkBoxes[name].map { (SCNVector3($0.low), SCNVector3($0.high)) } ?? localBounds(of: geometry)
                     anchors.append(SceneVec3(child.simdConvertPosition((simd_float3(low) + simd_float3(high)) / 2, to: nil)))
                 }
             }
@@ -2669,7 +2815,7 @@ final class Scene3DController: NSObject {
         subject.parent = parts[id]?.parent
         subject.children = order.compactMap { child in parts[child]?.parent == id ? sources[child] : nil }
         if let geometry = nodes[id]?.geometry {
-            let (low, high) = geometry.boundingBox
+            let (low, high) = self.localBounds(of: geometry)
             subject.localSize = SceneVec3(simd_float3(high) - simd_float3(low))
         }
         return subject
@@ -2718,7 +2864,7 @@ final class Scene3DController: NSObject {
             piece.removeAllActions()
             piece.opacity = 1
             if let geometry = piece.geometry {
-                let (minimum, maximum) = geometry.boundingBox
+                let (minimum, maximum) = localBounds(of: geometry)
                 let a = simd_float3(minimum), b = simd_float3(maximum)
                 for corner in 0..<8 {
                     let point = piece.simdTransform * simd_float4(corner & 1 == 0 ? a.x : b.x, corner & 2 == 0 ? a.y : b.y, corner & 4 == 0 ? a.z : b.z, 1)
@@ -2746,6 +2892,7 @@ final class Scene3DController: NSObject {
         part.isTappable = false
         nodes[id] = merged
         hasUnpreparedGeometry = true
+        invalidateSpatialLayout()
         bulkBoxes[id] = (low, high)
         parts[id] = part
         baseOrientation[id] = merged.simdOrientation
@@ -2759,6 +2906,7 @@ final class Scene3DController: NSObject {
     /// `after`: seconds to hold the present view first (the opening sentence shows the whole model for a moment before going in).
     func requestAutoFocus(_ ids: [String], sentence: Int?, wholeIfEmpty: Bool = true, after delay: Double = 0) {
         guard directsCamera, commandOrigin != .replay else { return }
+        requestFrames(for: max(delay, 0) + 6)
         pendingAuto = PendingAuto(ids: ids, sentence: sentence, notBefore: now + max(delay, 0), expires: now + max(delay, 0) + 4, wholeIfEmpty: wholeIfEmpty)
         processPendingAuto()
     }
@@ -2846,6 +2994,7 @@ final class Scene3DController: NSObject {
     }
 
     private func userBeganDrag() {
+        requestFrames()
         gesturePause.began(now: now)
         takeCamera()
     }
@@ -2856,6 +3005,7 @@ final class Scene3DController: NSObject {
 
     /// Drag: turn the model. Points of mouse travel.
     private func userOrbit(dx: CGFloat, dy: CGFloat) {
+        requestFrames()
         takeCamera()
         gesturePause.touched(now: now)
         pose = SceneFraming.turn(pose, azimuth: -Double(dx) * 0.008, elevation: -Double(dy) * 0.008)
@@ -2868,6 +3018,7 @@ final class Scene3DController: NSObject {
 
     /// Option-drag, right-drag or two fingers: slide the model with the hand.
     private func userPan(dx: CGFloat, dy: CGFloat) {
+        requestFrames()
         takeCamera()
         gesturePause.touched(now: now)
         let size = viewportSize ?? view.bounds.size
@@ -2878,6 +3029,7 @@ final class Scene3DController: NSObject {
 
     /// Wheel or pinch: zoom toward the point under the cursor, never through the model and never out of sight of it.
     private func userZoom(by factor: CGFloat, at point: CGPoint) {
+        requestFrames()
         takeCamera()
         gesturePause.touched(now: now)
         let size = viewportSize ?? view.bounds.size

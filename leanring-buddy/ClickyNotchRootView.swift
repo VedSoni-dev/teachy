@@ -22,7 +22,7 @@ struct ClickyNotchRootView: View {
     }
 
     private var closedNotchWidth: CGFloat {
-        geometry.hasNotch ? max(geometry.notchWidth, 160) : 185
+        geometry.hasNotch ? max(geometry.notchWidth, 160) : 0
     }
 
     private var closedNotchHeight: CGFloat {
@@ -60,25 +60,14 @@ struct ClickyNotchRootView: View {
         )
     }
 
+    private var closedHorizontalPadding: CGFloat { isLiveActivityActive ? 14 : 8 }
+    private var idleWingWidth: CGFloat { geometry.hasNotch ? 24 : 32 }
+
     private var chinWidth: CGFloat {
-        var width = closedNotchWidth
-        if !notchManager.isExpanded && isLiveActivityActive {
-            width += 2 * wingSize + 20
-        } else if !notchManager.isExpanded {
-            // Symmetric wings keep the center aligned with the camera;
-            // without a left spacer, centering slides the icon under the housing.
-            width += 2 * idleRightWingWidth + idleIconGapFromNotch
-        }
-        return width
+        if isLiveActivityActive { return closedNotchWidth + 2 * wingSize + 2 * closedHorizontalPadding }
+        return (geometry.hasNotch ? closedNotchWidth + 2 * idleWingWidth : idleWingWidth)
+            + 2 * closedHorizontalPadding
     }
-
-    /// Right wing wide enough for the pointer triangle.
-    private var idleRightWingWidth: CGFloat {
-        max(wingSize + 14, 40)
-    }
-
-    /// Clear gap between the physical camera edge and the idle icon.
-    private var idleIconGapFromNotch: CGFloat { 12 }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -89,7 +78,7 @@ struct ClickyNotchRootView: View {
                         .horizontal,
                         notchManager.isExpanded
                             ? ClickyNotchSizing.cornerRadiusInsets.opened.top
-                            : ClickyNotchSizing.cornerRadiusInsets.closed.bottom
+                            : closedHorizontalPadding
                     )
                     .padding([.horizontal, .bottom], notchManager.isExpanded ? 12 : 0)
                     .clipShape(currentNotchShape)
@@ -106,9 +95,6 @@ struct ClickyNotchRootView: View {
                         value: notchManager.isExpanded
                     )
                     .contentShape(Rectangle())
-                    .onHover { hovering in
-                        notchManager.handleNotchHover(hovering)
-                    }
                     .onTapGesture {
                         if !notchManager.isExpanded {
                             notchManager.expand()
@@ -152,6 +138,7 @@ struct ClickyNotchRootView: View {
                         .frame(width: chinWidth, height: ClickyNotchSizing.chinHeight)
                 }
             }
+            .onHover { notchManager.handleNotchHover($0) }
         }
         .padding(.bottom, 8)
         .frame(
@@ -169,17 +156,22 @@ struct ClickyNotchRootView: View {
         .preferredColorScheme(.dark)
         // Drop a file on the notch to attach it to the conversation.
         .attachmentDropTarget(cornerRadius: 24, showsHighlight: notchManager.isExpanded) { isOver in
-            if isOver, !notchManager.isExpanded { notchManager.expand() }
+            notchManager.setAttachmentDragTargeted(isOver)
+            if isOver {
+                notchManager.selectedTab = .home
+                if !notchManager.isExpanded { notchManager.expand() }
+            }
         }
     }
 
-    /// What the notch is made of: system glass in the notch's silhouette, closed
-    /// and open (solid black with Reduce Transparency). The same layer stays
-    /// put and its shape grows, so opening reads as one pane unfolding. Closed it
-    /// is dimmed lightly so it looks clear at rest, and a little lighter still
-    /// under the pointer; open it is dimmed more so small text stays readable.
+    /// A quiet black utility panel when open; clear glass around the camera at rest.
+    @ViewBuilder
     private var notchSurface: some View {
-        TeachyGlassSurface(shape: currentNotchShape, dimming: notchSurfaceDimming, isClear: !notchManager.isExpanded)
+        if notchManager.isExpanded {
+            currentNotchShape.fill(DS.Colors.notchBlack)
+        } else {
+            TeachyGlassSurface(shape: currentNotchShape, dimming: notchSurfaceDimming, isClear: true)
+        }
     }
 
     private var notchSurfaceDimming: Double {
@@ -232,19 +224,13 @@ struct ClickyNotchRootView: View {
 
     private var idleClosedRow: some View {
         HStack(spacing: 0) {
-            // Matching left spacer — keeps the clear center locked to the camera
-            // so the Clicky icon on the right sits fully past the housing.
-            Color.clear
-                .frame(width: idleRightWingWidth, height: wingSize)
-
-            Color.clear
-                .frame(width: max(0, closedNotchWidth))
-
-            Color.clear
-                .frame(width: idleIconGapFromNotch)
-
+            if geometry.hasNotch {
+                // Equal wings keep the hardware camera exactly centered.
+                Color.clear.frame(width: idleWingWidth, height: closedNotchHeight)
+                Color.clear.frame(width: closedNotchWidth)
+            }
             idleClickyIcon
-                .frame(width: idleRightWingWidth, height: closedNotchHeight)
+                .frame(width: idleWingWidth, height: closedNotchHeight)
         }
         .frame(height: closedNotchHeight, alignment: .center)
     }
@@ -278,7 +264,7 @@ struct ClickyNotchRootView: View {
                             .opacity(0) // reserved for sneak-peek style later
                     }
                 }
-                .frame(width: max(0, closedNotchWidth - ClickyNotchSizing.cornerRadiusInsets.closed.top))
+                .frame(width: max(0, closedNotchWidth))
 
             HStack {
                 ClickyAudioSpectrumView(
@@ -314,11 +300,32 @@ struct ClickyNotchRootView: View {
 
     // MARK: - Open header (boring.notch BoringHeader style)
 
+    private func headerTab(_ tab: NotchPanelTab) -> some View {
+        Button { notchManager.selectedTab = tab } label: {
+            HStack(spacing: 4) {
+                Image(systemName: tab == .home ? "house" : tab.symbol)
+                Text(tab.title)
+            }
+                .font(DS.Fonts.controlCompact)
+                .fixedSize()
+                .foregroundColor(notchManager.selectedTab == tab ? DS.Colors.textPrimary : DS.Colors.textSecondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 5)
+                .background(notchManager.selectedTab == tab ? DS.Colors.fillSecondary : .clear, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
+        .accessibilityLabel(tab.title)
+        .accessibilityAddTraits(notchManager.selectedTab == tab ? .isSelected : [])
+    }
+
     private var clickyNotchHeader: some View {
         HStack(spacing: 0) {
-            // Home is the only tab, so the left side of the header has no tab buttons.
-            Color.clear
-                .frame(maxWidth: .infinity)
+            HStack(spacing: 4) {
+                headerTab(.home)
+                headerTab(.agents)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // Physical camera bay — black mask matching closed notch width.
             Rectangle()
@@ -327,19 +334,21 @@ struct ClickyNotchRootView: View {
                 .mask { ClickyNotchShape() }
 
             HStack(spacing: 4) {
-                closedCursorBadge
-                    .frame(width: 28, height: 28)
-                    .matchedGeometryEffect(id: "clickyCursor", in: notchNamespace)
+                ClickyNotchHoverIconButton(systemName: "scribble.variable") {
+                    notchManager.selectedTab = .drawings
+                }
+                .accessibilityLabel("Drawings")
 
                 ClickyNotchHoverIconButton(systemName: "gearshape") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
-                        NSWorkspace.shared.open(url)
-                    }
+                    notchManager.selectedTab = .settings
                 }
+
+                .accessibilityLabel("Teachy settings")
 
                 ClickyNotchHoverIconButton(systemName: "chevron.compact.up") {
                     notchManager.collapse()
                 }
+                .accessibilityLabel("Collapse Teachy")
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .opacity(notchManager.isExpanded ? 1 : 0)

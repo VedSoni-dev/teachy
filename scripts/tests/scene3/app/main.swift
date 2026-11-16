@@ -128,6 +128,7 @@ func runAll() async {
     await events()
     await bigScenes()
     await roughEdges()
+    await renderingEfficiency()
 
     print("\n\(checks) checks, \(failures) failures")
     if !notes.isEmpty {
@@ -1143,6 +1144,67 @@ func roughEdges() async {
         expect(store.entries().count == 1, "no second entry")
         expect(store.update(id: "nonsense", log: refined, thumbnailPNG: nil) == nil, "an unknown id is refused")
         try? FileManager.default.removeItem(at: folder)
+    }
+}
+
+@MainActor
+func renderingEfficiency() async {
+    await section("rendering: immutable geometry and settled labels reuse their measurements") {
+        let stage = Stage(script: "scene3d sample\nbox part size=(1,1,1)\nlabel label on=part text=Part")
+        let controller = stage.controller
+        let reads = controller.geometryBoundsReadCount
+        let flushes = controller.hitTestFlushCount
+        stage.play(4)
+        expect(controller.geometryBoundsReadCount == reads, "static geometry bounds are not re-read every refit")
+        expect(controller.hitTestFlushCount == flushes, "settled label anchors do not flush transactions again")
+        let previous = controller.boundingBox(ofParts: ["part"])
+        stage.session.perform("box part size=(3,1,1)")
+        stage.play(0.3)
+        let replaced = controller.boundingBox(ofParts: ["part"])
+        expect((replaced?.size.x ?? 0) > (previous?.size.x ?? 0) * 2, "a replacement mesh gets fresh bounds")
+        expect(controller.geometryBoundsReadCount > reads, "new geometry invalidates its local-bounds cache")
+        stage.play(2) // Capture after the replacement model finishes reframing.
+        writePNG(controller.renderFrame(size: CGSize(width: 640, height: 470)), "rendering-static.png")
+        stage.session.clear()
+    }
+    await section("rendering: settled models sleep and direct interactions wake them") {
+        let controller = Scene3DController()
+        for command in SceneScriptParser.parse("scene3d sample\nbox part size=(1,1,1)\nlabel label on=part text=Part") { controller.apply(command) }
+        expect(controller.isRenderingContinuously, "new content wakes the timer")
+        await pause(2.4)
+        expect(!controller.isRenderingContinuously, "settled model stops the timer")
+        expect(!controller.view.rendersContinuously && !controller.view.isPlaying, "SceneKit also stops continuous rendering")
+        controller.view.onZoom?(1.1, CGPoint(x: 320, y: 240))
+        expect(controller.isRenderingContinuously, "zoom wakes a sleeping model")
+        controller.stop()
+        expect(!controller.isRenderingContinuously, "closing stops rendering")
+        controller.resume()
+        expect(controller.isRenderingContinuously, "reopening restarts rendering")
+        await pause(2.4)
+        expect(!controller.isRenderingContinuously, "reopened static model settles again")
+        controller.requestAutoFocus(["part"], sentence: 1, after: 0.2)
+        expect(controller.isRenderingContinuously, "delayed narration wakes the scene")
+        controller.stop()
+    }
+    await section("rendering: real motion continues until its speed becomes zero") {
+        let controller = Scene3DController()
+        for command in SceneScriptParser.parse("scene3d sample\nbox part size=(1,1,1)\nspin part rpm=20") { controller.apply(command) }
+        await pause(2.4)
+        expect(controller.isRenderingContinuously, "active spin does not go to sleep")
+        let before = controller.debugSpinAngle(of: "part") ?? 0
+        await pause(0.1)
+        expect((controller.debugSpinAngle(of: "part") ?? 0) != before, "active spin still advances")
+        for command in SceneScriptParser.parse("spin part rpm=0") { controller.apply(command) }
+        await pause(2.4)
+        expect(!controller.isRenderingContinuously, "zero RPM lets the model sleep")
+        controller.stop()
+    }
+    await section("rendering: removing the last animated part releases the timer") {
+        let controller = Scene3DController()
+        for command in SceneScriptParser.parse("scene3d sample\nbox part size=(1,1,1)\nmove part by=(2,0,0) dur=1 loop\npulse part\nremove part") { controller.apply(command) }
+        await pause(2.4)
+        expect(!controller.isRenderingContinuously, "removed actions and flashes do not keep an empty scene awake")
+        controller.stop()
     }
 }
 

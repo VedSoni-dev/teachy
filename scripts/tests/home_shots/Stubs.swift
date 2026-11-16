@@ -65,10 +65,11 @@ final class CompanionManager: ObservableObject {
     func replayOnboarding() {}
 }
 
-enum NotchPanelTab: String, CaseIterable { case home }
+
 
 /// The real window manager owns an NSPanel; this one keeps only the open / closed
-/// state and the same springs and hover timing, so the real notch view animates the same.
+/// state and springs for deterministic rendering. Hover behavior is tested against
+/// the real manager by run_notch_hover_tests.sh.
 final class NotchWindowManager: ObservableObject {
     @Published private(set) var isExpanded = false
     @Published private(set) var isHoveringNotch = false
@@ -81,6 +82,7 @@ final class NotchWindowManager: ObservableObject {
     private var hoverOpenTask: Task<Void, Never>?
 
     func currentNotchGeometry() -> NotchScreenGeometry { notchGeometry }
+    func setAttachmentDragTargeted(_ targeted: Bool) {}
 
     func expand() {
         hoverOpenTask?.cancel()
@@ -113,11 +115,12 @@ struct NotchPanelView: View {
     @ObservedObject var notchManager: NotchWindowManager
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
+        VStack(spacing: 0) {
+            ScrollView(.vertical, showsIndicators: true) {
             NotchHomeTabView(companionManager: companionManager, notchManager: notchManager)
                 .padding(.horizontal, 8)
-                .padding(.top, 4)
                 .padding(.bottom, 8)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -207,7 +210,7 @@ struct AgentsSection: View {
     }
 }
 struct ConnectorsSection: View { var body: some View { SectionPlaceholder(title: "Connectors", detail: "2 connected") } }
-struct DrawingsSection: View { var body: some View { SectionPlaceholder(title: "Drawings", detail: "12") } }
+struct DrawingsSection: View { var startsExpanded = false; var body: some View { SectionPlaceholder(title: "Drawings", detail: "12") } }
 struct BrainMemorySection: View { var body: some View { SectionPlaceholder(title: "Memory", detail: "14 things") } }
 struct PublikAccountSection: View {
     var body: some View {
@@ -220,3 +223,21 @@ struct BrowserExtensionSection: View {
     }
 }
 
+
+struct HomeShotDrawing: Identifiable {
+    let id: String
+    let title: String
+}
+final class SceneHistory: ObservableObject {
+    static let shared = SceneHistory()
+    @Published var entries = [HomeShotDrawing(id: "jet", title: "Jet turbine"), HomeShotDrawing(id: "keyboard", title: "Keyboard switch")]
+    func reload() {}
+    func replay(_ id: String) {}
+    func thumbnail(for id: String) -> NSImage? { NSImage(systemSymbolName: id == "jet" ? "airplane" : "keyboard", accessibilityDescription: nil) }
+}
+final class ConnectorCenter: ObservableObject {
+    static let shared = ConnectorCenter()
+    @Published var connectors: [String] = []
+    struct State { var isConnected = false }
+    @Published var states: [String: State] = [:]
+}

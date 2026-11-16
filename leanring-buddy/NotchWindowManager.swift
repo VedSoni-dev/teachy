@@ -14,7 +14,7 @@ import SwiftUI
 final class NotchWindowManager: NSObject, ObservableObject {
     @Published private(set) var isExpanded = false
     @Published private(set) var isHoveringNotch = false
-    /// Home is the only tab today; kept as state so more tabs can come back later.
+    /// The selected section persists while the panel is collapsed.
     @Published var selectedTab: NotchPanelTab = .home
 
     private var window: NSPanel?
@@ -23,6 +23,9 @@ final class NotchWindowManager: NSObject, ObservableObject {
     private var screenConfigurationObserver: NSObjectProtocol?
     private var hoverOpenTask: Task<Void, Never>?
     private var hoverCloseTask: Task<Void, Never>?
+    private var attachmentDragTargeted = false
+    private var menuTrackingDepth = 0
+    private var menuTrackingObservers: [NSObjectProtocol] = []
 
     var openSpring: Animation { ClickyNotchSizing.openSpring }
     var closeSpring: Animation { ClickyNotchSizing.closeSpring }
@@ -36,11 +39,27 @@ final class NotchWindowManager: NSObject, ObservableObject {
         self.companionManager = companionManager
         super.init()
         installScreenConfigurationObserver()
+        menuTrackingObservers = [
+            NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.menuTrackingDepth += 1
+                    self?.hoverCloseTask?.cancel()
+                }
+            },
+            NotificationCenter.default.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.menuTrackingDepth = max(0, self.menuTrackingDepth - 1)
+                    self.scheduleHoverClose()
+                }
+            }
+        ]
     }
 
     deinit {
         hoverOpenTask?.cancel()
         hoverCloseTask?.cancel()
+        for observer in menuTrackingObservers { NotificationCenter.default.removeObserver(observer) }
         if let screenConfigurationObserver {
             NotificationCenter.default.removeObserver(screenConfigurationObserver)
         }
@@ -116,15 +135,25 @@ final class NotchWindowManager: NSObject, ObservableObject {
                 self.expand()
             }
         } else {
-            hoverCloseTask = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(160))
-                guard !Task.isCancelled else { return }
-                withAnimation(ClickyNotchSizing.interactiveSpring) {
-                    self.isHoveringNotch = false
-                }
-                // Do not auto-close on hover leave — Clicky's panel is interactive
-                // (scroll, menus). Click-outside / Collapse / menu bar toggle close it.
-            }
+            isHoveringNotch = false
+            scheduleHoverClose()
+        }
+    }
+
+    func setAttachmentDragTargeted(_ targeted: Bool) {
+        attachmentDragTargeted = targeted
+        if targeted { hoverCloseTask?.cancel() }
+        else { scheduleHoverClose() }
+    }
+
+    private func scheduleHoverClose() {
+        hoverCloseTask?.cancel()
+        guard !isHoveringNotch, !attachmentDragTargeted, menuTrackingDepth == 0 else { return }
+        hoverCloseTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled, !self.isHoveringNotch,
+                  !self.attachmentDragTargeted, self.menuTrackingDepth == 0 else { return }
+            self.collapse()
         }
     }
 

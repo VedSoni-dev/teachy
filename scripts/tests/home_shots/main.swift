@@ -35,32 +35,39 @@ func runShots() {
     _ = NSApplication.shared
     NSApp.setActivationPolicy(.prohibited)
 
-    // The panel is 640 wide; the shell pads the open panel by 19 + 12 on each
-    // side and NotchPanelView adds 8, which leaves 562 for the content.
-    let panelWidth: CGFloat = 640
-    func onNotchPanel<V: View>(_ view: V) -> some View {
-        view
-            .padding(.horizontal, 39)
-            .padding(.vertical, 14)
-            // The open panel is glass; off screen that is the frosted stand-in.
-            .background(TeachyGlassSurface(shape: Rectangle()))
-    }
-
+    let panelWidth = ClickyNotchSizing.openNotchSize.width
     let companionManager = CompanionManager()
     let notchManager = NotchWindowManager()
-
-    render(
-        onNotchPanel(NotchHomeTabView(companionManager: companionManager, notchManager: notchManager)),
-        width: panelWidth, name: "01-home"
+    notchManager.notchGeometry = NotchScreenGeometry(
+        screenFrame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+        notchHeight: 32, notchWidth: 185, notchLeftEdgeX: 663.5, notchCenterX: 756,
+        leftAuxiliaryAreaWidth: 663.5, hasNotch: true
     )
-
-    let yellowCompanionManager = CompanionManager()
-    yellowCompanionManager.selectedCursorColor = .yellow
-    yellowCompanionManager.globalPushToTalkShortcutMonitor.isRecordingNewShortcut = true
-    render(
-        onNotchPanel(NotchHomeTabView(companionManager: yellowCompanionManager, notchManager: notchManager)),
-        width: panelWidth, name: "02-home-recording-new-keys"
+    func panel() -> some View {
+        ClickyNotchRootView(companionManager: companionManager, notchManager: notchManager)
+            .frame(width: panelWidth, height: ClickyNotchSizing.windowSize.height)
+            .background(Color(white: 0.7))
+    }
+    notchManager.expand()
+    render(panel(), width: panelWidth, name: "01-home")
+    companionManager.globalPushToTalkShortcutMonitor.isRecordingNewShortcut = true
+    render(panel(), width: panelWidth, name: "02-home-recording-new-keys")
+    companionManager.globalPushToTalkShortcutMonitor.isRecordingNewShortcut = false
+    for tab in [NotchPanelTab.agents, .drawings, .connections, .settings] {
+        notchManager.selectedTab = tab
+        render(panel(), width: panelWidth, name: "03-" + tab.rawValue)
+    }
+    notchManager.collapse()
+    render(panel(), width: panelWidth, name: "04-idle-notched")
+    companionManager.voiceState = .listening
+    render(panel(), width: panelWidth, name: "05-live-notched")
+    companionManager.voiceState = .idle
+    notchManager.notchGeometry = NotchScreenGeometry(
+        screenFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+        notchHeight: 0, notchWidth: 0, notchLeftEdgeX: 960, notchCenterX: 960,
+        leftAuxiliaryAreaWidth: 960, hasNotch: false
     )
+    render(panel(), width: panelWidth, name: "06-idle-external-display")
 
     if failureCount > 0 {
         print("\(failureCount) FAILED")

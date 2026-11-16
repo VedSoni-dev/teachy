@@ -9,8 +9,8 @@
 import SwiftUI
 
 enum ClickyNotchSizing {
-    /// Expanded panel content size (boring.notch uses 640×190; Teachy is taller for Learn + onboarding).
-    static let openNotchSize = CGSize(width: 640, height: 320)
+    /// Compact expanded shell; longer sections scroll below pinned navigation.
+    static let openNotchSize = CGSize(width: 520, height: 240)
 
     /// Extra height so soft shadows aren't clipped by the window.
     static let shadowPadding: CGFloat = 24

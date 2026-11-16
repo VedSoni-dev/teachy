@@ -474,6 +474,7 @@ final class Scene3DWindow {
         }
         resize()
         panel?.orderFrontRegardless()
+        controller.resume()
     }
 
     func close() {

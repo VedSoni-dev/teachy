@@ -2,11 +2,8 @@
 //  NotchHomeTabView.swift
 //  leanring-buddy
 //
-//  Home tab content for the notch panel, top to bottom: how to talk to Teachy,
-//  the other ways in (chat, always-on, typing, files), agents and their jobs,
-//  connectors, drawings, memory, then settings as a grouped list of rows that
-//  open in place, and the feedback links.
-//  The settings rows themselves live in Settings/SettingsSections.swift.
+//  Compact Home launcher and the selected Agents, Drawings or Settings page.
+//  Navigation lives in the compact notch header.
 //
 
 import SwiftUI
@@ -16,132 +13,130 @@ struct NotchHomeTabView: View {
     @ObservedObject var notchManager: NotchWindowManager
     @ObservedObject private var softwareUpdater = TeachySoftwareUpdater.shared
     @ObservedObject private var settings = TeachySettings.shared
-
-    /// Space between the sections of the page.
-    private let sectionSpacing: CGFloat = 24
+    @ObservedObject private var history = SceneHistory.shared
+    @ObservedObject private var connections = ConnectorCenter.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: sectionSpacing) {
-            howToTalkSection
-
-            quickActionsSection
-
-            AgentsSection()
-
-            ConnectorsSection()
-
-            DrawingsSection()
-
-            BrainMemorySection()
-
-            settingsSection
-
-            footerLinks
+        Group {
+            switch notchManager.selectedTab {
+            case .home:
+                homeOverview
+            case .agents:
+                AgentsSection()
+            case .drawings:
+                DrawingsSection(startsExpanded: true)
+            case .connections:
+                ConnectorsSection()
+            case .settings:
+                VStack(alignment: .leading, spacing: 20) {
+                    settingsSection
+                    ConnectorsSection()
+                    BrainMemorySection()
+                    footerLinks
+                }
+            }
         }
         .padding(.horizontal, 6)
         .padding(.top, 6)
-        .padding(.bottom, 10)
+        .padding(.bottom, 8)
     }
 
-    // MARK: - How to talk
-
-    /// The one line the panel is about, then the three things you can do with it.
-    private var howToTalkSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            PushToTalkShortcutPickerRow(
-                shortcutMonitor: companionManager.globalPushToTalkShortcutMonitor
-            )
-
-            HStack(alignment: .top, spacing: 0) {
-                howToTalkColumn(
-                    symbolName: "text.bubble",
-                    title: "Ask",
-                    explanation: "Anything on your screen. Teachy answers out loud, and points or draws right on it."
-                )
-                howToTalkColumnDivider
-                howToTalkColumn(
-                    symbolName: "lasso",
-                    title: "Circle",
-                    explanation: "While you hold the keys, move the pointer around the thing you mean."
-                )
-                howToTalkColumnDivider
-                howToTalkColumn(
-                    symbolName: "wand.and.stars",
-                    title: "Hand it off",
-                    explanation: "Say \u{201C}do it for me\u{201D} and it takes the job. It asks before anything risky."
-                )
-            }
-            .padding(.vertical, 13)
-            .teachyGroup(horizontalPadding: 0)
-        }
-    }
-
-    private func howToTalkColumn(symbolName: String, title: String, explanation: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Image(systemName: symbolName)
-                    .font(DS.Fonts.sans(12, weight: .medium))
-                    .foregroundColor(DS.Colors.pointer)
-                Text(title)
-                    .font(DS.Fonts.itemTitle)
-                    .foregroundColor(DS.Colors.textPrimary)
-            }
-            Text(explanation)
-                .font(DS.Fonts.caption)
-                .foregroundColor(DS.Colors.textSecondary)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var howToTalkColumnDivider: some View {
-        Rectangle()
-            .fill(DS.Colors.hairline)
-            .frame(width: 1)
-            .padding(.vertical, 2)
-    }
-
-    // MARK: - Quick actions
-
-    /// The other ways in: the chat window, always-on listening, typing, dropping a file.
-    private var quickActionsSection: some View {
+    private var homeOverview: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 8) {
-                Button {
-                    ChatWindowController.shared.show()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "bubble.left.and.bubble.right")
-                            .font(DS.Fonts.sans(10.5, weight: .medium))
-                        Text("Open chat")
-                        Text("⌃⌘A")
-                            .foregroundColor(DS.Colors.textTertiary)
-                    }
-                    .fixedSize()
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Recent drawings")
+                        .font(DS.Fonts.itemTitle)
+                        .foregroundColor(DS.Colors.textPrimary)
+                    Spacer()
+                    Button("View all") { notchManager.selectedTab = .drawings }
+                        .teachyLinkButton()
                 }
-                .teachyButton(.secondary, size: .compact)
+                if history.entries.isEmpty {
+                    HStack(spacing: 10) {
+                        Image(systemName: "scribble.variable")
+                            .foregroundColor(DS.Colors.pointer)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Make something clear.").font(DS.Fonts.bodyEmphasized)
+                            Text("Ask Teachy to draw or explain what’s on your screen.")
+                                .font(DS.Fonts.caption)
+                                .foregroundColor(DS.Colors.textSecondary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .frame(height: 66)
+                } else {
+                    HStack(alignment: .top, spacing: 8) {
+                        ForEach(Array(history.entries.prefix(3))) { entry in
+                            Button {
+                                history.replay(entry.id)
+                                notchManager.collapse()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ZStack {
+                                        DS.Colors.fillTertiary
+                                        if let image = history.thumbnail(for: entry.id) {
+                                            Image(nsImage: image).resizable().scaledToFit()
+                                        } else {
+                                            Image(systemName: "scribble.variable")
+                                                .foregroundColor(DS.Colors.textSecondary)
+                                        }
+                                    }
+                                    .frame(height: 50)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    Text(entry.title)
+                                        .font(DS.Fonts.caption)
+                                        .foregroundColor(DS.Colors.textSecondary)
+                                        .lineLimit(1)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .pointerCursor()
+                            .accessibilityLabel("Replay \(entry.title)")
+                        }
+                    }
+                }
+            }
 
-                AlwaysOnPillView(showsNotice: false)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Connections")
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.textSecondary)
+                HStack(spacing: 8) {
+                    Button { notchManager.selectedTab = .connections } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "link")
+                            Text(connectionSummary).lineLimit(1)
+                            Spacer(minLength: 0)
+                            Image(systemName: "plus")
+                        }
+                    }
+                    .teachyButton(.secondary, size: .compact, isFullWidth: true)
+                    .accessibilityLabel("Manage connections, \(connectionSummary)")
+                    Button {
+                        ChatWindowController.shared.show()
+                        notchManager.collapse()
+                    } label: {
+                        Label("Open chat", systemImage: "bubble.left.and.bubble.right")
+                    }
+                    .teachyButton(.primary, size: .compact)
                     .fixedSize()
-
-                Spacer(minLength: 0)
+                    .accessibilityLabel("Open Teachy chat")
+                }
             }
-
-            HStack(spacing: 5) {
-                Text("Double-tap")
-                KeyboardKeyLabel(text: "control")
-                Text("to type a question. Drop a file on the notch to attach it.")
-            }
-            .font(DS.Fonts.caption)
-            .foregroundColor(DS.Colors.textSecondary)
-            .lineLimit(1)
-
+            PushToTalkShortcutPickerRow(shortcutMonitor: companionManager.globalPushToTalkShortcutMonitor)
             AlwaysOnNoticeLine()
-
             AttachmentChipsView(compact: true)
         }
+        .onAppear { history.reload() }
+    }
+
+    private var connectionSummary: String {
+        if connections.connectors.isEmpty { return "Add a connection" }
+        let active = connections.states.values.filter { $0.isConnected }.count
+        return active > 0 ? "\(active) connected" : "\(connections.connectors.count) configured"
     }
 
     // MARK: - Settings
@@ -149,6 +144,7 @@ struct NotchHomeTabView: View {
     private var settingsSection: some View {
         VStack(alignment: .leading, spacing: 9) {
             TeachySectionTitle(title: "Settings")
+            AlwaysOnPillView(showsNotice: true)
 
             VStack(alignment: .leading, spacing: 0) {
                 PublikAccountSection()
@@ -321,7 +317,7 @@ private struct AlwaysOnNoticeLine: View {
     }
 }
 
-/// "Hold [key] [key] and ask." — the headline of the panel — with a Change button
+/// Compact "Hold [key] [key] to talk" hint, with a Change button
 /// that records any two keys. Recording runs through the global event tap, so it
 /// works even though the notch panel never becomes the key window.
 private struct PushToTalkShortcutPickerRow: View {
@@ -352,10 +348,11 @@ private struct PushToTalkShortcutPickerRow: View {
                         }
                         .teachyButton(.quiet, size: .compact)
                     }
-                    Button("Change keys") {
+                    Button("Change") {
                         shortcutMonitor.beginRecordingNewShortcut()
                     }
                     .teachyButton(.quiet, size: .compact)
+                    .accessibilityLabel("Change talk shortcut")
                 }
             }
             .id(shortcutRefreshCounter)
@@ -383,7 +380,7 @@ private struct PushToTalkShortcutPickerRow: View {
         HStack(alignment: .center, spacing: 8) {
             headlineText("Hold")
             keyCaps(labels: PushToTalkShortcutKeys.currentKeyCapsuleLabels)
-            headlineText("and ask.")
+            headlineText("to talk")
         }
     }
 
@@ -402,14 +399,14 @@ private struct PushToTalkShortcutPickerRow: View {
 
     private func headlineText(_ text: String) -> some View {
         Text(text)
-            .font(DS.Fonts.display)
+            .font(DS.Fonts.bodyEmphasized)
             .foregroundColor(DS.Colors.textPrimary)
     }
 
     private func keyCaps(labels: [String]) -> some View {
         HStack(spacing: 5) {
             ForEach(Array(labels.enumerated()), id: \.offset) { _, keyLabel in
-                KeyboardKeyLabel(text: keyLabel, isProminent: true)
+                KeyboardKeyLabel(text: keyLabel)
             }
         }
     }

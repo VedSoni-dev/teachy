@@ -131,9 +131,14 @@ final class DictationController {
         }
 
         readinessSubscription = TeachyPublikSession.shared.$isReady
-            .filter { $0 }
-            .first()
-            .sink { [weak self] _ in self?.startMonitoringWhenPermitted() }
+            .removeDuplicates()
+            .sink { [weak self] isReady in
+                if isReady {
+                    self?.startMonitoringWhenPermitted()
+                } else {
+                    self?.stop()
+                }
+            }
     }
 
     func stop() {

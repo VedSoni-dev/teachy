@@ -131,6 +131,10 @@ final class TeachyPublikSession: ObservableObject {
     @Published var wallet: Publik.Wallet?
     @Published var choice: String?
     @Published var billingNotice: TeachyAIBillingError?
+    @Published var isSwitchingAccount = false
+    @Published var accountError: String?
+    var canLogOut = true
+    func logOut() {}
     func changePaymentChoice() {}
     func refreshWallet() async {}
     func openTopUp() {}
@@ -265,6 +269,9 @@ func runShots() {
         note: nil, buttons: [("sign_in", "Sign in with publik")]
     )
     render(setupView(CompanionManager()), width: panelWidth, name: "02-gate-sign-in")
+    session.isSwitchingAccount = true
+    render(setupView(CompanionManager()), width: panelWidth, name: "22-gate-after-logout")
+    session.isSwitchingAccount = false
 
     session.gate.screen = Publik.Screen(
         id: "sign_in", title: "Sign in with publik",

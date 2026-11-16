@@ -23,6 +23,9 @@ swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/Voice/VoicePolicy.swift" \
   "$APP/Voice/AlwaysOnPillView.swift" \
   "$APP/NotchHomeTabView.swift" \
+  "$APP/NotchPanelTab.swift" \
+  "$APP/ClickyNotchRootView.swift" \
+  "$APP/ClickyAudioSpectrumView.swift" \
   "$APP/ClickyNotchShape.swift" \
   "$APP/ClickyNotchSizing.swift" \
   "$APP/NotchScreenGeometry.swift" \
@@ -36,5 +39,5 @@ swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/Agent/Routines/RoutineStore.swift" \
   "$APP/Brain/BrainMarkdown.swift" \
   scripts/tests/home_shots/Stubs.swift \
-  scripts/tests/home_shots/main.swift 2>&1 | grep -E 'error' -A 6 || true
+  scripts/tests/home_shots/main.swift
 "$OUT"

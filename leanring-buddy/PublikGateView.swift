@@ -16,6 +16,12 @@ struct PublikGateView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if session.isSwitchingAccount {
+                Text("You’re logged out of Teachy. To use a different Publik account, sign out of Publik in your browser before signing in again.")
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let screen = gate.screen {
                 VStack(alignment: .leading, spacing: 10) {
                     TeachySetupStepHeader(headline: screen.title, explanation: screen.body)
@@ -135,6 +141,26 @@ struct PublikAccountSection: View {
                     }
                     .teachyLinkButton()
                 }
+            }
+
+            Button("Log out") {
+                session.logOut()
+            }
+            .teachyLinkButton(color: DS.Colors.destructive)
+            .disabled(!session.canLogOut)
+            .accessibilityHint("Return to sign-in to use a different Publik account")
+
+            if !session.canLogOut {
+                Text("To switch accounts, remove PUBLIK_API_KEY from the launch environment and restart Teachy.")
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let accountError = session.accountError {
+                Text(accountError)
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.destructive)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .task { await session.refreshWallet() }

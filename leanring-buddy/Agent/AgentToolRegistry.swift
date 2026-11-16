@@ -284,6 +284,10 @@ final class BackgroundAgentToolRegistry {
     }
 
     private final class Race<Value>: @unchecked Sendable {
+        // Swift 6.3.3 crashes in EarlyPerfInliner on this generic destructor under
+        // Release WMO. Keep just its destruction unoptimized; tool work stays optimized.
+        @_optimize(none) deinit {}
+
         private let lock = NSLock()
         private var continuation: CheckedContinuation<Value, Error>?
         private var early: Result<Value, Error>?

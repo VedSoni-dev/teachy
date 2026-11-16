@@ -558,6 +558,15 @@ final class CompanionManager: ObservableObject {
         activeScreenDrawInstruction = nil
     }
 
+    func cancelAIForAccountChange() {
+        buddyDictationManager.cancelCurrentDictation()
+        currentResponseTask?.cancel()
+        currentResponseTask = nil
+        backgroundAgentManager.cancelTask()
+        clearDetectedElementLocation()
+        clearActiveScreenDrawInstruction()
+    }
+
     func stop() {
         globalPushToTalkShortcutMonitor.stop()
         buddyDictationManager.cancelCurrentDictation()

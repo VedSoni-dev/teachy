@@ -67,7 +67,7 @@ npm run harness                      # validate all routes
 
 **Transient Cursor Mode**: When "Show Teachy" is off, pressing the hotkey fades in the cursor overlay for the duration of the interaction (recording → response → TTS → optional pointing), then fades it out automatically after 1 second of inactivity.
 
-**Notch Panel (boring.notch-inspired)**: Fixed-size floating `NSPanel` at top-center (`ClickyNotchSizing.windowSize`). SwiftUI animates a black `ClickyNotchShape` open/closed inside it — the window frame does not resize. Closed: physical-notch width with idle blinking face wing, or live-activity wings (cursor + spectrum) while listening / thinking / speaking / an agent job runs. **Home** is the only tab (`NotchPanelTab.home`). First launch: permissions → scored Teachy product tour (music + soft SFX) with a live “I can see your screen” pointing beat → Home; optional full Farza intro video. Hover opens; click-outside / Collapse closes. Reference clone: `reference/boring.notch` (gitignored).
+**Notch Panel (boring.notch-inspired)**: Fixed-size floating `NSPanel` at top-center (`ClickyNotchSizing.windowSize`). SwiftUI animates a glass `ClickyNotchShape` open/closed inside it — the window frame does not resize. Closed: physical-notch width with a compact still pointer wing, or live-activity wings (cursor + spectrum) while listening / thinking / speaking / an agent job runs. Pinned navigation switches between **Home**, **Agents**, **Drawings** and **Settings**. First launch: permissions → scored Teachy product tour (music + soft SFX) with a live “I can see your screen” pointing beat → Home; optional full Farza intro video. Hover opens; click-outside / Collapse closes. Reference clone: `reference/boring.notch` (gitignored).
 
 ## Key Files
 
@@ -104,9 +104,9 @@ npm run harness                      # validate all routes
 | `ClickyNotchSizing.swift` | ~40 | Open/closed sizes, corner radii, spring animations (boring.notch `matters.swift`). |
 | `ClickyNotchShape.swift` | ~75 | Animatable notch silhouette (DynamicNotchKit / boring.notch). |
 | `ClickyAudioSpectrumView.swift` | ~180 | Closed-notch spectrum bars + idle blinking face. |
-| `ClickyNotchRootView.swift` | ~370 | Root notch UI — one `TeachyGlassSurface` in the notch shape: clear glass when closed, frosted when open, solid black with Reduce Transparency; live activity, header, spring open height. |
+| `ClickyNotchRootView.swift` | ~370 | Root notch UI — one `TeachyGlassSurface` in the notch shape: clear glass when closed, solid black when open; live activity, compact header navigation, spring open height. |
 | `NotchWindowManager.swift` | ~220 | Fixed-size floating `NSPanel`, hover-to-open, click-outside collapse. |
-| `NotchPanelView.swift` | ~70 | Thin notch panel shell — setup/onboarding until done, then the Home tab (the only `NotchPanelTab` case). |
+| `NotchPanelView.swift` | ~70 | Thin notch panel shell — setup/onboarding until done, then the selected scroll page; navigation lives in the root header. |
 | `NotchPanelSharedComponents.swift` | ~110 | Shared helpers for the notch panel: `FlowLayout` and the free-function `openRouterModelPickerRow`. (`KeyboardKeyLabel` moved to `DesignSystem.swift`.) |
 | `NotchHomeTabView.swift` | ~415 | Home tab, top to bottom: the "Hold [keys] and ask." headline with the shortcut recorder, a three-column group of what you can do, quick actions (chat window, always-on, typing, files), agents / connectors / drawings / memory sections, then settings as one grouped list of rows that open in place (account, voice, microphone, dictation, shortcuts, pointer colour, browser, privacy, updates, advanced) and the feedback links. |
 | `NotchSetupOnboardingView.swift` | ~575 | Setup stage router — permission choreography, one-time Automation explainer, API key setup, and the in-panel Teachy product tour (`TeachyOnboardingPage`). |
@@ -134,6 +134,7 @@ npm run harness                      # validate all routes
 | `ClickyAnalytics.swift` | ~121 | PostHog analytics integration for usage tracking. |
 | `WindowPositionManager.swift` | ~262 | Window placement logic, Screen Recording permission flow, and accessibility permission helpers. |
 | `AppBundleConfiguration.swift` | ~28 | Runtime configuration reader for keys stored in the app bundle Info.plist. |
+| `TeachyPublikSession.swift` | ~140 | Publik sign-in state, account logout, stale-response protection, and account beacons. |
 | `worker/src/index.ts` | ~220 | Cloudflare Worker proxy. OpenRouter primary; Anthropic/ElevenLabs/AssemblyAI optional. |
 | `worker/src/openrouter.ts` | ~200 | OpenRouter format conversion (Anthropic SSE ↔ OpenAI) shared by worker and local proxy. |
 | `worker/local-proxy.mjs` | ~305 | Local dev proxy — same routes as production worker. |
@@ -155,6 +156,22 @@ open leanring-buddy.xcodeproj
 **Signing team required for dev:** Set your Apple Development Team in Xcode → Signing & Capabilities. Without it, macOS treats each rebuild as a new unsigned app and Accessibility permission won't stick.
 
 **Do NOT run `xcodebuild` from the terminal** — it invalidates TCC (Transparency, Consent, and Control) permissions and the app will need to re-request screen recording, accessibility, etc.
+
+## Notch UI (15 Nov 2026)
+
+Home shows recent drawings, connection status, Open chat and the voice shortcut. `NotchPanelTab.swift` defines Home, Agents, Drawings, Connections and Settings. Home/Agents share the compact root header with Drawings/Settings icon buttons; `NotchPanelView` holds the selected scrolling page. Settings includes account/logout, always-on voice and other preferences, followed by Connectors and Memory. File drag-over selects Home. Shortcut recording cancels when leaving Home.
+
+The expanded black shell is 520×240pt. Closed idle uses the real camera width plus symmetric 24pt wings and 8pt outer padding (249pt with a 185pt camera). A notchless display uses a 48pt idle indicator. Keep the real camera reservation intact in both idle and active states. Leaving the visible panel collapses after 180ms; re-entry, attachment drag and native menu tracking cancel pending closure. The full transparent hosting window is not a hover target. `scripts/tests/run_notch_hover_tests.sh` exercises the real manager with temporary stubs. Render `scripts/tests/render_home_shots.sh` for pages and notched/notchless states; its stubs read no live app data. Use Xcode GUI for the full Release build and validate live navigation after installing.
+
+## Drawing performance (15 Nov 2026)
+
+- Daily installs should use Xcode **Product → Build For → Profiling** (Release), then copy the completed signed `Build/Products/Release/Teachy.app` to `~/Applications/Teachy.app`. The dev-install phase only handles Debug and runs before final signing; do not treat its copy as the finished signed build.
+- App startup initializes `SceneDirector.shared` before Home is shown, so saved-drawing Replay works even before the first new AI request. Keep this eager registration when changing startup.
+- 2D overlays use a finite timeline for reveal/fade intervals. Settled drawings and hold gaps do not request frames. New items restart the schedule; frozen replay snapshots remain deterministic. Check `scripts/tests/run_overlay_idle_tests.sh`.
+- 3D controllers sleep both their timer and SceneKit after the settling interval. Commands, gestures, viewport changes, narration and reopening wake them; real motion stays active. No default decorative sway. Preserve the three-angle opening framing envelope used by narration.
+- Cache immutable geometry bounds with weak keys; invalidate world bounds and label anchors on scene changes. Batch SceneKit flushes at actual geometry/transform boundaries. New mutation paths must invalidate and wake as appropriate.
+- Run `scripts/tests/run_scene3_tests.sh` for idle/wake, geometry replacement, motion stopping, camera, labels and replay coverage. Its compiler failures must stop the script rather than run a stale executable.
+- Swift 6.3.3 Release WMO crashes in `EarlyPerfInliner` on the generic `BackgroundAgentToolRegistry.Race` destructor. Its explicit `@_optimize(none)` destructor is a narrow workaround; the rest of the app remains optimized. Recheck before removing it after a compiler upgrade.
 
 ## Cloudflare Worker
 
@@ -256,6 +273,11 @@ Do NOT update this file for minor edits, bug fixes, or changes that don't affect
 - `worker/` and the Windows port still speak OpenRouter; the macOS app no longer uses the worker for AI.
 - Self-test: `PUBLIK_SELF_TEST=1 ~/Applications/Teachy.app/Contents/MacOS/Teachy` → `publik self-test: ok deckhand 1.0`.
 
+### Account switching
+- `TeachyPublikSession.swift` owns the sign-in gate and account state. Account → Log out removes this listing’s local Publik credential, clears account state, stops active AI work, and restarts sign-in. The browser’s Publik session is separate; users can sign out there to choose another account. A launch-time `PUBLIK_API_KEY` must be removed before switching.
+- Logout preserves Teachy history, settings, and own-provider keys. The copied `Publik.swift` SDK is unchanged.
+- `scripts/tests/run_publik_session_tests.sh` tests logout with temporary credentials and a fake Publik service; it never accesses the real login or network.
+
 ## Memory (the Brain)
 - Source of truth: two plain Markdown files the person can edit, `~/.teachy/brain/PROFILE.md` (durable) and `~/.teachy/brain/VOLATILE.md` (current), plus `conversation.jsonl` (last 40 messages). Code: `leanring-buddy/Brain/`.
 - `BrainStore.shared` is the only way in. It re-reads the files on every call (hand edits are picked up), writes atomically, and is safe from any thread.
@@ -272,7 +294,7 @@ Direction: Teachy is a full HeyClicky competitor; the course/teaching system was
 - **Drawing engine** (`Scene/`, spec `docs/SCENE-SCRIPT.md`): the model streams a line-based scene script; `SceneSession` renders overlay shapes, cards and SceneKit 3D with simulations. `Core/SceneDirector` starts one when a reply carries [SHOW: …]. Demo without AI: `TEACHY_SCENE_DEMO=<sample>`.
 - **Dictation** (`Dictation/`): hold Fn+Control, double-tap for hands-free. `DictationController.shared.startWhenReady()` from the app delegate.
 - **Memory** (`Brain/`): see "Memory (the Brain)". Injected into the voice prompt; conversation persisted.
-- **Connectors** (`Connectors/`): MCP client with no dependencies — stdio (local command) and HTTP (streamable, with HTTP+SSE fallback), API key or browser sign-in (OAuth + PKCE). `ConnectorCenter.shared` owns the list (`~/.teachy/connectors/mcp.json`, secrets only in the Keychain) and gives the agent tools named `mcp__<connector>__<tool>`, each with an `mcpRisk`. Home card: `ConnectorsSection()` (not mounted yet). Tests: `scripts/tests/run_connectors_tests.sh`. The Composio poller is switched off, pending deletion.
+- **Connectors** (`Connectors/`): MCP client with no dependencies — stdio (local command) and HTTP (streamable, with HTTP+SSE fallback), API key or browser sign-in (OAuth + PKCE). `ConnectorCenter.shared` owns the list (`~/.teachy/connectors/mcp.json`, secrets only in the Keychain) and gives the agent tools named `mcp__<connector>__<tool>`, each with an `mcpRisk`. Settings section: `ConnectorsSection()`. Tests: `scripts/tests/run_connectors_tests.sh`. The Composio poller is switched off, pending deletion.
 - **Agent jobs, permission gate, Drive** (`Agent/`): every tool call goes through `BackgroundAgentToolRegistry.invoke` (`Agent/AgentToolRegistry.swift`), which classifies it with `ToolPolicy` (safe / needsConsent / alwaysAsk / blocked, incl. a conservative shell reader), checks `ConsentLedger` (allow once / for the job / always per tool+app / not now for 30 min) and asks through `ConsentPrompter` (card under the notch). Tools are private to the registry: there is no other way to run one. `AgentJobRunner` (`Agent/AgentJob.swift`) is the loop: plan via the `update_plan` pseudo-tool, 25 steps / 10 min budget, per-call timeouts, same failure twice = change approach; jobs are published on `AgentJobCenter.shared.jobs` and shown by `AgentJobCardView`. Drive (`Agent/Drive/`) is accessibility-first control of one app: `drive_snapshot` then `drive_press` / `drive_set_text` / `drive_menu` / `drive_key` / `drive_scroll`, `drive_click_point` last (screenshot pixels + `capture_id`, converted by `DriveCoordinates`); every action re-reads the window and returns a diff; Escape, a click or a 40 pt mouse move stops the job (`DriveTakeoverMonitor`); password / code / card fields hand back. `ui_action` is gone. Guided-step `.act` turns get `ToolPolicy.guidedStepToolNames` only (read-only tools + Drive) via `BackgroundAgentManager.runScopedToolTurn`; `BackgroundAgentManager.runTask` is the full-toolset job entry (nothing calls it yet). Browser-cookie tools are blocked unless `teachy.agent.allowBrowserCookies` is set in UserDefaults.
 - **Tests** (no Xcode test target needed): `scripts/tests/run_segmenter_tests.sh`, `run_brain_tests.sh`, `run_dictation_tests.sh`, `run_scene_tests.sh`, `run_agent_tests.sh`, `run_connectors_tests.sh`, `run_uiextras_tests.sh`. Model eval: `scripts/eval/run_scene_eval.sh`.
 - **Builds**: use `SKIP_DEV_INSTALL=1` with xcodebuild unless you mean to replace `~/Applications/Teachy.app`.

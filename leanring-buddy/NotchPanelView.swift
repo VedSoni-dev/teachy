@@ -2,16 +2,12 @@
 //  NotchPanelView.swift
 //  leanring-buddy
 //
-//  Expanded notch body. Home is the only tab; setup and onboarding take its
-//  place until they are done. Shell lives in ClickyNotchRootView.
+//  Expanded notch body with independently scrolling pages.
+//  Setup and onboarding take its place until ready. Shell lives in ClickyNotchRootView.
 //
 
 import AVFoundation
 import SwiftUI
-
-enum NotchPanelTab: String, CaseIterable {
-    case home
-}
 
 struct NotchPanelView: View {
     @ObservedObject var companionManager: CompanionManager
@@ -23,24 +19,16 @@ struct NotchPanelView: View {
     @ObservedObject private var publikSession = TeachyPublikSession.shared
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 0) {
-                if publikSession.isReady {
-                    PublikBillingBanner()
+        VStack(spacing: 0) {
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 0) {
+                    if publikSession.isReady { PublikBillingBanner() }
+                    tabContent
                 }
-                tabContent
-                    .id(notchManager.selectedTab)
-                    .transition(
-                        .asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.96, anchor: .top)),
-                            removal: .opacity
-                        )
-                    )
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
             }
-            .padding(.horizontal, 8)
-            .padding(.top, 4)
-            .padding(.bottom, 8)
-            .animation(.smooth(duration: 0.28), value: notchManager.selectedTab)
+            .id(notchManager.selectedTab)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .preferredColorScheme(.dark)
@@ -59,10 +47,7 @@ struct NotchPanelView: View {
         if needsSetup {
             NotchSetupOnboardingView(companionManager: companionManager, notchManager: notchManager)
         } else {
-            switch notchManager.selectedTab {
-            case .home:
-                NotchHomeTabView(companionManager: companionManager, notchManager: notchManager)
-            }
+            NotchHomeTabView(companionManager: companionManager, notchManager: notchManager)
         }
     }
 }

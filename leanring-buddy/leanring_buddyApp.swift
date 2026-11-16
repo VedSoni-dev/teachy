@@ -52,10 +52,23 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
         // Sign in with publik runs before any Teachy screen. PUBLIK_SELF_TEST=1
         // makes it print its self-test line and exit here.
+        TeachyPublikSession.shared.onLogOut = { [weak self] in
+            self?.companionManager.cancelAIForAccountChange()
+            VoiceModeController.shared.setAlwaysOn(false)
+            SceneDirector.shared.stop()
+            AgentJobCenter.shared.stopAll()
+            LocalSpeechSynthesizer.stopAllPlayback()
+            self?.notchManager?.show()
+            self?.notchManager?.expand()
+        }
         TeachyPublikSession.shared.start()
 
         ClickyAnalytics.configure()
         ClickyAnalytics.trackAppOpened()
+
+        // Register saved-drawing playback before Home can offer Replay.
+        // The director would otherwise stay lazy until the first new AI drawing.
+        _ = SceneDirector.shared
 
         notchManager = NotchWindowManager(companionManager: companionManager)
         menuBarPanelManager = MenuBarPanelManager(
