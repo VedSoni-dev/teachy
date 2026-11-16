@@ -91,7 +91,9 @@ final class BuddyDictationManager: NSObject, ObservableObject {
     }
 
     private let transcriptionProvider: any BuddyTranscriptionProvider
-    private let audioEngine = AVAudioEngine()
+    /// Replaced with a fresh engine for every recognition session (see
+    /// `startRecognitionSession`), so it always reads the microphone's current format.
+    private var audioEngine = AVAudioEngine()
     private var activeTranscriptionSession: (any BuddyStreamingTranscriptionSession)?
     private var activeStartSource: BuddyDictationStartSource?
     private var draftCallbacks: BuddyDictationDraftCallbacks?
@@ -297,6 +299,10 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             print("🎙️ BuddyDictationManager: recognition session started")
         } catch {
             isPreparingToRecord = false
+            // The transcription session may already be open when the microphone fails.
+            audioEngine.stop()
+            audioEngine.inputNode.removeTap(onBus: 0)
+            activeTranscriptionSession?.cancel()
             lastErrorMessage = userFacingErrorMessage(
                 from: error,
                 fallback: "couldn't start voice input. try again."
@@ -379,13 +385,37 @@ final class BuddyDictationManager: NSObject, ObservableObject {
         self.activeTranscriptionSession = activeTranscriptionSession
         print("🎙️ BuddyDictationManager: provider ready, starting audio engine")
 
+        // A fresh engine every session. A reused engine keeps the input format it
+        // read when it was first used; once the microphone's hardware rate changes
+        // (AirPods drop from 48 kHz to 24 kHz when their mic opens, a different
+        // device is picked) that stale format no longer matches the hardware, and
+        // `installTap` raises an Objective-C exception. Swift cannot catch it: it
+        // unwinds through the Swift concurrency runtime, AppKit swallows it, and
+        // the main thread is left with a dangling "current executor" record that
+        // crashes the next `MainActor.assumeIsolated` (seen in the paint trail's
+        // frame timer, Nov 2026).
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine = AVAudioEngine()
+
         // Use the microphone chosen in Settings (or the Mac's input when following the system).
         let activeMicrophone = MicrophoneCenter.applyWithFailover(to: audioEngine)
         print("🎙️ Listening with: \(activeMicrophone?.name ?? "no microphone")")
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        let hardwareInputFormat = inputNode.inputFormat(forBus: 0)
 
-        inputNode.removeTap(onBus: 0)
+        // Never hand `installTap` a format it will reject: fail as a Swift error instead.
+        guard inputFormat.sampleRate > 0,
+              inputFormat.channelCount > 0,
+              inputFormat.sampleRate == hardwareInputFormat.sampleRate else {
+            throw NSError(
+                domain: "TeachyDictation",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "The microphone isn't ready. Try again."]
+            )
+        }
+
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             self?.activeTranscriptionSession?.appendAudioBuffer(buffer)
             self?.updateAudioPowerLevel(from: buffer)
