@@ -81,6 +81,10 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         DictationController.shared.startWhenReady()
         // Listens for the Chrome extension helper so agent jobs can work in the browser.
         BrowserBridge.shared.start()
+        // Install the browser helper opens Terminal and asks Teachy to talk the person through it.
+        BrowserBridge.shared.askTeachy = { [weak self] request in
+            self?.companionManager.submitSyntheticCompanionRequest(request)
+        }
         // Scheduled routines run as agent jobs while the app is open.
         RoutineScheduler.shared.start(using: companionManager.backgroundAgentManager)
         // The chat window: full conversation history, a composer and file drops (Control+Command+A).

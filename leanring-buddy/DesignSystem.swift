@@ -35,7 +35,9 @@ enum DS {
     // MARK: - Color Tokens
 
     enum Colors {
-        static let workspaceBackground = Color(hex: "#1F1F1F")
+        // Chat and Settings sit on the same black as Home so every notch page
+        // reads as one piece with the camera housing.
+        static let workspaceBackground = Color.black
         static let workspaceCard = Color(hex: "#272727")
         static let workspaceBorder = Color.white.opacity(0.09)
 

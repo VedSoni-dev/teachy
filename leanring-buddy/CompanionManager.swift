@@ -249,10 +249,11 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var isOverlayVisible: Bool = false
 
     /// User preference for whether the Teachy cursor should be shown.
-    /// When toggled off, the overlay is hidden and push-to-talk is disabled.
+    /// When off (the default), the cursor stays hidden until the next
+    /// interaction and fades in only for it (transient cursor mode).
     /// Persisted to UserDefaults so the choice survives app restarts.
     @Published var isClickyCursorEnabled: Bool = UserDefaults.standard.object(forKey: "isClickyCursorEnabled") == nil
-        ? true
+        ? false
         : UserDefaults.standard.bool(forKey: "isClickyCursorEnabled")
 
     /// The color of the on-screen cursor triangle. Persisted to UserDefaults.
@@ -320,6 +321,11 @@ final class CompanionManager: ObservableObject {
             self?.submitSyntheticCompanionRequest(text)
         }
         VoiceModeController.shared.onBargeIn = { [weak self] in self?.currentResponseTask?.cancel() }
+        // Tap the screen beside the camera to talk (MacBooks with light + motion sensors).
+        ScreenTapController.shared.onTap = { [weak self] in self?.handleScreenTap() }
+        ScreenTapController.shared.startFollowingSettings()
+        // Webcam eye tracking: where the person looks while asking becomes part of the question.
+        GazeTracker.shared.startFollowingSettings()
         // Walkthroughs speak through the same voice and look at the screen under the cursor.
         WalkthroughCenter.shared.speak = { [weak self] line in
             guard let self else { return }
@@ -750,6 +756,41 @@ final class CompanionManager: ObservableObject {
             }
     }
 
+    /// True while a screen tap started listening and the next tap should send the question.
+    private var isListeningFromScreenTap = false
+    private var screenTapListeningTimeoutTask: Task<Void, Never>?
+    /// A tap-started question is sent on its own after this long, in case the second tap never comes.
+    private static let screenTapListeningTimeoutInSeconds: UInt64 = 45
+
+    /// A recognised tap on the screen (see `ScreenTapController`): the first tap behaves
+    /// like pressing the talk key, the next like releasing it. Tapping while Teachy speaks
+    /// stops it and starts listening, exactly like the key.
+    func handleScreenTap() {
+        if isListeningFromScreenTap {
+            finishScreenTapListening()
+            return
+        }
+        // The talk key is already held: the keyboard owns this question.
+        guard !buddyDictationManager.isDictationInProgress else { return }
+        isListeningFromScreenTap = true
+        DS.Haptics.stateChanged()
+        handleShortcutTransition(.pressed)
+        screenTapListeningTimeoutTask?.cancel()
+        screenTapListeningTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.screenTapListeningTimeoutInSeconds * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.finishScreenTapListening()
+        }
+    }
+
+    private func finishScreenTapListening() {
+        guard isListeningFromScreenTap else { return }
+        isListeningFromScreenTap = false
+        screenTapListeningTimeoutTask?.cancel()
+        screenTapListeningTimeoutTask = nil
+        handleShortcutTransition(.released)
+    }
+
     private func bindShortcutTransitions() {
         shortcutTransitionCancellable = globalPushToTalkShortcutMonitor
             .shortcutTransitionPublisher
@@ -791,6 +832,7 @@ final class CompanionManager: ObservableObject {
             clearDetectedElementLocation()
             clearActiveScreenDrawInstruction()
             mouseOutlineTracker.startTracking()
+            GazeTracker.shared.questionStarted()
             PaintTrailPresenter.shared.begin()
 
             // Dismiss the onboarding prompt if it's showing
@@ -831,6 +873,7 @@ final class CompanionManager: ObservableObject {
             ClickyAnalytics.trackPushToTalkReleased()
             VoiceModeController.shared.resume(reason: "talkKey")
             mouseOutlineTracker.stopTracking()
+            GazeTracker.shared.questionEnded()
             PaintTrailPresenter.shared.end()
             pendingKeyboardShortcutStartTask?.cancel()
             pendingKeyboardShortcutStartTask = nil
@@ -890,7 +933,7 @@ final class CompanionManager: ObservableObject {
     /// the task (or offers to) when they want it done. The bracket-tag contracts below
     /// ([POINT:], [SHOW:], [JOB:], [DO:], [GUIDE:], [CLIPBOARD:], [REMEMBER:]) are what
     /// `sendCompanionChatResponse` parses — keep their wording in sync with that code.
-    private func buildCompanionVoiceResponseSystemPrompt() -> String {
+    private func buildCompanionVoiceResponseSystemPrompt(depth: VoiceTurnDepth = .quick) -> String {
         // Situational awareness: tell the model the frontmost app/window by name,
         // not just from screenshot pixels — this is what lets "I have Claude open,
         // what's cowork?" work without the user having to say what app they're in.
@@ -950,24 +993,47 @@ final class CompanionManager: ObservableObject {
             interpreterModeSection = ""
         }
 
-        return """
-        You are Teachy — a sharp, friendly assistant sitting next to them at their Mac, looking at the same screen.
-        They just asked you something out loud. Your reply is spoken, so talk like a capable friend in the room —
-        warm, direct, a little playful, never like Siri, never like a help article, never like a corporate bot.
+        // Teaching, explaining, debugging: more room and an explicit "go further" brief.
+        let depthSection: String
+        switch depth {
+        case .deep:
+            depthSection = """
 
-        Your job is to get them unstuck and get the thing done:
-        - Answer what they actually asked, directly, in the first sentence. Usually 1–2 short sentences in total; three only if they asked for detail.
-        - Be specific to WHAT YOU SEE on screen — name the real button, tab, menu, or window.
-        - When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there —
+        THIS ONE DESERVES A REAL ANSWER (they want to understand, decide or fix something):
+        - Think it through before you speak, then teach it the way a brilliant friend would: the core idea in plain words first, then the one or two things that make it click (why it works, a concrete example, a vivid comparison), then what to do or look at next. Four to seven spoken sentences is fine; never pad.
+        - Use the screen. If the thing they asked about, or the parts that explain it, are visible, mark them with [MARK:] so the explanation happens on their screen. If it is not on screen and a picture would help, use [SHOW:].
+        - Bring the best resource. If a doc page, a video, a reference or a search would genuinely help them go further, open it with [OPEN: url] and say so in a few words.
+        - Anticipate the follow-up. End with the one next step or question they would most likely ask, answered or offered, not a generic "anything else?".
+        """
+        case .quick:
+            depthSection = ""
+        }
+
+        return """
+        You are Teachy: a brilliant, warm friend sitting next to them at their Mac, looking at the same screen, who knows a lot and loves getting things done.
+        They just asked you something out loud. Your reply is spoken, so talk like that friend in the room:
+        direct, a little playful, never like Siri, never like a help article, never like a corporate bot.
+
+        HOW YOU WORK (the same instincts as a great coding agent, aimed at everyday life):
+        - Own the outcome, not just the literal question. Work out what they are really trying to do and help with THAT: answer what they asked, then take the obvious next step for them (point at it, mark it, open it, write it, or do it) without asking permission for things that are clearly wanted and easy to undo.
+        - Bias to action. If they want something done and you can do it, do it ([DO:], [JOB:], [WRITE:], [OPEN:]) and say in one short line that you are on it. Only ask a question when the answer really changes what you would do, and then ask one, specific.
+        - Ground everything in what you see. Name the real button, tab, file, error line or number on their screen. Never guess at something you could read off the screenshot.
+        - Go a step beyond, with taste. One genuinely useful extra (the shortcut they did not know, the mistake about to bite them, the better way, the link that answers the next question) beats three generic tips. Skip the extra when it would only be noise.
+        - Be honest. If you are not sure, say what you would check. Never invent a button, a fact or a link.
+
+        WHAT YOU CAN DO IN A REPLY (tags are stripped before speaking; combine them when it helps):
+        - Answer what they actually asked in the first sentence. Quick asks: one or two short sentences. Bigger asks: as long as it takes to be genuinely useful, and no longer.
+        - When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there,
           and say "here" / "right here" / "this one" ONLY when you're including that [POINT:...] tag
-          in the same reply. If you can't confidently identify a specific, pointable target (vague
-          references like "that tab" without a clear match), describe it in words instead — don't
-          say "here" with nothing backing it, that's worse than not pointing at all.
+          in the same reply. If you can't confidently identify a specific, pointable target, describe it
+          in words instead: saying "here" with nothing behind it is worse than not pointing at all.
         \(SceneDirector.voicePromptRules)
-        - When they want it DONE, do it rather than explain it: [DO:] for a single native command, [JOB:] for real multi-step work, [GUIDE:] when they'd rather click through it themselves with you walking them through each step. If it's unclear whether they want you to do it, answer, then offer in one short line ("want me to just do it?").
-        - When they want real multi-step work DONE for them — research something on the web, sort or rename files, build or change something, anything across several apps or their connected services — add [JOB: the whole task in one clear sentence, with every detail they gave] and SAY one short line that you're on it. A job runs in the background, shows its plan, and asks them before anything risky. Don't use [JOB:] for a single native command (that's [DO:]) or when they'd rather do it themselves with you guiding (that's [GUIDE:]).
+        - Proactively mark the screen: when your answer is about things that are visible (the parts of a diagram, the fields of a form, the lines of an error, the settings that matter), use [MARK:] even if they did not ask you to circle anything. That is what makes you feel like you are really looking with them.
+        - Open links: [OPEN: https://…] opens a page in their browser while you talk: the right docs page, a tutorial or video, a search (e.g. https://www.google.com/search?q=… or https://www.youtube.com/results?search_query=…), a site they named. At most two. Only real, well-known URLs or searches; never guess a deep link you are not sure exists, use a search instead. Never open anything to buy, send or sign in for them.
+        - When they want it DONE, do it rather than explain it: [DO:] for a single native command, [JOB:] for real multi-step work (it can browse the web in a real browser, use the mouse and keyboard, and work across apps), [WALK:] when they'd rather click through it themselves. If it's unclear whether they want you to do it, answer, then offer in one short line ("want me to just do it?").
+        - When they want real multi-step work DONE for them (research something on the web, fill something in, sort or rename files, build or change something, anything across several apps or their connected services) add [JOB: the whole task in one clear sentence, with every detail they gave and anything you can see that it needs] and SAY one short line that you're on it. A job runs in the background, shows its plan, and asks them before anything risky. Don't use [JOB:] for a single native command (that's [DO:]).
         \(WritingPrompt.voicePromptRule)
-        - If they share something personal — their job, an interest, a joke, a life detail — tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.
+        - If they share something personal (their job, an interest, a joke, a life detail) tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them.\(depthSection)
 
         How you sound (spoken aloud):
         - Natural sentences. Contractions. Short pauses implied with commas, not stage directions.
@@ -980,7 +1046,7 @@ final class CompanionManager: ObservableObject {
         You can natively operate the Mac — open, quit, activate, or hide apps, and open, close, or switch browser tabs and windows — without ever simulating a click. When someone gives you a DIRECT native-Mac command ("open Spotify", "close this tab", "switch to Safari", "quit Slack"), say a short spoken heads-up ("Opening Spotify for you") and tag the action with [DO: precise action description] in your reply. The tag is stripped before speaking and executed immediately — the user never sees it.
         - Compound direct commands are fine ("close all my tabs and open Figma") — emit one [DO:] tag per action, in order. They execute as one sequence.
         - Use [DO:] only for direct, reversible native commands (app open/quit/activate/hide, tab/window open/close/switch — including "close all tabs" / "close the other tabs").
-        - For tasks they want to do themselves step by step with you, use [GUIDE:]; for multi-step work they want done for them, use [JOB:] — not [DO:].
+        - For tasks they want to do themselves step by step with you, use [WALK:]; for multi-step work they want done for them, use [JOB:] — not [DO:].
         - NEVER tag [DO:] for anything that deletes user data, spends money, sends an email or message on their behalf, or cannot be easily undone. For those, explain and let them act.
         - Examples of safe [DO:] use: "Opening Spotify for you. [DO: open app Spotify]" — "Sure, closing this tab. [DO: close active browser tab]" — "Switching over to Arc. [DO: activate app Arc]".
 
@@ -1035,6 +1101,7 @@ final class CompanionManager: ObservableObject {
                     mouseOutlineContext = nil
                 }
             } catch {
+                _ = GazeTracker.shared.consumeQuestionGaze()
                 print("⚠️ Companion screen capture failed: \(error.localizedDescription)")
                 if WindowPositionManager.handleScreenCaptureFailure(error) {
                     refreshAllPermissions()
@@ -1134,14 +1201,24 @@ final class CompanionManager: ObservableObject {
                 }
             }
 
+            // Where the person looked while asking (webcam eye tracking, when on and calibrated).
+            let gazeContext = CompanionGazeContext.build(
+                gazeSamples: GazeTracker.shared.consumeQuestionGaze(),
+                screenCaptures: screenCaptures
+            )
+
             var labeledImages = await buildLabeledAnnotatedImages(
                 screenCaptures: screenCaptures,
-                mouseOutlineContext: mouseOutlineContext
+                mouseOutlineContext: mouseOutlineContext,
+                gazeContext: gazeContext
             )
 
             var transcriptWithSpatialHint = transcript
             if let spatialContextLabel = mouseOutlineContext?.spatialContextLabel {
                 transcriptWithSpatialHint += "\n\n[\(spatialContextLabel) — the user circled this region on screen while asking.]"
+            }
+            if let gazeContext {
+                transcriptWithSpatialHint += "\n\n" + gazeContext.questionHint
             }
 
             // Attached files, or the document/page in front when the question is about it.
@@ -1157,7 +1234,9 @@ final class CompanionManager: ObservableObject {
                 // Built once into a local so `pendingGuidedTaskVerificationResult` (read
                 // by `guidedTaskPromptSection()` inside this call) can be cleared right
                 // after — it's only meant to influence this single turn's prompt.
-                let systemPromptForThisTurn = buildCompanionVoiceResponseSystemPrompt()
+                // Teaching / explaining / debugging gets more thought and more room; commands stay instant.
+                let turnDepth = VoiceTurnDepth.classify(transcript)
+                let systemPromptForThisTurn = buildCompanionVoiceResponseSystemPrompt(depth: turnDepth)
                 pendingGuidedTaskVerificationResult = nil
                 currentBrowserTabContext = nil
 
@@ -1172,6 +1251,8 @@ final class CompanionManager: ObservableObject {
                     conversationHistory: historyForAPI,
                     userPrompt: transcriptWithSpatialHint,
                     job: .voice,
+                    reasoningEffort: turnDepth.reasoningEffort,
+                    maxTokens: turnDepth.maxTokens,
                     onTextChunk: { accumulatedText in
                         streamingSpeech.feed(accumulatedText)
                         ChatTimeline.shared.streamingReply(text: accumulatedText, isFinal: false)
@@ -1225,9 +1306,16 @@ final class CompanionManager: ObservableObject {
                     )
                 }
 
+                // [OPEN: url] opens a link worth seeing (a doc page, a video, a search) in their
+                // browser while Teachy is still talking. Web links only, two at most.
+                let (replyWithoutOpenTags, linksToOpen) = VoiceOpenLinks.extract(from: replyWithoutJobTag)
+                for link in linksToOpen {
+                    NSWorkspace.shared.open(link)
+                }
+
                 // [WRITE: …] drafts text from what's on screen, in their voice, and types it
                 // into the field they have focused.
-                let (replyWithoutWriteTag, writeInstruction) = VoiceTag.extract("WRITE", from: replyWithoutJobTag)
+                let (replyWithoutWriteTag, writeInstruction) = VoiceTag.extract("WRITE", from: replyWithoutOpenTags)
                 if let writeInstruction {
                     Task { @MainActor [weak self] in
                         let outcome = await ScreenAwareWriter.shared.writeAndInsert(instruction: writeInstruction, screenshots: labeledImages)
@@ -2017,7 +2105,8 @@ final class CompanionManager: ObservableObject {
     /// screens, so the model isn't confused by elements from an off-focus display.
     private func buildLabeledAnnotatedImages(
         screenCaptures: [CompanionScreenCapture],
-        mouseOutlineContext: CompanionMouseOutlineContext?
+        mouseOutlineContext: CompanionMouseOutlineContext?,
+        gazeContext: CompanionGazeContext? = nil
     ) async -> [(data: Data, label: String)] {
         // Detect AX elements concurrently with image annotation (off main thread).
         // We guard on the instance-level hasAccessibilityPermission property which
@@ -2074,18 +2163,26 @@ final class CompanionManager: ObservableObject {
             """
         }()
 
-        return screenCaptures.map { screenCapture in
+        return screenCaptures.enumerated().map { screenCaptureIndex, screenCapture in
             let outlinePointsForCapture = screenCapture.isCursorScreen
                 ? (mouseOutlineContext?.outlinePointsInScreenshotSpace ?? [])
                 : []
-            let highlightedCellsForCapture = screenCapture.isCursorScreen
+            var highlightedCellsForCapture = screenCapture.isCursorScreen
                 ? (mouseOutlineContext?.touchedGridCellLabels ?? [])
                 : []
+            let gazeContextForCapture = gazeContext?.screenCaptureIndex == screenCaptureIndex ? gazeContext : nil
+            if let gazeContextForCapture {
+                highlightedCellsForCapture += gazeContextForCapture.gazeRegionCellLabels.filter { !highlightedCellsForCapture.contains($0) }
+            }
 
             var dimensionInfo = " (image dimensions: \(screenCapture.screenshotWidthInPixels)x\(screenCapture.screenshotHeightInPixels) pixels, grid overlay: columns A-X, rows 1-16; prefer [POINT:ax:ID:label] when target is in the elements list, otherwise [POINT:x,y:label] pixels or [POINT:cell:label])"
             if let spatialContextLabel = mouseOutlineContext?.spatialContextLabel,
                screenCapture.isCursorScreen {
                 dimensionInfo += "; \(spatialContextLabel)"
+            }
+
+            if let gazeContextForCapture {
+                dimensionInfo += "; \(gazeContextForCapture.imageLabelSuffix)"
             }
 
             // Append the AX element block only to the cursor screen label

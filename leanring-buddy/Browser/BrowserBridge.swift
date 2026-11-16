@@ -35,6 +35,12 @@ final class BrowserBridge: ObservableObject {
     static let shared = BrowserBridge()
 
     @Published private(set) var state: BrowserConnectionState = .notInstalled
+
+    /// True when Teachy's own extension is live, so the browser_* tools can work.
+    var isExtensionConnected: Bool {
+        if case .connected = state { return true }
+        return false
+    }
     /// Browsers that have the helper's manifest ("Chrome", "Arc", …).
     @Published private(set) var browsersWithHelper: [String] = []
     /// Why the bridge could not listen, if it could not. Shown in settings.
@@ -286,39 +292,133 @@ final class BrowserBridge: ObservableObject {
         return (script, helper)
     }
 
-    var canInstallFromBundle: Bool { Self.bundledInstaller() != nil }
+    /// The installer in the Teachy source folder this build came from, for development builds
+    /// that do not bundle it. `#filePath` is this file's path at build time; on any other Mac
+    /// the folder is not there and this returns nil.
+    static func sourceFolderInstaller() -> URL? {
+        // Read here, not as a default argument: a default #filePath would be the caller's file.
+        let thisSourceFilePath: String = #filePath
+        let repositoryRoot = URL(fileURLWithPath: thisSourceFilePath)
+            .deletingLastPathComponent()   // Browser/
+            .deletingLastPathComponent()   // leanring-buddy/
+            .deletingLastPathComponent()   // the repository
+        let script = repositoryRoot.appendingPathComponent("scripts", isDirectory: true).appendingPathComponent("install-chrome-host.sh")
+        return FileManager.default.isReadableFile(atPath: script.path) ? script : nil
+    }
 
-    /// Runs the bundled install script (it only writes under ~/Library/Application Support).
+    /// The unpacked extension next to the source-folder installer, for "Load unpacked".
+    static func sourceFolderExtension() -> URL? {
+        guard let script = sourceFolderInstaller() else { return nil }
+        let folder = script.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("chrome-extension", isDirectory: true)
+        return FileManager.default.fileExists(atPath: folder.appendingPathComponent("manifest.json").path) ? folder : nil
+    }
+
+    var canInstallFromBundle: Bool { Self.bundledInstaller() != nil || Self.sourceFolderInstaller() != nil }
+
+    /// Set once at launch: hands a request to Teachy's normal voice turn, exactly as if the person
+    /// had asked it. The install button uses it so Teachy talks the person through the install.
+    var askTeachy: ((String) -> Void)?
+
+    private var installWatchTask: Task<Void, Never>?
+
+    /// Wraps a value in single quotes for /bin/sh (a ' inside becomes '\'').
+    static func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// The text of the `.command` file Terminal runs: the install script, then a plain last line.
+    static func terminalInstallScript(installerScriptPath: String, helperBinaryPath: String?, extensionIDs: [String]) -> String {
+        var lines = [
+            "#!/bin/sh",
+            "# Written by Teachy when you clicked Install the browser helper. Safe to delete.",
+            "clear",
+            "echo 'Installing the Teachy browser helper. Teachy will talk you through it.'",
+            "echo",
+            "export TEACHY_EXTENSION_IDS=\(shellQuoted(extensionIDs.joined(separator: " ")))"
+        ]
+        if let helperBinaryPath {
+            lines.append("export TEACHY_HOST_BINARY=\(shellQuoted(helperBinaryPath))")
+        }
+        lines += [
+            "/bin/sh \(shellQuoted(installerScriptPath))",
+            "install_status=$?",
+            "echo",
+            "if [ \"$install_status\" -eq 0 ]; then",
+            "  echo 'The browser helper is installed. You can close this window.'",
+            "else",
+            "  echo \"The install stopped (exit $install_status). Ask Teachy what went wrong.\"",
+            "fi",
+            "exit \"$install_status\"",
+            ""
+        ]
+        return lines.joined(separator: "\n")
+    }
+
+    /// What Teachy is asked when the install starts, so it watches Terminal and walks the person through the rest.
+    static func installGuidanceRequest(extensionFolderPath: String?) -> String {
+        let loadStep: String
+        if let extensionFolderPath {
+            loadStep = "turn on Developer mode, click Load unpacked and choose the folder \(extensionFolderPath)"
+        } else {
+            loadStep = "add the Teachy extension and leave it switched on"
+        }
+        return "I'm trying to install Teachy's browser helper. Teachy just opened Terminal and started the installer there. Install it for me and guide me through it: watch the Terminal window and tell me what's happening, and if it fails, read the error on screen and fix it for me. When it says the helper is installed, help me open chrome://extensions, \(loadStep), and check that the Browser row in Teachy's settings says Connected."
+    }
+
+    /// Opens Terminal running the install script, and asks Teachy to guide the person through it.
+    /// A `.command` file opened with Terminal runs without Teachy needing Automation access to Terminal.
     func installHelper() async -> InstallOutcome {
-        guard let installer = Self.bundledInstaller() else {
+        let installerScript: URL
+        let helperBinary: URL?
+        if let bundled = Self.bundledInstaller() {
+            installerScript = bundled.script
+            helperBinary = bundled.helper
+        } else if let sourceScript = Self.sourceFolderInstaller() {
+            installerScript = sourceScript
+            helperBinary = nil
+        } else {
             return InstallOutcome(succeeded: false, message: "This build of Teachy does not include the browser helper. Follow the steps below.")
         }
-        var environment = ProcessInfo.processInfo.environment
-        if let helper = installer.helper { environment["TEACHY_HOST_BINARY"] = helper.path }
-        environment["TEACHY_EXTENSION_IDS"] = BrowserHostManifest.allowedExtensionIDs.joined(separator: " ")
-        let script = installer.script.path
-        let frozenEnvironment = environment
 
-        let result: (Int32, String) = await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = [script]
-            process.environment = frozenEnvironment
-            let output = Pipe()
-            process.standardOutput = output
-            process.standardError = output
-            do { try process.run() } catch { return (-1, error.localizedDescription) }
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
-        }.value
-
-        refreshInstallState()
-        if result.0 == 0 {
-            return InstallOutcome(succeeded: true, message: "Installed. Restart your browser, or click the Teachy button in its toolbar.")
+        guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
+            return InstallOutcome(succeeded: false, message: "Terminal was not found on this Mac. Follow the steps below.")
         }
-        let lastLine = result.1.split(separator: "\n").last.map(String.init) ?? "exit \(result.0)"
-        return InstallOutcome(succeeded: false, message: "The helper could not be installed: \(lastLine)")
+
+        let commandFolder = BrowserHostManifest.teachyFolder(root: supportRoot).appendingPathComponent("browser-host", isDirectory: true)
+        let commandFile = commandFolder.appendingPathComponent("Install Browser Helper.command")
+        let commandText = Self.terminalInstallScript(
+            installerScriptPath: installerScript.path,
+            helperBinaryPath: helperBinary?.path,
+            extensionIDs: BrowserHostManifest.allowedExtensionIDs
+        )
+        do {
+            try FileManager.default.createDirectory(at: commandFolder, withIntermediateDirectories: true)
+            try commandText.write(to: commandFile, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: commandFile.path)
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            _ = try await NSWorkspace.shared.open([commandFile], withApplicationAt: terminal, configuration: configuration)
+        } catch {
+            return InstallOutcome(succeeded: false, message: "Terminal could not start the installer: \(error.localizedDescription)")
+        }
+
+        askTeachy?(Self.installGuidanceRequest(extensionFolderPath: Self.sourceFolderExtension()?.path))
+        watchForInstallToFinish()
+        return InstallOutcome(succeeded: true, message: "Installing in Terminal. Teachy is talking you through it.")
+    }
+
+    /// The script runs outside the app, so look at the disk every couple of seconds until the
+    /// helper and its manifests appear (or five minutes pass), then update the Browser row.
+    private func watchForInstallToFinish() {
+        installWatchTask?.cancel()
+        installWatchTask = Task { @MainActor [weak self] in
+            for _ in 0..<150 {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self, !Task.isCancelled else { return }
+                self.refreshInstallState()
+                if self.state != .notInstalled { return }
+            }
+        }
     }
 
     /// Opens chrome://extensions in the browser (browsers only accept that address from themselves or `open -a`).

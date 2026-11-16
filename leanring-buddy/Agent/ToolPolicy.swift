@@ -259,6 +259,9 @@ enum ToolPolicy {
             }
             return decision(.safe, "reads what is on screen in one app", summary: "read the window", app: requestedApp)
 
+        case "computer":
+            return classifyComputer(arguments: arguments, settings: settings, context: context)
+
         case _ where driveActionToolNames.contains(toolName):
             return classifyDrive(toolName: toolName, arguments: arguments, settings: settings, context: context)
 
@@ -270,6 +273,56 @@ enum ToolPolicy {
         default:
             return classifyUnknown(toolName: toolName, arguments: arguments, context: context)
         }
+    }
+
+    // MARK: Computer use (the real pointer and keyboard, anywhere on screen)
+
+    /// Actions of the `computer` tool that only look.
+    static let computerLookOnlyActions: Set<String> = ["screenshot", "cursor_position", "wait"]
+
+    /// `computer` is judged by the app it would act on: the app under the point for pointer
+    /// actions, the app in front for typing and keys (the gate fills that in as driveTarget…).
+    private static func classifyComputer(arguments: [String: Any], settings: ToolPolicySettings, context: ToolPolicyContext) -> ToolPolicyDecision {
+        let action = string(arguments["action"]).lowercased()
+        let app = context.driveTargetAppName
+        let appLabel = app.isEmpty ? "your Mac" : app
+        func decision(_ risk: ToolRisk, _ reason: String, detail: String = "") -> ToolPolicyDecision {
+            ToolPolicyDecision(toolName: "computer", risk: risk, reason: reason, summary: "use the mouse and keyboard in \(appLabel)", detail: clipped(detail), appScope: app)
+        }
+        if computerLookOnlyActions.contains(action) {
+            return ToolPolicyDecision(toolName: "computer", risk: .safe, reason: "only looks", summary: "look at the screen", detail: "", appScope: "")
+        }
+        var detail = action
+        if action == "type" { detail = "type \(string(arguments["text"]))" }
+        if action == "key" { detail = "press \(string(arguments["key"]))" }
+        if !context.driveElementDescription.isEmpty { detail += " on \(context.driveElementDescription)" }
+
+        switch isOwnOrProtectedApp(name: app, bundleID: context.driveTargetBundleID, settings: settings) {
+        case .own:
+            // Teachy's own consent card is never clicked by the agent.
+            return decision(.blocked, "Teachy does not click or type into itself", detail: detail)
+        case .credentials:
+            return decision(.alwaysAsk, "\(appLabel) holds passwords and keys", detail: detail)
+        case .systemSettings:
+            return decision(.alwaysAsk, "changes system settings", detail: detail)
+        case .terminal:
+            if action != "scroll" && action != "move" {
+                return decision(.alwaysAsk, "typing or clicking in a terminal can run any command", detail: detail)
+            }
+        case .messaging, .ordinary:
+            break
+        }
+        if action == "type", let word = SensitiveWords.firstMatch(in: context.driveElementDescription) {
+            return decision(.alwaysAsk, "the field says \"\(word)\"", detail: detail)
+        }
+        if action == "key" {
+            let combo = string(arguments["key"]).lowercased().replacingOccurrences(of: " ", with: "")
+            // Sending in most apps, and quitting/closing without a look.
+            if ["cmd+enter", "cmd+return", "cmd+q", "cmd+option+esc", "cmd+shift+delete", "cmd+delete"].contains(combo) {
+                return decision(.alwaysAsk, "\(combo) can send, quit or delete", detail: detail)
+            }
+        }
+        return decision(.needsConsent, "controls the mouse and keyboard in \(appLabel)", detail: detail)
     }
 
     // MARK: Drive
@@ -391,7 +444,46 @@ enum ToolPolicy {
         if let word = SensitiveWords.firstMatch(in: readable) {
             return ToolPolicyDecision(toolName: toolName, risk: .alwaysAsk, reason: "the tool name says \"\(word)\"", summary: "use \(readable)", detail: "", appScope: "")
         }
+        if toolName.hasPrefix("mcp__browser__") {
+            return classifyBuiltInBrowser(toolName: toolName, arguments: arguments)
+        }
         return ToolPolicyDecision(toolName: toolName, risk: .needsConsent, reason: "a connected app tool Teachy cannot prove is read-only", summary: "use \(readable)", detail: "", appScope: "")
+    }
+
+    /// The built-in Playwright browser. Its tools name the control they act on in plain words
+    /// (`element`), so a click on "Place order" or "Send" is caught even in auto mode.
+    private static func classifyBuiltInBrowser(toolName: String, arguments: [String: Any]) -> ToolPolicyDecision {
+        let action = String(toolName.dropFirst("mcp__browser__browser_".count)).replacingOccurrences(of: "_", with: " ")
+        func decision(_ risk: ToolRisk, _ reason: String, detail: String) -> ToolPolicyDecision {
+            // One grant key for the whole browser: a "yes" covers browsing, not each tool.
+            ToolPolicyDecision(toolName: "browser", risk: risk, reason: reason, summary: "use the browser (\(action))", detail: clipped(detail), appScope: "built-in browser")
+        }
+        let readOnly: Set<String> = ["snapshot", "take screenshot", "console messages", "network requests", "network request", "find", "wait for"]
+        if readOnly.contains(action) {
+            return decision(.safe, "only reads the page", detail: "")
+        }
+        if action == "file upload" || action == "run code unsafe" || action == "evaluate" {
+            return decision(.alwaysAsk, action == "file upload" ? "uploads a file from this Mac" : "runs code inside the page", detail: string(arguments["paths"]) + string(arguments["function"]) + string(arguments["code"]))
+        }
+        var described = [string(arguments["element"]), string(arguments["text"]), string(arguments["key"])]
+        if let fields = arguments["fields"] as? [[String: Any]] {
+            described += fields.map { string($0["name"]) }
+        }
+        let detail = described.filter { !$0.isEmpty }.joined(separator: " · ")
+        if let word = SensitiveWords.firstMatch(in: string(arguments["element"])) {
+            return decision(.alwaysAsk, "the control says \"\(word)\"", detail: detail)
+        }
+        if let fields = arguments["fields"] as? [[String: Any]],
+           let secret = fields.map({ string($0["name"]).lowercased() }).first(where: { name in SecretFieldDetector.fieldWords.contains(where: { name.contains($0) }) }) {
+            return decision(.alwaysAsk, "fills in \(secret)", detail: detail)
+        }
+        if action == "type", SecretFieldDetector.fieldWords.contains(where: { string(arguments["element"]).lowercased().contains($0) }) {
+            return decision(.alwaysAsk, "types into a password or code field", detail: detail)
+        }
+        if action == "navigate" {
+            return decision(.needsConsent, "opens a page", detail: string(arguments["url"]))
+        }
+        return decision(.needsConsent, "acts on a web page", detail: detail)
     }
 
     // MARK: Helpers

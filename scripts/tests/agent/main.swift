@@ -655,6 +655,58 @@ do {
     expect(false, "shell runner threw: \(error)")
 }
 
+// MARK: Auto mode, computer use, built-in browser
+
+section("auto permissions")
+do {
+    var autoOn = true
+    let ledger = ConsentLedger(store: InMemoryConsentStore(), isAutoModeOn: { autoOn })
+    let quitNotes = tool("control_app", ["action": "quit", "appName": "Notes"])
+    let remove = tool("bash", ["command": "rm x"])
+    let blocked = tool("bash", ["command": "sudo ls"])
+    expect(ledger.resolve(quitNotes, jobID: "a") == .allowed(because: "auto mode"), "auto mode runs ordinary changes")
+    expect(ledger.resolve(remove, jobID: "a") == .ask, "auto mode still asks before deleting")
+    if case .refused = ledger.resolve(blocked, jobID: "a") {} else { expect(false, "auto mode never runs blocked") }
+    expect(ledger.resolveUnattended(quitNotes) == .allowed(because: "auto mode"), "routines run ordinary changes in auto mode")
+    if case .refused = ledger.resolveUnattended(remove) {} else { expect(false, "routines never delete unasked") }
+    ledger.record(.notNow, for: quitNotes, jobID: "a")
+    if case .refused = ledger.resolve(quitNotes, jobID: "a") {} else { expect(false, "not now still wins over auto mode") }
+    autoOn = false
+    expect(ledger.resolve(tool("control_app", ["action": "quit", "appName": "Maps"]), jobID: "a") == .ask, "turning auto off asks again")
+    expect(ConsentLedger(store: InMemoryConsentStore()).resolve(quitNotes, jobID: "b") == .ask, "the ledger's own default is ask")
+}
+
+section("computer tool policy")
+do {
+    func computer(_ arguments: [String: Any], app: String, bundle: String = "") -> ToolPolicyDecision {
+        tool("computer", arguments, context: ToolPolicyContext(driveTargetAppName: app, driveTargetBundleID: bundle))
+    }
+    expect(computer(["action": "screenshot"], app: "").risk == .safe, "screenshot is safe")
+    expect(computer(["action": "wait"], app: "").risk == .safe, "wait is safe")
+    let click = computer(["action": "click", "x": 10, "y": 10, "capture_id": "cap-1"], app: "Figma")
+    expect(click.risk == .needsConsent && click.grantKey == "computer|figma", "a click is needsConsent per app: \(click.grantKey)")
+    expect(computer(["action": "type", "text": "hi"], app: "Terminal", bundle: "com.apple.Terminal").risk == .alwaysAsk, "typing in Terminal always asks")
+    expect(computer(["action": "scroll", "direction": "down"], app: "Terminal", bundle: "com.apple.Terminal").risk == .needsConsent, "scrolling Terminal is ordinary")
+    expect(computer(["action": "click", "x": 1, "y": 1], app: "Teachy", bundle: "so.teachy.app").risk == .blocked, "never clicks Teachy itself")
+    expect(computer(["action": "click", "x": 1, "y": 1], app: "1Password", bundle: "com.1password.1password").risk == .alwaysAsk, "password managers always ask")
+    expect(computer(["action": "key", "key": "cmd+q"], app: "Notes").risk == .alwaysAsk, "cmd+q always asks")
+    expect(computer(["action": "key", "key": "cmd+s"], app: "Notes").risk == .needsConsent, "cmd+s is ordinary")
+}
+
+section("built-in browser policy")
+do {
+    expect(tool("mcp__browser__browser_snapshot", [:]).risk == .safe, "reading the page is safe")
+    let navigate = tool("mcp__browser__browser_navigate", ["url": "https://example.com"])
+    expect(navigate.risk == .needsConsent && navigate.grantKey == "browser|built-in browser", "navigating is ordinary: \(navigate.grantKey)")
+    expect(tool("mcp__browser__browser_click", ["element": "Search button", "ref": "e3"]).risk == .needsConsent, "an ordinary click is ordinary")
+    expect(tool("mcp__browser__browser_click", ["element": "Place order button", "ref": "e9"]).risk == .alwaysAsk, "placing an order always asks")
+    expect(tool("mcp__browser__browser_click", ["element": "Send", "ref": "e9"]).risk == .alwaysAsk, "sending always asks")
+    expect(tool("mcp__browser__browser_type", ["element": "Password field", "ref": "e2", "text": "x"]).risk == .alwaysAsk, "typing a password always asks")
+    expect(tool("mcp__browser__browser_fill_form", ["fields": [["name": "Card number", "ref": "e1", "value": "x"]]]).risk == .alwaysAsk, "filling a card number always asks")
+    expect(tool("mcp__browser__browser_file_upload", ["paths": ["/tmp/a"]]).risk == .alwaysAsk, "uploads always ask")
+    expect(tool("mcp__browser__browser_evaluate", ["function": "() => 1"]).risk == .alwaysAsk, "running page code always asks")
+}
+
 print("\n\(checks - failures)/\(checks) checks passed")
 if failures > 0 {
     print("\(failures) FAILED")

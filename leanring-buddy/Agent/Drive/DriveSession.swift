@@ -97,6 +97,42 @@ actor DriveSession {
         return id
     }
 
+    /// The geometry of a screenshot the model quoted, checked for age.
+    private func capture(named captureID: String) throws -> DriveCaptureGeometry {
+        guard !captureID.isEmpty else {
+            throw DriveError("Give capture_id: the id of the screenshot the x,y came from (computer screenshot or capture_screen returns it).")
+        }
+        guard let capture = captures[captureID] else {
+            throw DriveError("Unknown capture_id \"\(captureID)\". Known: \(captures.keys.sorted().joined(separator: ", ")). Take a fresh screenshot.")
+        }
+        guard Date().timeIntervalSince(capture.takenAt) < 180 else {
+            throw DriveError("\(captureID) is more than three minutes old and the screen may have changed. Take a fresh screenshot.")
+        }
+        return capture.geometry
+    }
+
+    // MARK: Computer use (the computer tool)
+
+    /// A screenshot point (x/y under the given keys, plus capture_id) → global CG point.
+    func globalPoint(arguments: [String: Any], xKey: String, yKey: String) throws -> CGPoint {
+        guard let x = Self.double(arguments[xKey]), let y = Self.double(arguments[yKey]) else {
+            throw DriveError("This action needs \(xKey) and \(yKey) in screenshot pixels, plus capture_id.")
+        }
+        let geometry = try capture(named: ToolPolicy.string(arguments["capture_id"]))
+        guard let point = DriveCoordinates.globalCGPoint(screenshotX: x, screenshotY: y, in: geometry) else {
+            throw DriveError("(\(Int(x)), \(Int(y))) is outside \(geometry.captureID), which is \(geometry.screenshotWidthInPixels)x\(geometry.screenshotHeightInPixels) pixels.")
+        }
+        return point
+    }
+
+    /// Starts the takeover watch for real pointer use. False when it could not start.
+    func beginComputerUse() async -> Bool {
+        if hasStartedDriving { return true }
+        let started = await DriveTakeoverMonitor.shared.beginDriving(jobID: jobID, appName: "your Mac")
+        if started { hasStartedDriving = true }
+        return started
+    }
+
     // MARK: Snapshot
 
     /// drive_snapshot: read the target app's focused window. Sets (or switches) the target app.

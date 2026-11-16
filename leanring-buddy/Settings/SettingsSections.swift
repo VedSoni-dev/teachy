@@ -779,6 +779,12 @@ struct PrivacySettingsSection: View {
             SettingsDivider()
 
             SettingsToggleRow(
+                title: "Auto permissions",
+                caption: "On: agents click, type, browse and change things without stopping to ask. They still ask every time before deleting, sending, paying, posting or touching passwords. Off: they ask before every change.",
+                isOn: $settings.agentAutoPermissions
+            )
+
+            SettingsToggleRow(
                 title: "Let agents use my browser sign-ins",
                 caption: "Off: Teachy never reads cookies from Safari, Chrome or other browsers. On: agent tools can open sites as you, using the sign-ins already in your browser.",
                 isOn: $settings.allowBrowserCookieTools

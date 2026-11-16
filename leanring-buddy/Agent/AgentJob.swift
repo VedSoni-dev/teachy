@@ -458,7 +458,13 @@ final class AgentJobCenter: ObservableObject {
     }
 
     private func runLoop(job: AgentJob, request: AgentJobRequest, registry: BackgroundAgentToolRegistry, isResume: Bool) async throws -> String {
-        let allowed = Self.toolNames(for: request, registered: registry.toolNames(allowed: request.allowedToolNames))
+        var allowed = Self.toolNames(for: request, registered: registry.toolNames(allowed: request.allowedToolNames))
+        // Teachy's own browser tools only work with its extension connected. Without it, leave
+        // them out so the model reaches for the built-in Playwright browser (mcp__browser__…)
+        // or the computer tool instead of failing on every browser_ call.
+        if !BrowserBridge.shared.isExtensionConnected {
+            allowed = allowed.filter { !$0.hasPrefix("browser_") }
+        }
 
         var config = AgentLoopConfig()
         config.tools = registry.toolDefinitions(allowed: allowed)
@@ -471,6 +477,9 @@ final class AgentJobCenter: ObservableObject {
             var systemPrompt = request.systemPrompt
             if allowed.contains(where: { $0.hasPrefix("drive_") }) {
                 systemPrompt += "\n\n" + DriveToolGuide.text
+            }
+            if allowed.contains("computer") {
+                systemPrompt += "\n\n" + ComputerUseGuide.text
             }
             if allowed.contains(where: { $0.hasPrefix("browser_") }) {
                 systemPrompt += "\n\n" + BrowserToolGuide.text
@@ -545,7 +554,8 @@ final class AgentJobCenter: ObservableObject {
     """
 
     private func runTool(_ call: AgentToolCall, arguments: [String: Any], job: AgentJob, allowed: Set<String>, registry: BackgroundAgentToolRegistry) async -> AgentLoopToolOutcome {
-        if ToolPolicy.driveActionToolNames.contains(call.name) {
+        let takesThePointer = call.name == "computer" && !ToolPolicy.computerLookOnlyActions.contains(ToolPolicy.string(arguments["action"]).lowercased())
+        if ToolPolicy.driveActionToolNames.contains(call.name) || takesThePointer {
             if case .busy(let holderID) = await claimDrive(for: job) {
                 let holderTitle = self.job(withID: holderID)?.title ?? "another job"
                 return .refused(DriveLease.busyMessage(holderTitle: holderTitle))
@@ -719,6 +729,15 @@ enum AgentToolActivity {
         case "drive_key": return "Pressing keys"
         case "drive_scroll": return "Scrolling"
         case "drive_click_point": return "Clicking"
+        case "computer":
+            switch ToolPolicy.string(arguments["action"]).lowercased() {
+            case "screenshot", "cursor_position", "wait": return "Looking at the screen"
+            case "type": return "Typing"
+            case "key": return "Pressing keys"
+            case "scroll": return "Scrolling"
+            case "drag": return "Dragging"
+            default: return "Clicking"
+            }
         case "capture_screen": return "Looking at the screen"
         case "web_search": return "Searching the web"
         case "web_fetch": return "Reading a page"
