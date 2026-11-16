@@ -20,6 +20,36 @@ _ = NSApplication.shared
 NSApp.setActivationPolicy(.prohibited)
 Task { @MainActor in
     let manager = NotchWindowManager(companionManager: CompanionManager())
+    let sizes: [(NotchPanelTab, CGSize)] = [
+        (.home, CGSize(width: 520, height: 160)),
+        (.chat, CGSize(width: 520, height: 402)),
+        (.settings, CGSize(width: 800, height: 650))
+    ]
+    for (tab, expected) in sizes {
+        expect(ClickyNotchSizing.expandedSize(for: tab) == expected,
+               "\(tab.title) requests \(Int(expected.width))×\(Int(expected.height))")
+        manager.selectedTab = tab
+        manager.expand()
+        let screen = NSScreen.main?.frame.size
+        let fitted = CGSize(width: min(expected.width, screen.map { $0.width - 24 } ?? expected.width),
+                            height: min(expected.height, screen.map { $0.height - 40 } ?? expected.height))
+        expect(manager.expandedSize == fitted, "\(tab.title) manager uses the requested size within screen bounds")
+        expect(manager.hostingSize == CGSize(width: fitted.width, height: fitted.height + ClickyNotchSizing.shadowPadding),
+               "\(tab.title) hosting frame follows the expanded surface and shadow padding")
+    }
+    manager.setSetupMode(true)
+    expect(ClickyNotchSizing.expandedSize(for: .chat, setup: true) == CGSize(width: 520, height: 440),
+           "setup overrides the selected page size")
+    manager.setSetupMode(false)
+    let expandedHostingSize = manager.hostingSize
+    manager.collapse()
+    expect(manager.hostingSize == expandedHostingSize,
+           "collapse preserves the host coordinate space so the shell retracts into the notch")
+    manager.expand()
+    expect(manager.hostingSize == expandedHostingSize,
+           "reopening preserves the same top-center animation canvas")
+    manager.collapse()
+    manager.selectedTab = .home
     manager.handleNotchHover(true)
     await pause(450)
     expect(manager.isExpanded, "hover opens the panel")
@@ -42,6 +72,45 @@ Task { @MainActor in
     await pause(250)
     expect(!manager.isExpanded, "ending a drag outside resumes collapse")
 
+    manager.selectedTab = .chat
+    manager.expand()
+    manager.setInteractionPinned(false)
+    await pause(250)
+    expect(manager.isExpanded, "mounting an idle chat does not synthesize a hover exit")
+    manager.handleNotchHover(false)
+    await pause(70)
+    manager.setInteractionPinned(true)
+    await pause(250)
+    expect(manager.isExpanded, "typing pin cancels an already pending hover collapse")
+    manager.handleNotchHover(true)
+    manager.handleNotchHover(false)
+    await pause(250)
+    expect(manager.isExpanded, "a pinned composer remains open after another hover exit")
+
+    // Microphone dictation can pin Chat without an NSTextView first responder.
+    // Reselecting its header tab must preserve that pin until dictation ends.
+    manager.handleNotchHover(true)
+    manager.selectedTab = .chat
+    manager.handleNotchHover(false)
+    await pause(250)
+    expect(manager.isExpanded, "reselecting Chat preserves the active interaction pin after hover exit")
+
+    manager.setInteractionPinned(false)
+    await pause(70)
+    expect(manager.isExpanded, "unpinning keeps the normal hover-close grace period")
+    await pause(200)
+    expect(!manager.isExpanded, "unpinning outside resumes hover collapse")
+
+    manager.expand()
+    manager.handleNotchHover(true)
+    manager.setInteractionPinned(true)
+    manager.setInteractionPinned(false)
+    await pause(250)
+    expect(manager.isExpanded, "unpinning while hovered does not collapse the panel")
+    manager.handleNotchHover(false)
+    await pause(250)
+    expect(!manager.isExpanded, "the next exit after unpinning collapses normally")
+
     manager.expand()
     let menu = NSMenu()
     NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
@@ -52,6 +121,7 @@ Task { @MainActor in
     await pause(250)
     expect(!manager.isExpanded, "menu dismissal outside resumes collapse")
     manager.hide()
+    print(failures == 0 ? "ALL NOTCH HOVER AND SIZING CHECKS PASSED" : "\(failures) CHECKS FAILED")
     exit(failures == 0 ? 0 : 1)
 }
 NSApp.run()

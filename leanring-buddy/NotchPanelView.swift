@@ -20,18 +20,29 @@ struct NotchPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 0) {
-                    if publikSession.isReady { PublikBillingBanner() }
-                    tabContent
+            if publikSession.isReady { PublikBillingBanner() }
+            if needsSetup {
+                ScrollView {
+                    NotchSetupOnboardingView(companionManager: companionManager, notchManager: notchManager)
+                        .padding(20)
                 }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 8)
+            } else {
+                switch notchManager.selectedTab {
+                case .home:
+                    NotchHomeTabView(companionManager: companionManager, notchManager: notchManager)
+                case .chat:
+                    NotchChatView(companionManager: companionManager, notchManager: notchManager)
+                default:
+                    TeachySettingsWorkspace(companionManager: companionManager, selection: $notchManager.settingsPage)
+                }
             }
-            .id(notchManager.selectedTab)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .preferredColorScheme(.dark)
+        .onChange(of: needsSetup, initial: true) { _, needed in notchManager.setSetupMode(needed) }
+        .onChange(of: publikSession.billingNotice?.message, initial: true) { _, notice in
+            if notice != nil && notchManager.selectedTab == .home { notchManager.selectedTab = .chat }
+        }
     }
 
     private var needsSetup: Bool {
@@ -41,13 +52,4 @@ struct NotchPanelView: View {
             || !companionManager.hasCompletedOnboarding
     }
 
-    @ViewBuilder
-    private var tabContent: some View {
-        // Permissions + intro come first, before the Home tab is reachable.
-        if needsSetup {
-            NotchSetupOnboardingView(companionManager: companionManager, notchManager: notchManager)
-        } else {
-            NotchHomeTabView(companionManager: companionManager, notchManager: notchManager)
-        }
-    }
 }

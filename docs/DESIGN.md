@@ -79,3 +79,7 @@ Home is a compact utility dashboard: recent drawing previews, connection status,
 The open shell is 520×240pt with a solid black surface, matching the requested compact utility reference. Passive chrome hugs the physical camera: 24pt wings and 8pt outside padding, without an extra one-sided gap. On screens without a notch, show only a 48pt indicator; never reserve an imaginary camera. Preserve clearance for active microphone bars as well.
 
 Leaving the visible panel collapses it after 180ms; re-entering cancels collapse. File drags and native menu tracking temporarily keep it open. The transparent remainder of the hosting window must not extend the hover region. Verify with `scripts/tests/run_notch_hover_tests.sh`.
+
+## Feature announcements
+
+Use a centered 440pt native window with an intrinsic height (about 421pt for dictation), rounded glass surface, the Teachy pointer and a small feature symbol. One centered headline, a short explanation, relevant controls, and a single Got it button. The close button remains visible in the top right. Use 20pt `announcementTitle`, 13pt `announcementBody`, and the 34pt `.large` primary button. Three-key shortcuts move below the Shortcut label; the window grows for extra rows and validation messages. Keep actual preferences wired into announcement controls. Dismissal is remembered; Settings → Updates → What’s new reopens it.

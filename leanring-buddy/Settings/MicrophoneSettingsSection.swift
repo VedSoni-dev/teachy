@@ -11,6 +11,7 @@
 import SwiftUI
 
 struct MicrophoneSettingsSection: View {
+    @Environment(\.settingsStandalone) private var isStandalone
     @StateObject private var meter = MicrophoneLevelMeter()
     @ObservedObject private var watcher = MicrophoneDeviceWatcher.shared
     @State private var devices: [MicrophoneDevice] = []
@@ -34,26 +35,32 @@ struct MicrophoneSettingsSection: View {
             summary: activeName,
             startsExpanded: startsExpanded
         ) {
-            Text("Teachy only listens while you hold a talk or dictation key, or while always-on mode is on. This is the microphone it uses.")
-                .font(DS.Fonts.caption)
-                .foregroundColor(DS.Colors.textSecondary)
-                .lineSpacing(1.5)
-                .fixedSize(horizontal: false, vertical: true)
+            if !isStandalone {
+                Text("Teachy only listens while you hold a talk or dictation key, or while always-on mode is on. This is the microphone it uses.")
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .lineSpacing(1.5)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-            VStack(spacing: 6) {
-                microphoneRow(
-                    title: "Follow the Mac's input",
-                    detail: "Currently \(systemDefaultName)",
-                    isSelected: selectedUID == nil
-                ) { choose(nil) }
-
-                ForEach(devices) { device in
+            SettingsPageGroup(title: isStandalone ? "Input device" : nil) {
+                VStack(spacing: 0) {
                     microphoneRow(
-                        title: device.name,
-                        detail: nil,
-                        isSelected: selectedUID == device.uid
-                    ) { choose(device.uid) }
+                        title: "System Default",
+                        detail: "Currently \(systemDefaultName)",
+                        isSelected: selectedUID == nil
+                    ) { choose(nil) }
+
+                    ForEach(devices) { device in
+                        TeachyRule()
+                        microphoneRow(
+                            title: device.name,
+                            detail: nil,
+                            isSelected: selectedUID == device.uid
+                        ) { choose(device.uid) }
+                    }
                 }
+
             }
 
             if MicrophoneCenter.isSelectedDeviceMissing {
@@ -66,35 +73,38 @@ struct MicrophoneSettingsSection: View {
                 MicrophoneNotice(icon: noticeIcon, text: MicrophoneCenter.bluetoothWarning)
             }
 
-            HStack(spacing: 12) {
-                Button(isTesting ? "Stop test" : "Test microphone") {
-                    if isTesting { stopTest() } else { startTest() }
-                }
-                .teachyButton(.secondary, size: .compact)
+            SettingsPageGroup(title: isStandalone ? "Test" : nil) {
+                HStack(spacing: 12) {
+                    Button(isTesting ? "Stop test" : "Test microphone") {
+                        if isTesting { stopTest() } else { startTest() }
+                    }
+                    .teachyButton(.secondary, size: .compact)
 
+                    MicrophoneLevelBar(level: isTesting ? meter.level : 0)
+                        .frame(width: 144, height: 16)
+                }
+
+                if !isTesting {
+                    Text("Tap to test selected input").font(DS.Fonts.caption).foregroundColor(DS.Colors.textSecondary)
+                }
                 if isTesting {
-                    MicrophoneLevelBar(level: meter.level)
-                        .frame(height: 4)
-                }
-            }
-
-            if isTesting {
-                if let meterProblem = meter.problem {
-                    Text(meterProblem)
-                        .font(DS.Fonts.caption)
-                        .foregroundColor(DS.Colors.warningText)
-                        .lineSpacing(1.5)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Say something.")
-                            .font(DS.Fonts.body)
-                            .foregroundColor(DS.Colors.textPrimary)
-                        Text("Hearing \(meter.listeningToName ?? activeName). Nothing is recorded or sent during this test.")
+                    if let meterProblem = meter.problem {
+                        Text(meterProblem)
                             .font(DS.Fonts.caption)
-                            .foregroundColor(DS.Colors.textSecondary)
+                            .foregroundColor(DS.Colors.warningText)
                             .lineSpacing(1.5)
                             .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Say something.")
+                                .font(DS.Fonts.body)
+                                .foregroundColor(DS.Colors.textPrimary)
+                            Text("Hearing \(meter.listeningToName ?? activeName). Nothing is recorded or sent during this test.")
+                                .font(DS.Fonts.caption)
+                                .foregroundColor(DS.Colors.textSecondary)
+                                .lineSpacing(1.5)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
             }
@@ -109,10 +119,13 @@ struct MicrophoneSettingsSection: View {
     }
 
     /// One microphone to choose: its name, and a fact about it at the far end.
-    /// `.teachyOption` marks the chosen one.
+    /// A checked circle marks the chosen input.
     private func microphoneRow(title: String, detail: String?, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(isSelected ? DS.Colors.pointer : DS.Colors.textTertiary)
+                    .font(DS.Fonts.sans(17))
                 Text(title)
                     .font(DS.Fonts.body)
                     .foregroundColor(DS.Colors.textPrimary)
@@ -125,12 +138,12 @@ struct MicrophoneSettingsSection: View {
                         .lineLimit(1)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .teachyOption(isSelected: isSelected)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointerCursor()
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private func refresh() {
@@ -179,20 +192,17 @@ struct MicrophoneNotice: View {
     }
 }
 
-/// A thin horizontal level meter. The microphone is open, so it is drawn in the
-/// tint; it turns orange when the input is loud.
+/// Segmented input meter. Empty bars remain visible while the test is stopped.
 private struct MicrophoneLevelBar: View {
     let level: Float
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Capsule().fill(DS.Colors.fillSecondary)
-                Capsule()
-                    .fill(level > 0.85 ? DS.Colors.warning : DS.Colors.pointer)
-                    .frame(width: max(4, geometry.size.width * CGFloat(level)))
-                    .animation(.linear(duration: 0.08), value: level)
+        HStack(spacing: 3) {
+            ForEach(0..<16, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Float(index) / 16 < level ? (level > 0.85 ? DS.Colors.warning : DS.Colors.pointer) : DS.Colors.fillSecondary)
             }
         }
+        .animation(.linear(duration: 0.08), value: level)
     }
 }

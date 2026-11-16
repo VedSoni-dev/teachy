@@ -24,6 +24,7 @@ swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/Voice/AlwaysOnPillView.swift" \
   "$APP/NotchHomeTabView.swift" \
   "$APP/NotchPanelTab.swift" \
+  "$APP/Settings/TeachySettingsPage.swift" \
   "$APP/ClickyNotchRootView.swift" \
   "$APP/ClickyAudioSpectrumView.swift" \
   "$APP/ClickyNotchShape.swift" \

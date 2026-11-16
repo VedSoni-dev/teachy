@@ -10,6 +10,9 @@ import AppKit
 import SwiftUI
 
 struct AgentsSection: View {
+    var showsRoutines = true
+    var showsAgents = true
+    var showsJobs = true
     @ObservedObject private var roster = AgentRoster.shared
     @ObservedObject private var scheduler = RoutineScheduler.shared
     @ObservedObject private var center = AgentJobCenter.shared
@@ -22,6 +25,9 @@ struct AgentsSection: View {
             runningRoutineIDs: scheduler.runningIDs,
             routinesProblem: scheduler.storeProblem,
             jobs: records,
+            showsRoutines: showsRoutines,
+            showsAgents: showsAgents,
+            showsJobs: showsJobs,
             actions: AgentsSectionActions(
                 createAgent: { name, role in try roster.create(name: name, role: role) },
                 renameAgent: { slug, newName in try roster.rename(slug: slug, to: newName) },
@@ -53,4 +59,8 @@ struct AgentsSection: View {
             await MainActor.run { records = loaded }
         }
     }
+}
+
+struct RoutinesSection: View {
+    var body: some View { AgentsSection(showsRoutines: true, showsAgents: false, showsJobs: false) }
 }

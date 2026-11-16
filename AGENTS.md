@@ -67,14 +67,17 @@ npm run harness                      # validate all routes
 
 **Transient Cursor Mode**: When "Show Teachy" is off, pressing the hotkey fades in the cursor overlay for the duration of the interaction (recording → response → TTS → optional pointing), then fades it out automatically after 1 second of inactivity.
 
-**Notch Panel (boring.notch-inspired)**: Fixed-size floating `NSPanel` at top-center (`ClickyNotchSizing.windowSize`). SwiftUI animates a glass `ClickyNotchShape` open/closed inside it — the window frame does not resize. Closed: physical-notch width with a compact still pointer wing, or live-activity wings (cursor + spectrum) while listening / thinking / speaking / an agent job runs. Pinned navigation switches between **Home**, **Agents**, **Drawings** and **Settings**. First launch: permissions → scored Teachy product tour (music + soft SFX) with a live “I can see your screen” pointing beat → Home; optional full Farza intro video. Hover opens; click-outside / Collapse closes. Reference clone: `reference/boring.notch` (gitignored).
+**Notch Panel (boring.notch-inspired)**: A top-center `NSPanel` resizes for Home, Chat, setup and Settings while preserving the physical camera reservation. Closed: camera width with compact still pointer wings, or live activity while listening/thinking/speaking. Home and Chat share the header; Settings has a category sidebar. Hover opens; pointer exit or outside click collapses unless an interaction is active. First launch still gates permissions and onboarding. Reference clone: `reference/boring.notch` (gitignored).
 
 ## Key Files
 
 | File | Lines | Purpose |
 |------|-------|---------|
 | `leanring_buddyApp.swift` | ~100 | Menu bar app entry point. Starts companion + Sparkle via `TeachySoftwareUpdater`. |
-| `TeachySoftwareUpdater.swift` | ~70 | Sparkle auto-update controller — GitHub Releases feed + Check for Updates in Home settings. |
+| `TeachySoftwareUpdater.swift` | ~70 | Sparkle auto-update controller — GitHub Releases feed + Check for Updates in Settings. |
+| `Announcements/TeachyAnnouncement.swift` | ~55 | Bundled feature announcement catalog and stable-ID acknowledgement history. |
+| `Announcements/TeachyAnnouncementController.swift` | ~150 | Presents once after sign-in/setup, retains the native window, resizes it with content, and allows manual reopening. |
+| `Announcements/TeachyAnnouncementView.swift` | ~225 | Compact announcement window with live dictation shortcut and language controls. |
 | `CompanionManager.swift` | ~2820 | Central state machine. Owns dictation, shortcut monitoring, screen capture, the general voice turn and its system prompt (`buildCompanionVoiceResponseSystemPrompt`), [GUIDE:] walkthroughs, local TTS, and overlay management. Tracks voice state, conversation history, chat/agent model selection, and cursor visibility. Layer 2 `executeActStep` runs `.act` guided-task steps via the agent tool loop with announce-before-act ordering; Layer 3 `reflectAndReplaceRemainingSteps` calls the reasoning model on divergence to revise the living plan. |
 | `CompanionGuidedTask.swift` | ~160 | Ephemeral [GUIDE:] walkthrough model (`GuidedStepGoal`, `GuidedStepExecutionMode` `.coach`/`.act`, `AgenticStep`, `CompanionGuidedTask` with a replan cap) plus the [GUIDE:] / [DO:] / [CLIPBOARD:] / [REMEMBER:] tag parsers. |
 | `GuidedTaskPlanner.swift` | ~335 | Model calls behind [GUIDE:]: `GuidedTaskPlanner` (screen-grounded plan, text-only fallback, replan on divergence) and `GuidedStepScreenChecker` (pass / partial / off track + visible error). |
@@ -106,10 +109,10 @@ npm run harness                      # validate all routes
 | `ClickyNotchShape.swift` | ~75 | Animatable notch silhouette (DynamicNotchKit / boring.notch). |
 | `ClickyAudioSpectrumView.swift` | ~180 | Closed-notch spectrum bars + idle blinking face. |
 | `ClickyNotchRootView.swift` | ~370 | Root notch UI — one `TeachyGlassSurface` in the notch shape: clear glass when closed, solid black when open; live activity, compact header navigation, spring open height. |
-| `NotchWindowManager.swift` | ~220 | Fixed-size floating `NSPanel`, hover-to-open, click-outside collapse. |
-| `NotchPanelView.swift` | ~70 | Thin notch panel shell — setup/onboarding until done, then the selected scroll page; navigation lives in the root header. |
+| `NotchWindowManager.swift` | ~310 | Dynamically sized floating panel, camera alignment, hover closure and editing/drag/menu guards. |
+| `NotchPanelView.swift` | ~55 | Setup/sign-in routing, billing notice, compact Home/Chat and sidebar Settings workspace. |
 | `NotchPanelSharedComponents.swift` | ~110 | Shared helpers for the notch panel: `FlowLayout` and the free-function `openRouterModelPickerRow`. (`KeyboardKeyLabel` moved to `DesignSystem.swift`.) |
-| `NotchHomeTabView.swift` | ~415 | Home tab, top to bottom: the "Hold [keys] and ask." headline with the shortcut recorder, a three-column group of what you can do, quick actions (chat window, always-on, typing, files), agents / connectors / drawings / memory sections, then settings as one grouped list of rows that open in place (account, voice, microphone, dictation, shortcuts, pointer colour, browser, privacy, updates, advanced) and the feedback links. |
+| `NotchHomeTabView.swift` | ~60 | Compact greeting, live voice shortcut, Drawings/Routines/Integrations launchers. |
 | `NotchSetupOnboardingView.swift` | ~575 | Setup stage router — permission choreography, one-time Automation explainer, API key setup, and the in-panel Teachy product tour (`TeachyOnboardingPage`). |
 | `PermissionChoreographyView.swift` | ~430 | One-permission-at-a-time setup wizard: auto-fires system prompts, animated System Settings toggle mock, 1s poll auto-advances on grant. |
 | `MenuBarPanelManager.swift` | ~103 | NSStatusItem lifecycle. Menu bar icon toggles the notch panel. |
@@ -158,11 +161,19 @@ open leanring-buddy.xcodeproj
 
 **Do NOT run `xcodebuild` from the terminal** — it invalidates TCC (Transparency, Consent, and Control) permissions and the app will need to re-request screen recording, accessibility, etc.
 
-## Notch UI (15 Nov 2026)
+## Notch UI (16 Nov 2026)
 
-Home shows recent drawings, connection status, Open chat and the voice shortcut. `NotchPanelTab.swift` defines Home, Agents, Drawings, Connections and Settings. Home/Agents share the compact root header with Drawings/Settings icon buttons; `NotchPanelView` holds the selected scrolling page. Settings includes account/logout, always-on voice and other preferences, followed by Connectors and Memory. File drag-over selects Home. Shortcut recording cancels when leaving Home.
+The compact black Home launcher (520×160pt) and embedded Chat (520×402pt) share the Home/Chat icon switcher. Settings grows to 800×650pt with a 200pt sidebar and one scrolling detail column. `NotchWindowManager` sizes the hosting panel for the selected page around its top-center anchor; sizes clamp to the display. The hosting envelope remains fixed during open/close. SwiftUI animates explicit closed/open silhouette dimensions, revealing full-size content from the camera without scaling text. Reduce Motion disables the morph. `TeachySettingsWorkspace` serves both the notch and a retained desktop Settings window opened from standalone chat. Drawings, Agents, Routines, Integrations and Memory are settings destinations. File drag-over selects Chat; the shared composer draft survives popping out. The notch uses a compact native text field; the detached chat keeps its multiline editor. Decorative composer outlines ignore hit testing, and the notch root owns file drops.
 
-The expanded black shell is 520×240pt. Closed idle uses the real camera width plus symmetric 24pt wings and 8pt outer padding (249pt with a 185pt camera). A notchless display uses a 48pt idle indicator. Keep the real camera reservation intact in both idle and active states. Leaving the visible panel collapses after 180ms; re-entry, attachment drag and native menu tracking cancel pending closure. The full transparent hosting window is not a hover target. `scripts/tests/run_notch_hover_tests.sh` exercises the real manager with temporary stubs. Render `scripts/tests/render_home_shots.sh` for pages and notched/notchless states; its stubs read no live app data. Use Xcode GUI for the full Release build and validate live navigation after installing.
+Closed idle keeps the real camera width plus symmetric 24pt wings and 8pt outer padding (249pt with a 185pt camera), or 48pt on notchless displays. Leaving the visible panel collapses after 180ms; re-entry, file dragging, native menus and active editing cancel closure. Chat pins while typing, dictating or selecting files. Outside click still collapses. Hover tests use the real manager with fixtures; `scripts/tests/run_chat_composer_focus_tests.sh` checks first-click focus and typing in a real nonactivating panel without reading app data. Rendering scripts do not read live app data. Use Xcode GUI for full Release builds and check live navigation after installing.
+
+New UI files: `NotchChatView.swift` owns the embedded conversation and composer; `Settings/TeachySettingsPage.swift` defines destinations; `TeachySettingsWorkspace.swift` lays out the sidebar and page; `TeachySettingsPages.swift` and `TeachyInputSettingsPages.swift` bind controls to real settings; `TeachySettingsWindowController.swift` hosts desktop settings. Unsupported competitor billing/referral/account-deletion features are not presented as working Teachy features.
+
+## Feature announcements
+
+`TeachyAnnouncement.releases` is newest-first, bundled and available offline. Add a stable ID and the minimum marketing version for each new feature announcement; do not change an ID for copy edits or key tracking to build numbers. Existing onboarded users see the latest eligible unseen announcement once sign-in, permissions and idle voice are ready. Fresh installs baseline eligible entries and use onboarding instead. Closing or Got it acknowledges it; Settings → Updates → What’s new can always reopen it. Account switching closes the window without acknowledging an unseen announcement. Sparkle remains responsible for update discovery, downloads and installation.
+
+The dictation announcement uses `DictationShortcut` and `TeachySettings.dictationLanguage`, not duplicate preferences. Recording validates through `DictationController`, and dismissing cancels recording. The 440pt window fits content height, including long shortcuts and errors. Tests: `scripts/tests/run_announcement_tests.sh`; screenshots: `scripts/tests/render_announcement_shots.sh`. Both use isolated fixtures, not real login data.
 
 ## Drawing performance (15 Nov 2026)
 

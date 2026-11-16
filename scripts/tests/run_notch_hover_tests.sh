@@ -5,6 +5,7 @@ OUT="$(mktemp -d "${TMPDIR:-/tmp}/teachy-notch-hover.XXXXXX")"
 trap 'rm -rf "$OUT"' EXIT
 swiftc -swift-version 5 -default-isolation MainActor \
   leanring-buddy/NotchPanelTab.swift \
+  leanring-buddy/Settings/TeachySettingsPage.swift \
   leanring-buddy/ClickyNotchSizing.swift \
   leanring-buddy/NotchScreenGeometry.swift \
   leanring-buddy/NotchWindowManager.swift \

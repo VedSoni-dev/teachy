@@ -33,6 +33,9 @@ struct AgentsSectionContent: View {
     var runningRoutineIDs: Set<String> = []
     var routinesProblem: String?
     let jobs: [AgentJobRecord]
+    var showsRoutines = true
+    var showsAgents = true
+    var showsJobs = true
     var actions = AgentsSectionActions()
     /// For previews and screenshots: start with this job opened.
     var initiallyExpandedJobID: String?
@@ -76,9 +79,9 @@ struct AgentsSectionContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Self.sectionSpacing) {
-            agentsSection
-            routinesSection
-            jobsSection
+            if showsAgents { agentsSection }
+            if showsRoutines { routinesSection }
+            if showsJobs { jobsSection }
         }
         .onAppear {
             guard !didApplyInitialState else { return }

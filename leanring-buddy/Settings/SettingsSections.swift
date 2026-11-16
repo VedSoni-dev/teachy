@@ -12,6 +12,19 @@ import SwiftUI
 
 // MARK: - Building blocks
 
+private struct SettingsStandaloneKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Category pages show the existing controls without a second disclosure layer.
+    var settingsStandalone: Bool {
+        get { self[SettingsStandaloneKey.self] }
+        set { self[SettingsStandaloneKey.self] = newValue }
+    }
+}
+
+
 /// One row of a grouped settings list: a tinted symbol, the title, a one-line
 /// summary and a chevron. Clicking it opens the row in place; the content sits
 /// under the title. Rows go inside a `.teachyGroup()` container, and each row
@@ -23,6 +36,7 @@ struct SettingsDisclosureCard<Content: View>: View {
     let summary: String?
     @State private var isExpanded: Bool
     @State private var isHeaderHovered = false
+    @Environment(\.settingsStandalone) private var isStandalone
     @Environment(\.accessibilityReduceMotion) private var isReduceMotionEnabled
     private let content: Content
 
@@ -43,7 +57,16 @@ struct SettingsDisclosureCard<Content: View>: View {
         self.content = content()
     }
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if isStandalone {
+            VStack(alignment: .leading, spacing: 14) { content }
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            disclosureBody
+        }
+    }
+
+    private var disclosureBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(isReduceMotionEnabled ? DS.Motion.reduced : DS.Motion.standard) { isExpanded.toggle() }
@@ -913,7 +936,7 @@ struct AdvancedSettingsSection: View {
 
 
 /// Dictation speed switches (keys documented in Dictation/DictationSpeedPolicy.swift).
-private struct DictationSpeedRows: View {
+struct DictationSpeedRows: View {
     @AppStorage("teachyDictationLiveInsertionEnabled") private var typesAsYouSpeak = true
     @AppStorage("teachyDictationSpeedMode") private var speedMode = "speed"
 
@@ -928,5 +951,42 @@ private struct DictationSpeedRows: View {
             caption: "Finish with the on-device text right away and fix it up after. Off waits for the most accurate transcript before typing.",
             isOn: Binding(get: { speedMode != "accuracy" }, set: { speedMode = $0 ? "speed" : "accuracy" })
         )
+    }
+}
+
+struct SettingsPageGroup<Content: View>: View {
+    var title: String? = nil
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            if let title { SettingsPageHeading(title: title) }
+            VStack(alignment: .leading, spacing: 13, content: content)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DS.Colors.surface2, in: RoundedRectangle(cornerRadius: 15))
+                .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(DS.Colors.hairline, lineWidth: 1))
+        }
+    }
+}
+
+struct SettingsPageHeading: View {
+    let title: String
+    var body: some View {
+        Text(title.uppercased()).font(DS.Fonts.sans(10, weight: .semibold)).tracking(1.4)
+            .foregroundColor(DS.Colors.textTertiary).padding(.leading, 3)
+    }
+}
+
+struct SettingsPageLabel: View {
+    let title: String
+    var caption: String? = nil
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(DS.Fonts.bodyEmphasized).foregroundColor(DS.Colors.textPrimary)
+            if let caption {
+                Text(caption).font(DS.Fonts.caption).foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }

@@ -35,6 +35,10 @@ enum DS {
     // MARK: - Color Tokens
 
     enum Colors {
+        static let workspaceBackground = Color(hex: "#1F1F1F")
+        static let workspaceCard = Color(hex: "#272727")
+        static let workspaceBorder = Color.white.opacity(0.09)
+
 
         // ── Surfaces ─────────────────────────────────────────────────
         // The Dark Mode system greys, written out so off-screen renders match.
@@ -153,6 +157,9 @@ enum DS {
 
     /// SF Pro at macOS sizes. Nothing under 11 pt.
     enum Fonts {
+        static let workspaceTitle = Font.system(size: 18, weight: .semibold)
+        static let workspaceBody = Font.system(size: 13)
+
         static func sans(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
             .system(size: size, weight: weight)
         }
@@ -164,6 +171,8 @@ enum DS {
 
         /// One per surface: the line the whole surface is about.
         static let display = sans(22, weight: .bold)
+        static let announcementTitle = sans(20, weight: .bold)
+        static let announcementBody = sans(13, weight: .medium)
         /// The heading of a section or of a floating tile.
         static let title = sans(15, weight: .semibold)
         /// A named thing in a list (an agent, a job, a routine).
@@ -271,6 +280,8 @@ enum TeachyButtonKind {
 }
 
 enum TeachyButtonSize {
+    /// 34 pt tall, for a standalone announcement or setup window.
+    case large
     /// 28 pt tall.
     case regular
     /// 22 pt tall, for rows and tiles.
@@ -312,8 +323,8 @@ private struct TeachyButtonBody<Label: View>: View {
             .font(labelFont)
             .foregroundColor(labelColor)
             .lineLimit(1)
-            .padding(.horizontal, size == .regular ? 14 : 10)
-            .frame(height: size == .regular ? 28 : 22)
+            .padding(.horizontal, size == .compact ? 10 : 14)
+            .frame(height: size == .large ? 34 : (size == .regular ? 28 : 22))
             .frame(maxWidth: isFullWidth ? .infinity : nil)
             .background(Capsule().fill(fillColor))
             .overlay {
@@ -336,8 +347,8 @@ private struct TeachyButtonBody<Label: View>: View {
 
     private var labelFont: Font {
         switch (size, kind) {
-        case (.regular, .primary): return DS.Fonts.sans(13, weight: .semibold)
-        case (.regular, _): return DS.Fonts.control
+        case (.regular, .primary), (.large, .primary): return DS.Fonts.sans(13, weight: .semibold)
+        case (.regular, _), (.large, _): return DS.Fonts.control
         case (.compact, .primary): return DS.Fonts.sans(11.5, weight: .semibold)
         case (.compact, _): return DS.Fonts.controlCompact
         }
@@ -372,9 +383,10 @@ private struct TeachyButtonBody<Label: View>: View {
 /// A round button that holds one symbol (close, previous, copy).
 struct TeachyIconButtonStyle: ButtonStyle {
     var sideLength: CGFloat = 24
+    var isFilled: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
-        TeachyIconButtonBody(label: configuration.label, isPressed: configuration.isPressed, sideLength: sideLength)
+        TeachyIconButtonBody(label: configuration.label, isPressed: configuration.isPressed, sideLength: sideLength, isFilled: isFilled)
     }
 }
 
@@ -382,6 +394,7 @@ private struct TeachyIconButtonBody<Label: View>: View {
     let label: Label
     let isPressed: Bool
     let sideLength: CGFloat
+    let isFilled: Bool
 
     @Environment(\.isEnabled) private var isEnabled
     @State private var isHovered = false
@@ -392,7 +405,7 @@ private struct TeachyIconButtonBody<Label: View>: View {
             .foregroundColor(isHovered || isPressed ? DS.Colors.textPrimary : DS.Colors.textSecondary)
             .frame(width: sideLength, height: sideLength)
             .background(
-                Circle().fill(isPressed ? DS.Colors.fillPrimary : (isHovered ? DS.Colors.fillSecondary : Color.clear))
+                Circle().fill(isPressed ? DS.Colors.fillPrimary : (isHovered ? DS.Colors.fillSecondary : (isFilled ? DS.Colors.fillTertiary : Color.clear)))
             )
             .contentShape(Circle())
             .scaleEffect(isPressed ? 0.94 : 1)
@@ -445,8 +458,8 @@ extension View {
     }
 
     /// A round one-symbol button.
-    func teachyIconButton(sideLength: CGFloat = 24) -> some View {
-        buttonStyle(TeachyIconButtonStyle(sideLength: sideLength))
+    func teachyIconButton(sideLength: CGFloat = 24, isFilled: Bool = false) -> some View {
+        buttonStyle(TeachyIconButtonStyle(sideLength: sideLength, isFilled: isFilled))
     }
 
     /// A text button in the tint. Pass `color` for red or a quieter grey.

@@ -13,6 +13,30 @@ import SwiftUI
 /// The text view class, so the window can find it and give it the keyboard.
 final class ChatComposerNSTextView: NSTextView {
     var onSubmit: (() -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
+
+    // Clicking an empty editor in a nonactivating panel must reach the text view
+    // on the first click, even while another application owns keyboard focus.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        // A nonactivating notch panel must explicitly take keyboard focus for editing.
+        window?.makeKey()
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { onFocusChange?(true) }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { onFocusChange?(false) }
+        return accepted
+    }
 
     override func keyDown(with event: NSEvent) {
         let isReturn = event.keyCode == 36 || event.keyCode == 76
@@ -34,8 +58,11 @@ struct ChatComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     var fontSize: CGFloat = 14.5
+    var textColor: Color = DS.Colors.textPrimary
     var minimumHeight: CGFloat = 22
     var maximumHeight: CGFloat = 168
+    var automaticallyFocus = false
+    var onFocusChange: (Bool) -> Void = { _ in }
     var onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -51,11 +78,12 @@ struct ChatComposerTextView: NSViewRepresentable {
         let textView = ChatComposerNSTextView()
         textView.delegate = context.coordinator
         textView.onSubmit = onSubmit
+        textView.onFocusChange = onFocusChange
         textView.isRichText = false
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.font = .systemFont(ofSize: fontSize)
-        textView.textColor = NSColor(DS.Colors.textPrimary)
+        textView.textColor = NSColor(textColor)
         // The caret takes the tint, as it does in every macOS text field.
         textView.insertionPointColor = NSColor(DS.Colors.pointer)
         textView.textContainerInset = NSSize(width: 0, height: 2)
@@ -70,7 +98,10 @@ struct ChatComposerTextView: NSViewRepresentable {
         textView.setAccessibilityLabel("Ask Teachy")
         scrollView.documentView = textView
         context.coordinator.textView = textView
-        DispatchQueue.main.async { context.coordinator.updateHeight() }
+        DispatchQueue.main.async {
+            context.coordinator.updateHeight()
+            if automaticallyFocus { textView.window?.makeFirstResponder(textView) }
+        }
         return scrollView
     }
 
@@ -78,6 +109,8 @@ struct ChatComposerTextView: NSViewRepresentable {
         context.coordinator.parent = self
         guard let textView = context.coordinator.textView else { return }
         textView.onSubmit = onSubmit
+        textView.onFocusChange = onFocusChange
+        textView.textColor = NSColor(textColor)
         if textView.string != text {
             textView.string = text
             context.coordinator.updateHeight()
