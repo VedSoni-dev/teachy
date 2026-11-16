@@ -32,6 +32,12 @@ nonisolated enum TeachySettingsKey {
     static let replyLanguage = "teachyReplyLanguage"
     static let alwaysOnAutoOffMinutes = "teachyAlwaysOnAutoOffMinutes"
     static let quietOnCallsEnabled = "teachyQuietOnCallsEnabled"
+    /// Tap the screen near the camera to start and stop talking (MacBooks with light + motion sensors).
+    static let screenTapEnabled = "teachyScreenTapEnabled"
+    /// A `ScreenTapSensitivity` raw value.
+    static let screenTapSensitivity = "teachyScreenTapSensitivity"
+    /// Webcam eye tracking: where the person looks while asking becomes part of the question.
+    static let eyeTrackingEnabled = "teachyEyeTrackingEnabled"
 }
 
 // MARK: - Voices
@@ -425,6 +431,19 @@ nonisolated enum TeachySettingsStorage {
         defaults.set(data, forKey: TeachySettingsKey.shortcuts)
     }
 
+    static func screenTapEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        bool(TeachySettingsKey.screenTapEnabled, default: false, defaults)
+    }
+
+    static func screenTapSensitivity(_ defaults: UserDefaults = .standard) -> ScreenTapSensitivity {
+        defaults.string(forKey: TeachySettingsKey.screenTapSensitivity).flatMap(ScreenTapSensitivity.init(rawValue:)) ?? .standard
+    }
+
+    /// Off by default: it keeps the camera on while enabled.
+    static func eyeTrackingEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        bool(TeachySettingsKey.eyeTrackingEnabled, default: false, defaults)
+    }
+
     private static func bool(_ key: String, default fallback: Bool, _ defaults: UserDefaults) -> Bool {
         defaults.object(forKey: key) == nil ? fallback : defaults.bool(forKey: key)
     }
@@ -517,6 +536,18 @@ final class TeachySettings: ObservableObject {
         didSet { defaults.set(quietOnCallsEnabled, forKey: TeachySettingsKey.quietOnCallsEnabled) }
     }
 
+    @Published var screenTapEnabled: Bool {
+        didSet { defaults.set(screenTapEnabled, forKey: TeachySettingsKey.screenTapEnabled) }
+    }
+
+    @Published var screenTapSensitivity: ScreenTapSensitivity {
+        didSet { defaults.set(screenTapSensitivity.rawValue, forKey: TeachySettingsKey.screenTapSensitivity) }
+    }
+
+    @Published var eyeTrackingEnabled: Bool {
+        didSet { defaults.set(eyeTrackingEnabled, forKey: TeachySettingsKey.eyeTrackingEnabled) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         voiceName = TeachySettingsStorage.voiceName(defaults)
@@ -532,6 +563,9 @@ final class TeachySettings: ObservableObject {
         replyLanguage = TeachySettingsStorage.replyLanguage(defaults)
         alwaysOnAutoOffMinutes = TeachySettingsStorage.alwaysOnAutoOffMinutes(defaults)
         quietOnCallsEnabled = TeachySettingsStorage.quietOnCallsEnabled(defaults)
+        screenTapEnabled = TeachySettingsStorage.screenTapEnabled(defaults)
+        screenTapSensitivity = TeachySettingsStorage.screenTapSensitivity(defaults)
+        eyeTrackingEnabled = TeachySettingsStorage.eyeTrackingEnabled(defaults)
     }
 
     var selectedVoice: TeachyVoice {

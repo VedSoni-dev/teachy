@@ -321,6 +321,11 @@ final class CompanionManager: ObservableObject {
             self?.submitSyntheticCompanionRequest(text)
         }
         VoiceModeController.shared.onBargeIn = { [weak self] in self?.currentResponseTask?.cancel() }
+        // Tap the screen beside the camera to talk (MacBooks with light + motion sensors).
+        ScreenTapController.shared.onTap = { [weak self] in self?.handleScreenTap() }
+        ScreenTapController.shared.startFollowingSettings()
+        // Webcam eye tracking: where the person looks while asking becomes part of the question.
+        GazeTracker.shared.startFollowingSettings()
         // Walkthroughs speak through the same voice and look at the screen under the cursor.
         WalkthroughCenter.shared.speak = { [weak self] line in
             guard let self else { return }
@@ -751,6 +756,41 @@ final class CompanionManager: ObservableObject {
             }
     }
 
+    /// True while a screen tap started listening and the next tap should send the question.
+    private var isListeningFromScreenTap = false
+    private var screenTapListeningTimeoutTask: Task<Void, Never>?
+    /// A tap-started question is sent on its own after this long, in case the second tap never comes.
+    private static let screenTapListeningTimeoutInSeconds: UInt64 = 45
+
+    /// A recognised tap on the screen (see `ScreenTapController`): the first tap behaves
+    /// like pressing the talk key, the next like releasing it. Tapping while Teachy speaks
+    /// stops it and starts listening, exactly like the key.
+    func handleScreenTap() {
+        if isListeningFromScreenTap {
+            finishScreenTapListening()
+            return
+        }
+        // The talk key is already held: the keyboard owns this question.
+        guard !buddyDictationManager.isDictationInProgress else { return }
+        isListeningFromScreenTap = true
+        DS.Haptics.stateChanged()
+        handleShortcutTransition(.pressed)
+        screenTapListeningTimeoutTask?.cancel()
+        screenTapListeningTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.screenTapListeningTimeoutInSeconds * 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.finishScreenTapListening()
+        }
+    }
+
+    private func finishScreenTapListening() {
+        guard isListeningFromScreenTap else { return }
+        isListeningFromScreenTap = false
+        screenTapListeningTimeoutTask?.cancel()
+        screenTapListeningTimeoutTask = nil
+        handleShortcutTransition(.released)
+    }
+
     private func bindShortcutTransitions() {
         shortcutTransitionCancellable = globalPushToTalkShortcutMonitor
             .shortcutTransitionPublisher
@@ -792,6 +832,7 @@ final class CompanionManager: ObservableObject {
             clearDetectedElementLocation()
             clearActiveScreenDrawInstruction()
             mouseOutlineTracker.startTracking()
+            GazeTracker.shared.questionStarted()
             PaintTrailPresenter.shared.begin()
 
             // Dismiss the onboarding prompt if it's showing
@@ -832,6 +873,7 @@ final class CompanionManager: ObservableObject {
             ClickyAnalytics.trackPushToTalkReleased()
             VoiceModeController.shared.resume(reason: "talkKey")
             mouseOutlineTracker.stopTracking()
+            GazeTracker.shared.questionEnded()
             PaintTrailPresenter.shared.end()
             pendingKeyboardShortcutStartTask?.cancel()
             pendingKeyboardShortcutStartTask = nil
@@ -1059,6 +1101,7 @@ final class CompanionManager: ObservableObject {
                     mouseOutlineContext = nil
                 }
             } catch {
+                _ = GazeTracker.shared.consumeQuestionGaze()
                 print("⚠️ Companion screen capture failed: \(error.localizedDescription)")
                 if WindowPositionManager.handleScreenCaptureFailure(error) {
                     refreshAllPermissions()
@@ -1158,14 +1201,24 @@ final class CompanionManager: ObservableObject {
                 }
             }
 
+            // Where the person looked while asking (webcam eye tracking, when on and calibrated).
+            let gazeContext = CompanionGazeContext.build(
+                gazeSamples: GazeTracker.shared.consumeQuestionGaze(),
+                screenCaptures: screenCaptures
+            )
+
             var labeledImages = await buildLabeledAnnotatedImages(
                 screenCaptures: screenCaptures,
-                mouseOutlineContext: mouseOutlineContext
+                mouseOutlineContext: mouseOutlineContext,
+                gazeContext: gazeContext
             )
 
             var transcriptWithSpatialHint = transcript
             if let spatialContextLabel = mouseOutlineContext?.spatialContextLabel {
                 transcriptWithSpatialHint += "\n\n[\(spatialContextLabel) — the user circled this region on screen while asking.]"
+            }
+            if let gazeContext {
+                transcriptWithSpatialHint += "\n\n" + gazeContext.questionHint
             }
 
             // Attached files, or the document/page in front when the question is about it.
@@ -2052,7 +2105,8 @@ final class CompanionManager: ObservableObject {
     /// screens, so the model isn't confused by elements from an off-focus display.
     private func buildLabeledAnnotatedImages(
         screenCaptures: [CompanionScreenCapture],
-        mouseOutlineContext: CompanionMouseOutlineContext?
+        mouseOutlineContext: CompanionMouseOutlineContext?,
+        gazeContext: CompanionGazeContext? = nil
     ) async -> [(data: Data, label: String)] {
         // Detect AX elements concurrently with image annotation (off main thread).
         // We guard on the instance-level hasAccessibilityPermission property which
@@ -2109,18 +2163,26 @@ final class CompanionManager: ObservableObject {
             """
         }()
 
-        return screenCaptures.map { screenCapture in
+        return screenCaptures.enumerated().map { screenCaptureIndex, screenCapture in
             let outlinePointsForCapture = screenCapture.isCursorScreen
                 ? (mouseOutlineContext?.outlinePointsInScreenshotSpace ?? [])
                 : []
-            let highlightedCellsForCapture = screenCapture.isCursorScreen
+            var highlightedCellsForCapture = screenCapture.isCursorScreen
                 ? (mouseOutlineContext?.touchedGridCellLabels ?? [])
                 : []
+            let gazeContextForCapture = gazeContext?.screenCaptureIndex == screenCaptureIndex ? gazeContext : nil
+            if let gazeContextForCapture {
+                highlightedCellsForCapture += gazeContextForCapture.gazeRegionCellLabels.filter { !highlightedCellsForCapture.contains($0) }
+            }
 
             var dimensionInfo = " (image dimensions: \(screenCapture.screenshotWidthInPixels)x\(screenCapture.screenshotHeightInPixels) pixels, grid overlay: columns A-X, rows 1-16; prefer [POINT:ax:ID:label] when target is in the elements list, otherwise [POINT:x,y:label] pixels or [POINT:cell:label])"
             if let spatialContextLabel = mouseOutlineContext?.spatialContextLabel,
                screenCapture.isCursorScreen {
                 dimensionInfo += "; \(spatialContextLabel)"
+            }
+
+            if let gazeContextForCapture {
+                dimensionInfo += "; \(gazeContextForCapture.imageLabelSuffix)"
             }
 
             // Append the AX element block only to the cursor screen label

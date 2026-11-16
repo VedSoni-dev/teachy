@@ -15,7 +15,7 @@ struct TeachySettingsWorkspace: View {
                         categoryButton(.account)
                         categoryButton(.general)
                         sidebarHeading("TEACHY")
-                        ForEach([TeachySettingsPage.voice, .microphone, .dictation, .shortcuts, .cursor]) { categoryButton($0) }
+                        ForEach([TeachySettingsPage.voice, .microphone, .dictation, .shortcuts, .cursor, .touchAndGaze]) { categoryButton($0) }
                         sidebarHeading("WORK")
                         ForEach([TeachySettingsPage.integrations, .agents, .routines, .drawings, .memory]) { categoryButton($0) }
                     }
@@ -62,6 +62,7 @@ struct TeachySettingsWorkspace: View {
         case .dictation: TeachyDictationSettingsPage()
         case .shortcuts: TeachyShortcutsSettingsPage(shortcutMonitor: companionManager.globalPushToTalkShortcutMonitor)
         case .cursor: TeachyCursorSettingsPage(companionManager: companionManager)
+        case .touchAndGaze: TeachyTouchAndGazeSettingsPage()
         case .integrations:
             SettingsPageGroup(title: "Browser") { BrowserExtensionSection(startsExpanded: true) }
             ConnectorsSection()
