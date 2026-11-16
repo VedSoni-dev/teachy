@@ -46,55 +46,60 @@ struct ConnectorsSection: View {
     @State private var catalogKeyEntry: ConnectorCatalogEntry?
     @State private var catalogKey = ""
     @State private var catalogError: String?
+    @State private var searchText = ""
+    @State private var advancedExpanded = false
+    @FocusState private var searchFocused: Bool
 
-    /// Space between the section's title, its group of rows and what sits under the group.
-    private static let sectionPartSpacing: CGFloat = 9
-    /// Space above and below the content of one row of the group.
-    private static let groupRowVerticalPadding: CGFloat = 11
-    private static let statusMarkSideLength: CGFloat = 14
-    /// The gap between a status mark and the text beside it.
-    private static let statusMarkSpacing: CGFloat = 10
-    /// The dividers between rows start where the names start, past the status mark.
-    private static let statusMarkIndent: CGFloat = statusMarkSideLength + statusMarkSpacing
+    private static let statusMarkSideLength: CGFloat = 16
+    private static let statusMarkSpacing: CGFloat = 12
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Self.sectionPartSpacing) {
-            VStack(alignment: .leading, spacing: 4) {
-                TeachySectionTitle(title: "Connectors", detail: sectionDetail)
-
-                if !center.connectors.isEmpty {
-                    Text("Keys and sign-ins stay in your Keychain.")
-                        .font(DS.Fonts.caption)
-                        .foregroundColor(DS.Colors.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 18) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    searchField
+                    addCustomButton
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    searchField
+                    addCustomButton
                 }
             }
 
             if let storeProblem = center.storeProblem {
-                Text(storeProblem)
-                    .font(DS.Fonts.caption)
-                    .foregroundColor(DS.Colors.warningText)
-                    .fixedSize(horizontal: false, vertical: true)
+                errorText(storeProblem)
             }
 
-            // The rows of the section and nothing else, in its one rounded container.
-            VStack(alignment: .leading, spacing: 0) {
-                if center.connectors.isEmpty {
-                    ConnectorsEmptyState()
-                }
+            switch openPanel {
+            case .none:
+                EmptyView()
+            case .add:
+                formSection("New connector") { addForm }
+            case .paste:
+                EmptyView()
+            }
 
-                ForEach(Array(center.connectors.enumerated()), id: \.element.id) { connectorIndex, connector in
-                    if connectorIndex > 0 {
-                        TeachyRule()
-                            .padding(.leading, Self.statusMarkIndent)
+            if !center.connectors.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    connectorSectionLabel("Your integrations", detail: sectionDetail)
+                    VStack(alignment: .leading, spacing: 0) {
+                        if filteredConnectors.isEmpty {
+                            Text("No added integrations match your search.")
+                                .font(DS.Fonts.body)
+                                .foregroundColor(DS.Colors.textSecondary)
+                                .padding(14)
+                        }
+                        ForEach(Array(filteredConnectors.enumerated()), id: \.element.id) { index, connector in
+                            if index > 0 { TeachyRule().padding(.leading, 42) }
+                            connectorRow(connector)
+                        }
                     }
-                    connectorRow(connector)
+                    .connectorCard()
                 }
             }
-            .teachyGroup()
 
             ConnectorPopularStrip(
-                entries: ConnectorCatalog.entries,
+                entries: filteredCatalog,
                 addedURLs: center.remoteServerURLs,
                 busyID: catalogBusyID,
                 keyEntry: catalogKeyEntry,
@@ -108,35 +113,77 @@ struct ConnectorsSection: View {
                     catalogError = nil
                 }
             )
-            .padding(.top, 4)
 
-            switch openPanel {
-            case .none:
-                HStack(spacing: 6) {
-                    compactButton("Add connector") {
-                        resetForms()
-                        openPanel = .add
-                    }
-                    compactButton("Paste config", kind: .quiet) {
+            VStack(alignment: .leading, spacing: 8) {
+                hint("Custom connectors can use a hosted MCP URL or a command on this Mac. Keys and sign-ins stay in your Keychain.")
+                if openPanel == .paste {
+                    formSection("Import connectors") { pasteForm }
+                } else {
+                    linkButton("Import a connector config") {
                         resetForms()
                         openPanel = .paste
                     }
                 }
-            case .add:
-                addForm
-            case .paste:
-                pasteForm
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task { center.start() }
     }
 
-    /// The fact beside the title: "2 of 3 connected".
-    private var sectionDetail: String? {
-        guard !center.connectors.isEmpty else { return nil }
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(DS.Colors.textTertiary)
+            TextField("Search integrations", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(DS.Fonts.body)
+                .foregroundColor(DS.Colors.textPrimary)
+                .accessibilityLabel("Search integrations")
+                .focused($searchFocused)
+            if !searchText.isEmpty {
+                Button { searchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .teachyIconButton()
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .connectorFieldWell(isFocused: searchFocused)
+        .frame(minWidth: 150)
+    }
+
+    private var addCustomButton: some View {
+        compactButton("Add custom connector") {
+            resetForms()
+            openPanel = .add
+        }
+        .fixedSize()
+    }
+
+    private var filteredCatalog: [ConnectorCatalogEntry] {
+        ConnectorCatalog.entries.filter { matchesSearch($0.name + " " + $0.summary) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private var filteredConnectors: [McpConnectorConfig] {
+        center.connectors.filter { matchesSearch($0.displayName) }
+    }
+
+    private func matchesSearch(_ value: String) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty || value.localizedCaseInsensitiveContains(query)
+    }
+
+    private var sectionDetail: String {
         let connectedCount = center.connectors.filter { center.state(for: $0.id).isConnected }.count
         return "\(connectedCount) of \(center.connectors.count) connected"
+    }
+
+    private func formSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            connectorSectionLabel(title)
+            content().padding(14).connectorCard()
+        }
     }
 
     // MARK: Popular (one-click add)
@@ -184,7 +231,7 @@ struct ConnectorsSection: View {
 
                     Spacer(minLength: 8)
 
-                    Toggle("", isOn: Binding(
+                    Toggle("Enable \(connector.displayName)", isOn: Binding(
                         get: { connector.enabled },
                         set: { center.setEnabled(id: connector.id, $0) }
                     ))
@@ -246,7 +293,7 @@ struct ConnectorsSection: View {
                 }
             }
         }
-        .padding(.vertical, Self.groupRowVerticalPadding)
+        .padding(14)
     }
 
     /// The state in words. A short fact ("Connected · 12 tools") is set as
@@ -301,41 +348,68 @@ struct ConnectorsSection: View {
     // MARK: Add form
 
     private var addForm: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            wellField("Name, e.g. Linear", text: $draft.label)
-
-            HStack(spacing: 6) {
-                serverKindOption("Server URL", kind: .url)
-                serverKindOption("Local command", kind: .command)
+        VStack(alignment: .leading, spacing: 16) {
+            labeledField("Name") {
+                wellField("e.g. Linear", text: $draft.label)
             }
 
             if serverKind == .url {
-                wellField("https://mcp.example.com/mcp", text: $draft.serverURL, monospaced: true)
-                SecureField("API key (optional)", text: $draft.apiKey, prompt: connectorFieldPrompt("API key (optional)"))
-                    .textFieldStyle(.plain)
-                    .font(DS.Fonts.mono(12))
-                    .foregroundColor(DS.Colors.textPrimary)
-                    .connectorFieldWell()
-                    .onSubmit { submitDraft() }
-                hint("No key? Leave it empty — if the server wants a sign-in, Teachy opens it in your browser.")
+                labeledField("Server URL") {
+                    wellField("https://mcp.example.com/mcp", text: $draft.serverURL, monospaced: true)
+                }
+                labeledField("Authentication") {
+                    SecureField("API key (optional)", text: $draft.apiKey, prompt: connectorFieldPrompt("API key (optional)"))
+                        .textFieldStyle(.plain)
+                        .font(DS.Fonts.mono(12))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .connectorFieldWell()
+                        .onSubmit { submitDraft() }
+                    hint("Leave the key empty to sign in through your browser when the server requests it. Open servers need no key.")
+                }
             } else {
-                wellField("npx -y @example/mcp-server", text: $draft.commandLine, monospaced: true)
-                hint("Needs a key? Put it in front, like API_KEY=… npx -y some-server. Teachy keeps it in your Keychain.")
+                labeledField("Command") {
+                    wellField("npx -y @example/mcp-server", text: $draft.commandLine, monospaced: true)
+                    hint("Needs a key? Put it in front, like API_KEY=… npx -y some-server. Teachy keeps it in your Keychain.")
+                }
             }
 
-            wellField("Account label (optional), e.g. work", text: $draft.accountLabel)
-
-            if let formError {
-                errorText(formError)
+            DisclosureGroup(isExpanded: $advancedExpanded) {
+                VStack(alignment: .leading, spacing: 14) {
+                    labeledField("Type") {
+                        HStack(spacing: 6) {
+                            serverKindOption("Remote URL", kind: .url)
+                            serverKindOption("Command on this Mac", kind: .command)
+                        }
+                    }
+                    labeledField("Account label") {
+                        wellField("Optional, e.g. work", text: $draft.accountLabel)
+                    }
+                }
+                .padding(.top, 10)
+            } label: {
+                Text("Advanced")
+                    .font(DS.Fonts.bodyEmphasized)
+                    .foregroundColor(DS.Colors.textSecondary)
             }
+            .pointerCursor()
 
-            HStack(spacing: 6) {
-                compactButton("Add", kind: .primary) { submitDraft() }
+            if let formError { errorText(formError) }
+
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
                 compactButton("Cancel", kind: .quiet) {
                     resetForms()
                     openPanel = .none
                 }
+                compactButton("Add connector", kind: .primary) { submitDraft() }
             }
+        }
+    }
+
+    private func labeledField<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(DS.Fonts.bodyEmphasized).foregroundColor(DS.Colors.textPrimary)
+            content()
         }
     }
 
@@ -398,6 +472,7 @@ struct ConnectorsSection: View {
         pastedConfig = ""
         formError = nil
         serverKind = .url
+        advancedExpanded = false
     }
 
     // MARK: Pieces
@@ -451,7 +526,7 @@ struct ConnectorsSection: View {
         Button(action: action) {
             Text(title)
         }
-        .teachyButton(kind, size: .compact)
+        .teachyButton(kind)
     }
 
     /// A word in a row that does something. With no colour it takes the tint.
@@ -480,8 +555,8 @@ struct ConnectorsEmptyState: View {
     }
 }
 
-/// The "Popular" row: well-known servers with an Add button each. Plain values in, closures
-/// out, so it renders without a `ConnectorCenter`.
+/// The catalog is a full-height grouped list; the settings page owns scrolling.
+/// Plain values and closures keep its previews independent of `ConnectorCenter`.
 struct ConnectorPopularStrip: View {
     let entries: [ConnectorCatalogEntry]
     let addedURLs: [String]
@@ -495,92 +570,37 @@ struct ConnectorPopularStrip: View {
     var onCancelKey: () -> Void = {}
 
     var body: some View {
-        if !entries.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Popular")
-                    .font(DS.Fonts.sans(11.5, weight: .semibold))
-                    .foregroundColor(DS.Colors.textSecondary)
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .top, spacing: 8) {
-                        ForEach(entries) { entry in
-                            tile(entry)
-                        }
+        VStack(alignment: .leading, spacing: 8) {
+            connectorSectionLabel("All integrations", detail: "\(entries.count)")
+            if let error {
+                Text(error)
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.destructiveText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            VStack(spacing: 0) {
+                if entries.isEmpty {
+                    Text("No integrations match your search.")
+                        .font(DS.Fonts.body)
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                }
+                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                    if index > 0 { TeachyRule().padding(.leading, 52) }
+                    ConnectorCatalogRow(entry: entry, isAdded: ConnectorCatalog.isAdded(entry, serverURLs: addedURLs), isBusy: busyID == entry.id, addDisabled: busyID != nil) {
+                        onAdd(entry)
                     }
-                    .padding(.vertical, 1)
+                    if keyEntry?.id == entry.id {
+                        keyRow(entry).padding(.horizontal, 14).padding(.bottom, 14)
+                    }
                 }
-
-                if let keyEntry {
-                    keyRow(keyEntry)
-                        .padding(.top, 4)
-                }
-
-                if let error {
-                    Text(error)
-                        .font(DS.Fonts.caption)
-                        .foregroundColor(DS.Colors.destructiveText)
-                        .fixedSize(horizontal: false, vertical: true)
+                // Keep a pending key form reachable if the user changes the search.
+                if let keyEntry, !entries.contains(where: { $0.id == keyEntry.id }) {
+                    keyRow(keyEntry).padding(14)
                 }
             }
-        }
-    }
-
-    /// One server, drawn as an option: its name, one caption line, then the
-    /// word that adds it (or the fact that it is added) and how it signs in.
-    private func tile(_ entry: ConnectorCatalogEntry) -> some View {
-        let isAdded = ConnectorCatalog.isAdded(entry, serverURLs: addedURLs)
-        return VStack(alignment: .leading, spacing: 3) {
-            Text(entry.name)
-                .font(DS.Fonts.bodyEmphasized)
-                .foregroundColor(DS.Colors.textPrimary)
-                .lineLimit(1)
-            Text(entry.summary)
-                .font(DS.Fonts.caption)
-                .foregroundColor(DS.Colors.textSecondary)
-                .lineLimit(1)
-
-            HStack(spacing: 6) {
-                if isAdded {
-                    TeachyStatusMark(kind: .done, sideLength: 13)
-                    Text("Added")
-                        .font(DS.Fonts.data)
-                        .foregroundColor(DS.Colors.textSecondary)
-                } else if busyID == entry.id {
-                    TeachyStatusMark(kind: .live, sideLength: 13)
-                    Text("Adding…")
-                        .font(DS.Fonts.data)
-                        .foregroundColor(DS.Colors.textSecondary)
-                } else {
-                    Button { onAdd(entry) } label: {
-                        Text("Add")
-                            // Room around the word, so the click target is not just two letters wide.
-                            .padding(.vertical, 4)
-                            .padding(.trailing, 12)
-                    }
-                    .teachyLinkButton(font: DS.Fonts.controlCompact)
-                    .disabled(busyID != nil)
-                }
-                Spacer(minLength: 0)
-                Text(authLabel(entry.auth))
-                    .font(DS.Fonts.data)
-                    .foregroundColor(DS.Colors.textTertiary)
-                    .lineLimit(1)
-            }
-            .frame(height: 22)
-            .padding(.top, 6)
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 10)
-        .padding(.bottom, 6)
-        .frame(width: 220, alignment: .leading)
-        .teachyOption(isSelected: false)
-    }
-
-    private func authLabel(_ auth: ConnectorCatalogEntry.Auth) -> String {
-        switch auth {
-        case .oauth: return "Sign in"
-        case .apiKey: return "Key"
-        case .none: return "Open"
+            .connectorCard()
         }
     }
 
@@ -601,6 +621,7 @@ struct ConnectorPopularStrip: View {
                     Text("Add")
                 }
                 .teachyButton(.primary, size: .compact)
+                .disabled(busyID != nil || key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button(action: onCancelKey) {
                     Text("Cancel")
                 }
@@ -617,13 +638,117 @@ private func connectorFieldPrompt(_ placeholder: String) -> Text {
     Text(placeholder).foregroundColor(DS.Colors.textQuaternary)
 }
 
+private func connectorSectionLabel(_ title: String, detail: String? = nil) -> some View {
+    HStack {
+        Text(title.uppercased())
+            .tracking(1.1)
+        Spacer()
+        if let detail { Text(detail) }
+    }
+    .font(DS.Fonts.sans(11, weight: .semibold))
+    .foregroundColor(DS.Colors.textTertiary)
+    .padding(.horizontal, 3)
+}
+
 private extension View {
-    /// A one-line field is a well as tall as a regular button.
-    func connectorFieldWell() -> some View {
-        self
+    func connectorFieldWell(isFocused: Bool? = nil) -> some View {
+        modifier(ConnectorFieldWell(externalFocus: isFocused))
+    }
+
+    func connectorCard() -> some View {
+        background(DS.Colors.workspaceCard, in: RoundedRectangle(cornerRadius: 14))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(DS.Colors.workspaceBorder, lineWidth: 1))
+    }
+}
+
+private struct ConnectorFieldWell: ViewModifier {
+    var externalFocus: Bool?
+    @FocusState private var isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .focused($isFocused)
             .padding(.horizontal, 10)
-            .frame(height: 28)
-            .teachyWell()
+            .frame(height: 30)
+            .background(DS.Colors.fillTertiary, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8)
+                .stroke((externalFocus ?? isFocused) ? DS.Colors.pointer : .clear, lineWidth: 1.5))
+    }
+}
+
+private struct ConnectorCatalogRow: View {
+    let entry: ConnectorCatalogEntry
+    let isAdded: Bool
+    let isBusy: Bool
+    let addDisabled: Bool
+    var onAdd: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(DS.Fonts.sans(22, weight: .medium))
+                .foregroundColor(DS.Colors.textPrimary)
+                .frame(width: 26, height: 30)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.name)
+                    .font(DS.Fonts.itemTitle)
+                    .foregroundColor(DS.Colors.textPrimary)
+                Text(entry.summary)
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if isAdded {
+                Label("Added", systemImage: "checkmark")
+                    .font(DS.Fonts.controlCompact)
+                    .foregroundColor(DS.Colors.textSecondary)
+            } else if isBusy {
+                Text("Adding…")
+                    .font(DS.Fonts.controlCompact)
+                    .foregroundColor(DS.Colors.textSecondary)
+            } else {
+                Button("Add", action: onAdd)
+                    .teachyButton(.primary)
+                    .disabled(addDisabled)
+                    .accessibilityLabel("Add \(entry.name)")
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .frame(minHeight: 64)
+        .background(isHovered ? DS.Colors.fillQuaternary : .clear)
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+    }
+
+    private var symbol: String {
+        switch entry.id {
+        case "linear": return "line.3.horizontal.decrease.circle"
+        case "notion", "granola": return "doc.text"
+        case "github", "deepwiki": return "chevron.left.forwardslash.chevron.right"
+        case "atlassian": return "square.stack.3d.up"
+        case "asana", "monday": return "checklist"
+        case "airtable": return "tablecells"
+        case "sentry": return "waveform.path.ecg"
+        case "vercel": return "triangle.fill"
+        case "supabase": return "bolt.fill"
+        case "neon": return "externaldrive"
+        case "cloudflare", "cloudflare-docs": return "cloud"
+        case "posthog": return "chart.bar"
+        case "stripe", "paypal", "square": return "creditcard"
+        case "intercom": return "bubble.left.and.bubble.right"
+        case "canva": return "paintpalette"
+        case "webflow": return "globe"
+        case "huggingface": return "face.smiling"
+        case "context7", "microsoft-learn": return "books.vertical"
+        case "exa": return "magnifyingglass"
+        case "aws-knowledge": return "shippingbox"
+        default: return "puzzlepiece.extension"
+        }
     }
 }
 
