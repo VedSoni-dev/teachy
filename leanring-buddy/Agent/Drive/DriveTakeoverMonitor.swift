@@ -151,6 +151,14 @@ final class DriveTakeoverMonitor {
         AgentJobCenter.shared.job(withID: jobID)?.isDriving = false
     }
 
+    /// Teachy just moved the real pointer itself (the computer tool): measure the
+    /// person's movement from here, not from where the pointer used to be.
+    func noteOwnPointerMovement(jobID: String) {
+        guard activeJobID == jobID else { return }
+        mouseAnchor = nil
+        ignoreMovementUntil = Date().addingTimeInterval(0.3)
+    }
+
     /// While a consent card is up the user has to move and click; that is not a takeover.
     func suspend() {
         suspendDepth += 1

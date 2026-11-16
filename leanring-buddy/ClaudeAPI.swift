@@ -155,6 +155,8 @@ class ClaudeAPI {
         conversationHistory: [(userPlaceholder: String, assistantResponse: String)] = [],
         userPrompt: String,
         job: TeachyAIJob = .coach,
+        reasoningEffort: String? = nil,
+        maxTokens: Int = 1024,
         onTextChunk: @MainActor @Sendable (String) -> Void
     ) async throws -> (text: String, duration: TimeInterval) {
         let startTime = Date()
@@ -164,11 +166,13 @@ class ClaudeAPI {
             conversationHistory: conversationHistory,
             userPrompt: userPrompt
         )
-        let body: [String: Any] = [
-            "max_tokens": 1024,
+        var body: [String: Any] = [
+            "max_tokens": maxTokens,
             "stream": true,
             "messages": messages,
         ]
+        // Overrides the job's default effort (the router only fills it in when absent).
+        if let reasoningEffort { body["reasoning_effort"] = reasoningEffort }
 
         print("🌐 TeachyAI streaming \(job.rawValue): \(images.count) image(s)")
         let byteStream = try await TeachyAIRouter.openStream(

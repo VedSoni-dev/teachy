@@ -35,6 +35,12 @@ final class BrowserBridge: ObservableObject {
     static let shared = BrowserBridge()
 
     @Published private(set) var state: BrowserConnectionState = .notInstalled
+
+    /// True when Teachy's own extension is live, so the browser_* tools can work.
+    var isExtensionConnected: Bool {
+        if case .connected = state { return true }
+        return false
+    }
     /// Browsers that have the helper's manifest ("Chrome", "Arc", …).
     @Published private(set) var browsersWithHelper: [String] = []
     /// Why the bridge could not listen, if it could not. Shown in settings.

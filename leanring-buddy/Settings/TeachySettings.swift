@@ -25,6 +25,8 @@ nonisolated enum TeachySettingsKey {
     static let dictationCleanupEnabled = "teachyDictationCleanupEnabled"
     static let soundsEnabled = "teachySoundsEnabled"
     static let allowBrowserCookieTools = "teachyAllowBrowserCookieTools"
+    /// On (the default): agents make ordinary changes without asking; risky ones still ask.
+    static let agentAutoPermissions = "teachyAgentAutoPermissions"
     static let shortcuts = "teachyShortcuts"
     /// "auto" (answer in the language they spoke) or a `TeachyReplyLanguages` code.
     static let replyLanguage = "teachyReplyLanguage"
@@ -380,6 +382,10 @@ nonisolated enum TeachySettingsStorage {
         bool(TeachySettingsKey.allowBrowserCookieTools, default: false, defaults)
     }
 
+    static func agentAutoPermissions(_ defaults: UserDefaults = .standard) -> Bool {
+        bool(TeachySettingsKey.agentAutoPermissions, default: true, defaults)
+    }
+
     static func replyLanguage(_ defaults: UserDefaults = .standard) -> String {
         TeachyReplyLanguages.normalized(defaults.string(forKey: TeachySettingsKey.replyLanguage))
     }
@@ -481,6 +487,11 @@ final class TeachySettings: ObservableObject {
         didSet { defaults.set(allowBrowserCookieTools, forKey: TeachySettingsKey.allowBrowserCookieTools) }
     }
 
+    /// On by default: agents act without asking, except for deleting, sending, paying, posting and credentials.
+    @Published var agentAutoPermissions: Bool {
+        didSet { defaults.set(agentAutoPermissions, forKey: TeachySettingsKey.agentAutoPermissions) }
+    }
+
     @Published var shortcuts: TeachyShortcutSet {
         didSet { TeachySettingsStorage.saveShortcuts(shortcuts, defaults) }
     }
@@ -516,6 +527,7 @@ final class TeachySettings: ObservableObject {
         dictationCleanupEnabled = TeachySettingsStorage.dictationCleanupEnabled(defaults)
         soundsEnabled = TeachySettingsStorage.soundsEnabled(defaults)
         allowBrowserCookieTools = TeachySettingsStorage.allowBrowserCookieTools(defaults)
+        agentAutoPermissions = TeachySettingsStorage.agentAutoPermissions(defaults)
         shortcuts = TeachySettingsStorage.shortcuts(defaults)
         replyLanguage = TeachySettingsStorage.replyLanguage(defaults)
         alwaysOnAutoOffMinutes = TeachySettingsStorage.alwaysOnAutoOffMinutes(defaults)

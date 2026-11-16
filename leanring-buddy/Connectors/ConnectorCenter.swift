@@ -106,10 +106,34 @@ final class ConnectorCenter: ObservableObject {
         let loaded = store.load()
         connectors = loaded.connectors
         storeProblem = loaded.problem
+        addBuiltInBrowserOnce()
         for connector in connectors where connector.enabled {
             states[connector.id] = .checking
             Task { await self.connect(id: connector.id) }
         }
+    }
+
+    // MARK: Built-in browser
+
+    /// Marks that the built-in browser was added once, so removing it in settings sticks.
+    static let builtInBrowserSeededKey = "teachyBuiltInBrowserConnectorSeeded.v1"
+    static let builtInBrowserLabel = "Browser"
+    /// Microsoft's open-source Playwright MCP (Apache-2.0): a real Chromium the agent drives by
+    /// the page's accessibility tree. Its profile persists, so sign-ins made there are kept.
+    /// Add `--extension` (with the Playwright MCP Bridge extension) to drive the person's own Chrome.
+    static let builtInBrowserCommand = "npx -y @playwright/mcp@latest"
+
+    /// Gives every agent a working browser without Teachy's own extension. Added once; the
+    /// person can switch it off or remove it like any other connector.
+    private func addBuiltInBrowserOnce() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: Self.builtInBrowserSeededKey) else { return }
+        defaults.set(true, forKey: Self.builtInBrowserSeededKey)
+        if connectors.contains(where: { $0.displayName.lowercased().contains("playwright") || $0.id == "browser" }) { return }
+        let draft = McpConnectorDraft(label: Self.builtInBrowserLabel, commandLine: Self.builtInBrowserCommand)
+        guard let built = try? draft.build(existingIDs: Set(connectors.map(\.id))) else { return }
+        connectors.append(built.config)
+        try? persist()
     }
 
     /// For the agent: makes sure connectors are starting, gives ones still checking a moment
@@ -137,6 +161,9 @@ final class ConnectorCenter: ObservableObject {
         let connected = connectors.filter { state(for: $0.id).isConnected && !(toolsByConnector[$0.id] ?? []).isEmpty }
         guard !connected.isEmpty else { return "" }
         var lines = ["Connected apps (MCP connectors). Prefer these tools over clicking through the app's UI:"]
+        if connected.contains(where: { $0.id == "browser" }) {
+            lines.append("- Browser: a real browser (Playwright). Use mcp__browser__browser_navigate to open a page, mcp__browser__browser_snapshot to read it (elements come with ref ids), then mcp__browser__browser_click / browser_type / browser_select_option with those refs. Use it for any website task that needs clicking, forms or signing in; web_fetch is enough for reading a public page. If a site needs the person to sign in, tell them to sign in in that browser window and wait.")
+        }
         for connector in connected {
             let count = toolsByConnector[connector.id]?.count ?? 0
             lines.append("- \(connector.displayName): \(count) tool\(count == 1 ? "" : "s"), named mcp__\(connector.id)__…")

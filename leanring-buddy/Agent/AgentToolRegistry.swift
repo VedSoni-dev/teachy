@@ -29,7 +29,8 @@ final class AgentToolGate {
     /// (`TeachySettingsKey.allowBrowserCookieTools`), so there is one switch, not two.
     static let allowBrowserCookiesDefaultsKey = "teachyAllowBrowserCookieTools"
 
-    let ledger = ConsentLedger(store: UserDefaults.standard)
+    /// Auto mode is on unless the person turned it off (Settings > Privacy > Auto permissions).
+    let ledger = ConsentLedger(store: UserDefaults.standard, isAutoModeOn: { TeachySettingsStorage.agentAutoPermissions() })
     var prompter: ConsentAsking = ConsentPrompter.shared
 
     enum Verdict {
@@ -62,6 +63,21 @@ final class AgentToolGate {
                 return .refuse("Call drive_snapshot first so Teachy knows which app you mean and what is on screen.")
             }
             context = await job.drive.policyContext(toolName: toolName, arguments: arguments)
+        }
+        if toolName == "computer" {
+            // Judge it by the app it would act on: under the point, else the app in front.
+            let action = ToolPolicy.string(arguments["action"]).lowercased()
+            if !ToolPolicy.computerLookOnlyActions.contains(action) {
+                var target: (name: String, bundleID: String)?
+                if arguments["x"] != nil, let point = try? await job.drive.globalPoint(arguments: arguments, xKey: "x", yKey: "y") {
+                    target = ComputerEvents.appUnder(globalPoint: point)
+                }
+                if target == nil, let front = NSWorkspace.shared.frontmostApplication {
+                    target = (front.localizedName ?? "", front.bundleIdentifier ?? "")
+                }
+                context.driveTargetAppName = target?.name ?? ""
+                context.driveTargetBundleID = target?.bundleID ?? ""
+            }
         }
         if toolName.hasPrefix("browser_") {
             context.browser = await BrowserBridge.shared.policyContext(toolName: toolName, arguments: arguments, jobID: job.id)
@@ -185,6 +201,7 @@ final class BackgroundAgentToolRegistry {
         register(DriveKeyTool())
         register(DriveScrollTool())
         register(DriveClickPointTool())
+        register(ComputerUseTool())
         BrowserAgentTools.all.forEach { register($0) }
         // Named agents and routines.
         register(RememberTool())
@@ -278,6 +295,7 @@ final class BackgroundAgentToolRegistry {
         case "authenticated_fetch": return 50
         case "run_applescript", "control_app", "control_browser", "open_browser_tab": return 45
         case "capture_screen": return 20
+        case "computer": return 40
         case _ where toolName.hasPrefix("drive_"): return 25
         default: return 70
         }

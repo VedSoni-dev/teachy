@@ -13,6 +13,11 @@
 //
 //  A request classed alwaysAsk is never covered by a remembered yes.
 //
+//  Auto mode (the default, like Claude Code's auto mode): ordinary changes
+//  (needsConsent) run without a card. Deleting, sending, paying, posting and
+//  anything touching credentials (alwaysAsk) still asks every time; blocked
+//  stays blocked. Turn it off in Settings > Privacy to be asked as before.
+//
 
 import Foundation
 
@@ -55,13 +60,16 @@ final class ConsentLedger {
 
     private let store: ConsentStore
     private let now: () -> Date
+    /// Read on every call so the Settings switch takes effect at once.
+    private let isAutoModeOn: () -> Bool
     private let lock = NSLock()
     private var jobGrants: [String: Set<String>] = [:]
     private var notNowUntil: [String: Date] = [:]
 
-    init(store: ConsentStore, now: @escaping () -> Date = Date.init) {
+    init(store: ConsentStore, now: @escaping () -> Date = Date.init, isAutoModeOn: @escaping () -> Bool = { false }) {
         self.store = store
         self.now = now
+        self.isAutoModeOn = isAutoModeOn
     }
 
     /// Decides what to do with a classified tool call, before anything is shown.
@@ -80,6 +88,7 @@ final class ConsentLedger {
                 notNowUntil.removeValue(forKey: decision.requestKey)
             }
             if decision.risk == .alwaysAsk { return .ask }
+            if isAutoModeOn() { return .allowed(because: "auto mode") }
             if jobGrants[jobID]?.contains(decision.grantKey) == true {
                 return .allowed(because: "allowed for this job")
             }
@@ -104,6 +113,7 @@ final class ConsentLedger {
         case .alwaysAsk:
             return .refused(because: "this needs your yes every time, and nobody is here to give it")
         case .needsConsent:
+            if isAutoModeOn() { return .allowed(because: "auto mode") }
             if store.consentStrings(forKey: Self.alwaysAllowStoreKey).contains(decision.grantKey) {
                 return .allowed(because: "always allowed")
             }
