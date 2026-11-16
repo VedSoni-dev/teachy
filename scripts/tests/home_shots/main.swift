@@ -73,6 +73,9 @@ func runShots() {
         leftAuxiliaryAreaWidth: 960, hasNotch: false
     )
     render(panel(), width: notchManager.hostingSize.width, name: "06-idle-external-display")
+    companionManager.voiceState = .listening
+    render(panel(), width: notchManager.hostingSize.width, name: "07-live-external-display")
+    companionManager.voiceState = .idle
 
     if failureCount > 0 {
         print("\(failureCount) FAILED")

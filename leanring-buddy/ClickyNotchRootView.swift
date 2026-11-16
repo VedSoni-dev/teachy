@@ -22,15 +22,22 @@ struct ClickyNotchRootView: View {
         notchManager.currentNotchGeometry()
     }
 
+    /// Displays without a camera housing (Mac mini, Mac Studio, external
+    /// monitors) get a fake notch the size of a MacBook's, so Teachy looks
+    /// the same on every Mac.
+    private static let fakeNotchWidth: CGFloat = 185
+
     private var closedNotchWidth: CGFloat {
-        geometry.hasNotch ? max(geometry.notchWidth, 160) : 0
+        geometry.hasNotch ? max(geometry.notchWidth, 160) : Self.fakeNotchWidth
     }
 
     private var closedNotchHeight: CGFloat {
         if geometry.hasNotch {
             return max(geometry.notchHeight, 32)
         }
-        return 36
+        // A fake notch fills the menu bar exactly, so it never covers the
+        // title bars of windows pushed up against the menu bar.
+        return max(NSStatusBar.system.thickness, 24)
     }
 
     private var wingSize: CGFloat {
@@ -62,12 +69,11 @@ struct ClickyNotchRootView: View {
     }
 
     private var closedHorizontalPadding: CGFloat { isLiveActivityActive ? 14 : 8 }
-    private var idleWingWidth: CGFloat { geometry.hasNotch ? 24 : 32 }
+    private let idleWingWidth: CGFloat = 24
 
     private var chinWidth: CGFloat {
         if isLiveActivityActive { return closedNotchWidth + 2 * wingSize + 2 * closedHorizontalPadding }
-        return (geometry.hasNotch ? closedNotchWidth + 2 * idleWingWidth : idleWingWidth)
-            + 2 * closedHorizontalPadding
+        return closedNotchWidth + 2 * idleWingWidth + 2 * closedHorizontalPadding
     }
 
     var body: some View {
@@ -192,11 +198,9 @@ struct ClickyNotchRootView: View {
 
     private var idleClosedRow: some View {
         HStack(spacing: 0) {
-            if geometry.hasNotch {
-                // Equal wings keep the hardware camera exactly centered.
-                Color.clear.frame(width: idleWingWidth, height: closedNotchHeight)
-                Color.clear.frame(width: closedNotchWidth)
-            }
+            // Equal wings keep the camera (real or fake) exactly centered.
+            Color.clear.frame(width: idleWingWidth, height: closedNotchHeight)
+            Color.clear.frame(width: closedNotchWidth)
             idleClickyIcon
                 .frame(width: idleWingWidth, height: closedNotchHeight)
         }

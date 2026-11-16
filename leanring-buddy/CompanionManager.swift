@@ -249,10 +249,11 @@ final class CompanionManager: ObservableObject {
     @Published private(set) var isOverlayVisible: Bool = false
 
     /// User preference for whether the Teachy cursor should be shown.
-    /// When toggled off, the overlay is hidden and push-to-talk is disabled.
+    /// When off (the default), the cursor stays hidden until the next
+    /// interaction and fades in only for it (transient cursor mode).
     /// Persisted to UserDefaults so the choice survives app restarts.
     @Published var isClickyCursorEnabled: Bool = UserDefaults.standard.object(forKey: "isClickyCursorEnabled") == nil
-        ? true
+        ? false
         : UserDefaults.standard.bool(forKey: "isClickyCursorEnabled")
 
     /// The color of the on-screen cursor triangle. Persisted to UserDefaults.
