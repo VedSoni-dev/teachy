@@ -135,11 +135,22 @@ final class SceneOverlayModel: ObservableObject {
         }
     }
 
+    /// Animation windows include their final frame. A future fade does not need frames
+    /// throughout its hold time, and a permanent mark stops scheduling after its reveal.
+    var animationIntervals: [DateInterval] {
+        items.flatMap { item -> [DateInterval] in
+            let revealEnd = item.createdAt.addingTimeInterval(Self.drawDuration)
+            var intervals = [DateInterval(start: item.createdAt, end: revealEnd)]
+            if let fadeStart = item.fadeStart {
+                intervals.append(DateInterval(start: fadeStart, duration: Self.fadeDuration))
+            }
+            return intervals
+        }
+    }
+
     /// True while something is still drawing itself on or fading out.
     func isAnimating(at date: Date) -> Bool {
-        items.contains { item in
-            date.timeIntervalSince(item.createdAt) < Self.drawDuration + 0.1 || item.fadeStart != nil
-        }
+        animationIntervals.contains { date >= $0.start && date < $0.end }
     }
 
     private func scheduleSweep() {
@@ -163,6 +174,64 @@ final class SceneOverlayModel: ObservableObject {
     }
 }
 
+// MARK: - Scheduling
+
+/// A finite schedule rather than a paused animation schedule: SwiftUI must receive the
+/// completed reveal/fade frame before it can sleep, then wake at the next fade's start.
+struct SceneOverlayTimelineSchedule: TimelineSchedule, Hashable {
+    let intervals: [DateInterval]
+
+    init(intervals: [DateInterval]) {
+        var merged: [DateInterval] = []
+        for interval in intervals.sorted(by: { $0.start < $1.start }) {
+            if let previous = merged.last, interval.start <= previous.end {
+                merged[merged.count - 1] = DateInterval(start: previous.start, end: max(previous.end, interval.end))
+            } else {
+                merged.append(interval)
+            }
+        }
+        self.intervals = merged
+    }
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> Entries {
+        Entries(intervals: intervals, firstDate: startDate, frameInterval: mode == .lowFrequency ? 1.0 / 30 : 1.0 / 60)
+    }
+
+    struct Entries: Sequence, IteratorProtocol {
+        let intervals: [DateInterval]
+        let firstDate: Date
+        let frameInterval: TimeInterval
+        private var previousDate: Date?
+        private var intervalIndex = 0
+
+        init(intervals: [DateInterval], firstDate: Date, frameInterval: TimeInterval) {
+            self.intervals = intervals
+            self.firstDate = firstDate
+            self.frameInterval = frameInterval
+        }
+
+        mutating func next() -> Date? {
+            guard let previousDate else {
+                self.previousDate = firstDate
+                return firstDate
+            }
+            while intervalIndex < intervals.count {
+                let interval = intervals[intervalIndex]
+                if previousDate >= interval.end {
+                    intervalIndex += 1
+                    continue
+                }
+                let nextDate = previousDate < interval.start
+                    ? interval.start
+                    : Swift.min(previousDate.addingTimeInterval(frameInterval), interval.end)
+                self.previousDate = nextDate
+                return nextDate
+            }
+            return nil
+        }
+    }
+}
+
 // MARK: - View
 
 struct SceneOverlayView: View {
@@ -173,7 +242,8 @@ struct SceneOverlayView: View {
     var frozenAt: Date?
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: frozenAt != nil)) { timeline in
+        let schedule = SceneOverlayTimelineSchedule(intervals: frozenAt == nil ? model.animationIntervals : [])
+        TimelineView(schedule) { timeline in
             Canvas { context, size in
                 let now = frozenAt ?? timeline.date
                 let rect = mapping ?? CGRect(origin: .zero, size: size)
@@ -182,6 +252,8 @@ struct SceneOverlayView: View {
                 }
             }
         }
+        // New marks and explicit removals restart a completed schedule immediately.
+        .id(schedule)
         .allowsHitTesting(false)
     }
 }
