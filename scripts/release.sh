@@ -283,8 +283,19 @@ NOTES
 )"
 fi
 
+# The unpacked Chrome extension, zipped for "Get the extension" in Settings → Browser.
+# The app fetches it from releases/latest/download/Teachy-Chrome-Extension.zip.
+echo "🧩 Zipping the Chrome extension…"
+EXTENSION_ZIP_PATH="${RELEASES_DIR}/Teachy-Chrome-Extension.zip"
+EXTENSION_STAGING_DIR="$(mktemp -d)"
+ditto "${PROJECT_DIR}/chrome-extension" "${EXTENSION_STAGING_DIR}/Teachy Chrome Extension"
+rm -rf "${EXTENSION_STAGING_DIR}/Teachy Chrome Extension/tests"
+rm -f "${EXTENSION_ZIP_PATH}"
+ditto -c -k --norsrc --noextattr --noqtn --keepParent "${EXTENSION_STAGING_DIR}/Teachy Chrome Extension" "${EXTENSION_ZIP_PATH}"
+rm -rf "${EXTENSION_STAGING_DIR}"
+
 echo "🏷️  Creating GitHub Release ${TAG}…"
-gh release create "${TAG}" "${DMG_PATH}" \
+gh release create "${TAG}" "${DMG_PATH}" "${EXTENSION_ZIP_PATH}" \
     --repo "${GITHUB_REPO}" \
     --title "Teachy ${MARKETING_VERSION}" \
     --notes "$(cat <<EOF

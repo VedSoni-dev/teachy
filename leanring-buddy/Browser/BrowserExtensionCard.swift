@@ -29,6 +29,9 @@ struct BrowserExtensionCard: View {
     var startsExpanded: Bool = false
     var onInstall: () -> Void = {}
     var onOpenExtensionsPage: () -> Void = {}
+    /// Saves the extension zip to Downloads and has Teachy show where to click.
+    var onGetExtension: () -> Void = {}
+    var isSavingExtension: Bool = false
     var onCheckAgain: () -> Void = {}
 
     @State private var showsSteps = false
@@ -76,13 +79,16 @@ struct BrowserExtensionCard: View {
 
             case .waitingForChrome:
                 steps([
-                    "Open the extensions page in your browser.",
-                    "Add the Teachy extension, and leave it switched on.",
+                    "Get the extension: Teachy saves it to Downloads and shows you where to click.",
+                    "Unzip it, then in chrome://extensions turn on Developer mode and Load unpacked.",
                     "This row shows Connected by itself. If it does not, restart the browser."
                 ])
                 HStack(spacing: 4) {
-                    Button("Open chrome://extensions", action: onOpenExtensionsPage)
+                    Button(isSavingExtension ? "Saving…" : "Get the extension", action: onGetExtension)
                         .teachyButton(.primary, size: .compact)
+                        .disabled(isSavingExtension)
+                    Button("Open chrome://extensions", action: onOpenExtensionsPage)
+                        .teachyButton(.quiet, size: .compact)
                     Button("Check again", action: onCheckAgain)
                         .teachyButton(.quiet, size: .compact)
                     Button(isInstalling ? "Installing…" : "Reinstall the helper", action: onInstall)
