@@ -276,7 +276,7 @@ This community build is **not** Apple-notarized (keeps Teachy free).
 1. Drag **Teachy.app** to Applications
 2. **Right-click** Teachy → **Open** → click **Open**
    - Or: open once, then System Settings → Privacy & Security → **Open Anyway**
-3. Teachy walks you through permissions, then asks for your free OpenRouter key — no server or setup needed
+3. Teachy walks you through permissions, then you sign in (or choose **Use my own key** and paste an OpenRouter key)
 
 Later updates via Sparkle keep working after that first allow.
 NOTES
@@ -290,7 +290,7 @@ gh release create "${TAG}" "${DMG_PATH}" \
     --notes "$(cat <<EOF
 ## Teachy ${MARKETING_VERSION}
 
-Free macOS download. Paste your free OpenRouter key in-app and coach yourself through real work on screen — no server needed.
+Free and open source (MIT). Hold control + option and ask about anything on your screen: Teachy answers out loud, points, draws, or does the job. Source: https://github.com/VedSoni-dev/teachy · What changed: https://www.tryteachy.com/changelog.html
 
 **Direct download:** https://github.com/${GITHUB_REPO}/releases/download/${TAG}/${DMG_FILENAME}
 
