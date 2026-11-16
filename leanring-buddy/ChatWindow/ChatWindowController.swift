@@ -28,9 +28,12 @@ final class ChatWindowController: NSObject, NSWindowDelegate {
 
     /// Where typed questions go. Set by `install(onSubmit:)`.
     var onSubmit: (String) -> Void = { _ in }
+    var onOpenSettings: () -> Void = {}
     /// The person's cursor colour. The view no longer reads it (its marks use
     /// `DS.Colors.pointer`, which follows a new colour choice); kept because the app sets it.
     var accentColor: Color = DS.Colors.pointer
+
+    let composerDraft = ChatComposerDraft()
 
     private var window: NSWindow?
     private var isWatching = false
@@ -81,6 +84,8 @@ final class ChatWindowController: NSObject, NSWindowDelegate {
         window.contentView = Self.contentView(for: ChatWindowView(
             timeline: ChatTimeline.shared,
             accentColor: accentColor,
+            composerDraft: composerDraft,
+            onOpenSettings: { [weak self] in self?.onOpenSettings() },
             onSubmit: { [weak self] text in self?.onSubmit(text) }
         ))
         Self.style(window)

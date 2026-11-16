@@ -13,6 +13,19 @@ import SwiftUI
 /// The text view class, so the window can find it and give it the keyboard.
 final class ChatComposerNSTextView: NSTextView {
     var onSubmit: (() -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { onFocusChange?(true) }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { onFocusChange?(false) }
+        return accepted
+    }
 
     override func keyDown(with event: NSEvent) {
         let isReturn = event.keyCode == 36 || event.keyCode == 76
@@ -36,6 +49,8 @@ struct ChatComposerTextView: NSViewRepresentable {
     var fontSize: CGFloat = 14.5
     var minimumHeight: CGFloat = 22
     var maximumHeight: CGFloat = 168
+    var automaticallyFocus = false
+    var onFocusChange: (Bool) -> Void = { _ in }
     var onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -51,6 +66,7 @@ struct ChatComposerTextView: NSViewRepresentable {
         let textView = ChatComposerNSTextView()
         textView.delegate = context.coordinator
         textView.onSubmit = onSubmit
+        textView.onFocusChange = onFocusChange
         textView.isRichText = false
         textView.allowsUndo = true
         textView.drawsBackground = false
@@ -70,7 +86,10 @@ struct ChatComposerTextView: NSViewRepresentable {
         textView.setAccessibilityLabel("Ask Teachy")
         scrollView.documentView = textView
         context.coordinator.textView = textView
-        DispatchQueue.main.async { context.coordinator.updateHeight() }
+        DispatchQueue.main.async {
+            context.coordinator.updateHeight()
+            if automaticallyFocus { textView.window?.makeFirstResponder(textView) }
+        }
         return scrollView
     }
 
@@ -78,6 +97,7 @@ struct ChatComposerTextView: NSViewRepresentable {
         context.coordinator.parent = self
         guard let textView = context.coordinator.textView else { return }
         textView.onSubmit = onSubmit
+        textView.onFocusChange = onFocusChange
         if textView.string != text {
             textView.string = text
             context.coordinator.updateHeight()

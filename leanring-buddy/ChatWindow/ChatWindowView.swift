@@ -6,7 +6,7 @@
 //  day (messages, drawings, agent jobs, notes), and a composer with attachment
 //  chips and the "hold to talk" hint.
 //
-//  It reads like Messages: Teachy's replies are plain unboxed text on the left,
+//  Teachy's replies are compact charcoal bubbles on the left,
 //  the person's own words are a bubble in their pointer colour on the right,
 //  and jobs and drawings are rows of a grouped list. Colours, fonts and
 //  controls come from the design system (docs/DESIGN.md).
@@ -39,6 +39,12 @@ enum ChatStyle {
     static let groupedRowVerticalPadding: CGFloat = 11
 }
 
+@MainActor
+final class ChatComposerDraft: ObservableObject {
+    @Published var text: String
+    init(text: String = "") { self.text = text }
+}
+
 struct ChatWindowView: View {
     @ObservedObject var timeline: ChatTimeline
     @ObservedObject var shelf: AttachmentShelf
@@ -52,9 +58,17 @@ struct ChatWindowView: View {
     var onSubmit: (String) -> Void
     /// Room on the left of the header for the window's close, minimise and zoom buttons.
     var leadingHeaderInset: CGFloat
+    var onOpenSettings: () -> Void
+    @State private var sidebarVisible = true
+    @State private var sidebarEntryHovered = false
+    @State private var sidebarSettingsHovered = false
 
     @State private var searchText = ""
-    @State private var draft = ""
+    @StateObject private var composerDraft: ChatComposerDraft
+    private var draft: String {
+        get { composerDraft.text }
+        nonmutating set { composerDraft.text = newValue }
+    }
     @State private var composerHeight: CGFloat = 22
     @State private var keyLabels: [String] = []
     @FocusState private var searchFocused: Bool
@@ -67,6 +81,8 @@ struct ChatWindowView: View {
         leadingHeaderInset: CGFloat = 84,
         initialSearchText: String = "",
         initialDraft: String = "",
+        composerDraft: ChatComposerDraft? = nil,
+        onOpenSettings: @escaping () -> Void = {},
         onSubmit: @escaping (String) -> Void
     ) {
         self.timeline = timeline
@@ -75,8 +91,9 @@ struct ChatWindowView: View {
         self.talkKeyLabels = talkKeyLabels
         self.leadingHeaderInset = leadingHeaderInset
         self.onSubmit = onSubmit
+        self.onOpenSettings = onOpenSettings
         self._searchText = State(initialValue: initialSearchText)
-        self._draft = State(initialValue: initialDraft)
+        self._composerDraft = StateObject(wrappedValue: composerDraft ?? ChatComposerDraft(text: initialDraft))
         self._keyLabels = State(initialValue: talkKeyLabels())
     }
 
@@ -87,16 +104,23 @@ struct ChatWindowView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-                .zIndex(2)
-            TeachyRule()
-                .zIndex(2)
-            thread
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
-            composerArea
-                .zIndex(1)
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                if sidebarVisible { sidebar.frame(width: 200) }
+                VStack(spacing: 0) {
+                    header.zIndex(2)
+                    TeachyRule().zIndex(2)
+                    thread
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                    composerArea.zIndex(1)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .onAppear { if geometry.size.width < 640 { sidebarVisible = false } }
+            .onChange(of: geometry.size.width) { _, width in
+                if width < 640 { sidebarVisible = false }
+            }
         }
         .background(ChatStyle.windowBackground)
         .attachmentDropTarget(shelf: shelf, cornerRadius: 12)
@@ -107,16 +131,72 @@ struct ChatWindowView: View {
         .onAppear { keyLabels = talkKeyLabels() }
     }
 
+    private var sidebarToggle: some View {
+        Button { sidebarVisible.toggle() } label: { Image(systemName: "sidebar.left") }
+            .teachyIconButton(sideLength: 26)
+            .help(sidebarVisible ? "Hide sidebar" : "Show sidebar")
+            .accessibilityLabel(sidebarVisible ? "Hide sidebar" : "Show sidebar")
+    }
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Spacer(minLength: leadingHeaderInset)
+                sidebarToggle
+                Spacer(minLength: 0)
+            }
+            .frame(height: ChatStyle.headerHeight)
+            Button { searchText = "" } label: {
+                HStack(spacing: DS.Spacing.sm) {
+                    ChatTeachyMark(color: DS.Colors.pointer, size: 19)
+                    Text("Teachy").font(DS.Fonts.itemTitle)
+                    Spacer()
+                }
+                .padding(DS.Spacing.md)
+                .background(sidebarEntryHovered ? DS.Colors.fillPrimary : DS.Colors.fillSecondary, in: RoundedRectangle(cornerRadius: DS.CornerRadius.small))
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .foregroundStyle(DS.Colors.textPrimary)
+            .padding(DS.Spacing.sm)
+            .onHover { sidebarEntryHovered = $0 }
+            .help("Your conversation with Teachy")
+            Spacer()
+            TeachyRule()
+            Button(action: onOpenSettings) {
+                HStack(spacing: DS.Spacing.sm) {
+                    Image(systemName: "person.crop.circle").font(DS.Fonts.title)
+                    Text("Account & settings").font(DS.Fonts.caption)
+                    Spacer(minLength: 0)
+                    Image(systemName: "gearshape").font(DS.Fonts.body)
+                }
+                .padding(DS.Spacing.md)
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .pointerCursor()
+            .foregroundStyle(DS.Colors.textSecondary)
+            .background(sidebarSettingsHovered ? DS.Colors.fillQuaternary : Color.clear)
+            .onHover { sidebarSettingsHovered = $0 }
+            .help("Open Teachy settings")
+        }
+        .background(DS.Colors.surface2)
+    }
+
     // MARK: Header
 
     private var header: some View {
         HStack(spacing: 8) {
-            Color.clear.frame(width: max(0, leadingHeaderInset - 16), height: 1)
+            if !sidebarVisible {
+                Color.clear.frame(width: max(0, leadingHeaderInset - 16), height: 1)
+                sidebarToggle
+            }
 
             ChatTeachyMark(color: DS.Colors.pointer, size: 12)
-            Text("Teachy")
-                .font(DS.Fonts.title)
-                .foregroundColor(DS.Colors.textPrimary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Teachy").font(DS.Fonts.title).foregroundColor(DS.Colors.textPrimary)
+                Text("Your chat").font(DS.Fonts.caption).foregroundColor(DS.Colors.textSecondary)
+            }
 
             Spacer(minLength: 12)
 
@@ -217,7 +297,7 @@ struct ChatWindowView: View {
                     .frame(maxWidth: .infinity)
                 }
                 .defaultScrollAnchor(isSearching ? .top : .bottom)
-                .onChange(of: timeline.items.last?.id) { _, _ in
+                .onChange(of: timeline.items) { _, _ in
                     guard !isSearching else { return }
                     withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("chat-bottom", anchor: .bottom) }
                 }
@@ -251,15 +331,18 @@ struct ChatWindowView: View {
 
     // MARK: Composer
 
-    private var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var canSend: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !shelf.items.contains { if case .reading = $0.state { return true }; return false }
+    }
 
     private func send() {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty else { return }
+        guard canSend else { return }
+        onSubmit(question)
+        timeline.userAsked(question)
         draft = ""
         searchText = ""
-        timeline.userAsked(question)
-        onSubmit(question)
     }
 
     private func chooseFiles() {
@@ -278,7 +361,7 @@ struct ChatWindowView: View {
 
             HStack(alignment: .bottom, spacing: 8) {
                 Button(action: chooseFiles) {
-                    Image(systemName: "paperclip")
+                    Image(systemName: "plus")
                 }
                 .teachyIconButton(sideLength: ChatStyle.composerButtonSideLength)
                 .help("Attach a file")
@@ -292,7 +375,7 @@ struct ChatWindowView: View {
                             .padding(.top, 2)
                             .allowsHitTesting(false)
                     }
-                    ChatComposerTextView(text: $draft, height: $composerHeight, fontSize: ChatStyle.bodySize, onSubmit: send)
+                    ChatComposerTextView(text: $composerDraft.text, height: $composerHeight, fontSize: ChatStyle.bodySize, onSubmit: send)
                         .frame(height: composerHeight)
                 }
                 .padding(.vertical, 2)
@@ -417,7 +500,7 @@ private enum ChatThreadSection: Identifiable {
 
 /// How far apart the things in the thread sit.
 private enum ChatThreadSpacing {
-    static let betweenItems: CGFloat = 20
+    static let betweenItems: CGFloat = 6
     /// A note is one small line, so it sits closer to its neighbours.
     static let aroundNote: CGFloat = 12
 
@@ -444,25 +527,14 @@ struct ChatTeachyMark: View {
     }
 }
 
-/// The pointer in the person's colour: Teachy is thinking or still writing.
-/// It breathes slowly while there is nothing else moving (thinking); beside a
-/// reply that is arriving it holds still, because the caret after the text
-/// already blinks. Always still when Reduce Motion is on.
+/// A still status mark while Teachy is thinking or writing.
 struct ChatLivePointerMark: View {
     var size: CGFloat = 11
     var isBreathing = true
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isDimmed = false
-
     var body: some View {
         TeachyPointerShape()
             .fill(DS.Colors.pointer)
             .frame(width: size, height: size)
-            .opacity(isDimmed ? 0.4 : 1)
-            .onAppear {
-                guard isBreathing, !reduceMotion else { return }
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { isDimmed = true }
-            }
             .accessibilityLabel("Teachy is answering")
     }
 }
@@ -634,60 +706,28 @@ struct ChatUserBubble: View {
     }
 }
 
-/// What Teachy said: plain text, unboxed, in a column narrow enough to read.
+/// A charcoal reply bubble shared by the notch and standalone conversation.
 struct ChatAssistantMessage: View {
     let text: String
     let date: Date
     var isStreaming: Bool
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// When this reply started to be shown, so the caret's blink starts lit.
-    @State private var caretBlinkStartDate = Date()
-
-    private static let caretBlinkInterval: TimeInterval = 0.55
-
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            Group {
-                if isStreaming {
-                    ChatLivePointerMark(isBreathing: false)
-                } else {
-                    ChatTeachyMark(color: DS.Colors.textTertiary, size: 11)
-                }
-            }
-            .frame(width: ChatStyle.gutterWidth, alignment: .leading)
-            // Sits the mark on the middle of the first line of text.
-            .padding(.top, 3)
-
-            VStack(alignment: .leading, spacing: 12) {
-                if isStreaming && !reduceMotion {
-                    TimelineView(.periodic(from: caretBlinkStartDate, by: Self.caretBlinkInterval)) { timelineContext in
-                        replyBlocks(streamingCaretColor: caretColor(at: timelineContext.date))
-                    }
-                } else {
-                    replyBlocks(streamingCaretColor: isStreaming ? DS.Colors.pointer : nil)
-                }
-
-                if !isStreaming {
-                    HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        Text(ChatTimeFormat.time.string(from: date))
-                            .font(DS.Fonts.data)
-                            .foregroundColor(DS.Colors.textTertiary)
-                        ChatCopyButton(text: text)
-                    }
-                }
-            }
+        replyBlocks(streamingCaretColor: isStreaming ? DS.Colors.pointer : nil)
+            .padding(.horizontal, DS.Spacing.md)
+            .padding(.vertical, DS.Spacing.sm)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(DS.Colors.surface3))
             .frame(maxWidth: ChatStyle.readingWidth, alignment: .leading)
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// The caret after the last word is lit for one interval, then faint for the next.
-    private func caretColor(at date: Date) -> Color {
-        let intervalsSinceStart = Int(date.timeIntervalSince(caretBlinkStartDate) / Self.caretBlinkInterval)
-        return intervalsSinceStart.isMultiple(of: 2) ? DS.Colors.pointer : DS.Colors.pointer.opacity(0.25)
+            .padding(.trailing, DS.Spacing.xxxl)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contextMenu {
+                Button("Copy reply") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(isStreaming ? "Teachy is answering" : "Teachy")
     }
 
     /// The reply's paragraphs and code blocks. `streamingCaretColor` is nil for a finished reply.
