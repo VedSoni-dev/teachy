@@ -88,6 +88,10 @@ struct ClickyNotchRootView: View {
                     .animation(reduceMotion ? nil : (notchManager.isExpanded
                         ? ClickyNotchSizing.openSpring : ClickyNotchSizing.closeSpring),
                         value: notchManager.isExpanded)
+                    // Home, Chat and Settings are different sizes: the silhouette springs
+                    // between them while the page content cross-fades at its final size.
+                    .animation(reduceMotion ? nil : ClickyNotchSizing.pageResizeSpring,
+                               value: notchManager.expandedSize)
                     // Limit file-drop handling to the visible shell, not its animation canvas.
                     .attachmentDropTarget(cornerRadius: 24, showsHighlight: notchManager.isExpanded) { isOver in
                         notchManager.setAttachmentDragTargeted(isOver)
@@ -143,11 +147,8 @@ struct ClickyNotchRootView: View {
             .onHover { notchManager.handleNotchHover($0) }
         }
         .padding(.bottom, 8)
-        .frame(
-            maxWidth: notchManager.hostingSize.width,
-            maxHeight: notchManager.hostingSize.height,
-            alignment: .top
-        )
+        // Fill the panel, whatever size it holds during a page resize, and stay top-centered.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .compositingGroup()
         .scaleEffect(
             x: gestureScale,
@@ -157,6 +158,16 @@ struct ClickyNotchRootView: View {
         .animation(.smooth, value: gestureProgress)
         .preferredColorScheme(.dark)
 
+    }
+
+    /// Settings destinations (Agents, Drawings, Integrations…) share one workspace,
+    /// so only Home, Chat and that workspace count as different pages.
+    private var pageTransitionIdentity: String {
+        switch notchManager.selectedTab {
+        case .home: return "home"
+        case .chat: return "chat"
+        default: return "settings"
+        }
     }
 
     private var gestureScale: CGFloat {
@@ -176,7 +187,11 @@ struct ClickyNotchRootView: View {
                     clickyNotchHeader
                         .frame(height: notchManager.selectedTab == .home || notchManager.selectedTab == .chat ? 44 : 50)
                         .background(DS.Colors.notchBlack)
+                    // A new identity per page size class: the new page appears at its final
+                    // layout and fades in, instead of reflowing while the silhouette grows.
                     NotchPanelView(companionManager: companionManager, notchManager: notchManager)
+                        .id(pageTransitionIdentity)
+                        .transition(.opacity.animation(reduceMotion ? nil : .easeInOut(duration: 0.18)))
                 }
                 // The notch shoulders occupy real horizontal space; keep all
                 // content inside their straight edges before applying page gutters.

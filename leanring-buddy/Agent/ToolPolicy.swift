@@ -68,6 +68,10 @@ struct ToolPolicySettings {
     /// The working folder of the named agent this job runs as (`~/.teachy/agents/<slug>/files`),
     /// with symlinks resolved. Reading and writing inside it needs no yes. Empty = not an agent job.
     var agentFilesDirectory: String = ""
+    /// The code project the job works in (a git folder the person pointed at), symlinks
+    /// resolved. Reading inside it needs no yes; edits there need one (auto mode gives it).
+    /// Empty = not a coding job.
+    var projectDirectory: String = ""
 }
 
 /// Facts about the live drive session, gathered by the gate and passed in as plain values.
@@ -185,42 +189,57 @@ enum ToolPolicy {
         case "delete_routine":
             return decision(.alwaysAsk, "deletes a routine", summary: "delete a routine", detail: string(arguments["id"]))
 
-        case "read_file":
-            let path = string(arguments["path"])
-            if PathPolicy.isInside(path: path, directory: settings.agentFilesDirectory, home: settings.homeDirectory),
-               !PathPolicy.looksLikeCredentialPath(PathPolicy.relative(path: path, to: settings.agentFilesDirectory, home: settings.homeDirectory)) {
-                return decision(.safe, "reads a file in this agent's own folder", summary: "read a file", detail: path)
-            }
-            switch PathPolicy.classifyRead(path: path, home: settings.homeDirectory) {
-            case .plain:
-                return decision(.safe, "reads a normal file in your home folder", summary: "read a file", detail: path)
-            case .credential:
-                return decision(.alwaysAsk, "the path looks like credentials or keys", summary: "read a file that may hold secrets", detail: path)
-            case .privateArea:
-                return decision(.needsConsent, "the file is hidden, in Library, or outside your home folder", summary: "read a file", detail: path)
-            }
+        case "read_file", "grep", "glob", "list_directory":
+            return classifyFileRead(toolName: toolName, arguments: arguments, settings: settings)
 
-        case "write_file":
+        case "write_file", "edit_file":
             let path = string(arguments["path"])
+            let verb = toolName == "edit_file" ? "edit" : "write"
             // A named agent may write freely inside its own files folder. Only the part below the
             // folder is judged for secret-looking names, so the folder's own path cannot trip it.
             if PathPolicy.isInside(path: path, directory: settings.agentFilesDirectory, home: settings.homeDirectory) {
                 let inner = PathPolicy.relative(path: path, to: settings.agentFilesDirectory, home: settings.homeDirectory)
                 if !PathPolicy.looksLikeCredentialPath(inner), !PathPolicy.looksLikePersistencePath(inner) {
-                    return decision(.safe, "writes inside this agent's own files folder", summary: "write a file in its own folder", detail: path)
+                    return decision(.safe, "\(verb)s inside this agent's own files folder", summary: "\(verb) a file in its own folder", detail: path)
+                }
+            }
+            // Inside the project the person pointed the job at, changing code is the job: it
+            // needs a yes (auto mode gives it), wherever the project lives. Never for files that
+            // look like keys or decide what runs at login, even inside the project.
+            if PathPolicy.isInside(path: path, directory: settings.projectDirectory, home: settings.homeDirectory) {
+                let inner = PathPolicy.relative(path: path, to: settings.projectDirectory, home: settings.homeDirectory)
+                if !PathPolicy.looksLikeCredentialPath(inner), !PathPolicy.looksLikePersistencePath(inner) {
+                    return decision(.needsConsent, "changes a file in the project you asked Teachy to work on", summary: "\(verb) a project file", detail: path)
                 }
             }
             switch PathPolicy.classifyWrite(path: path, home: settings.homeDirectory) {
             case .credential:
-                return decision(.alwaysAsk, "writing there can change sign-ins, keys or what runs at login", summary: "write a sensitive file", detail: path)
+                return decision(.alwaysAsk, "writing there can change sign-ins, keys or what runs at login", summary: "\(verb) a sensitive file", detail: path)
             case .plain, .privateArea:
-                return decision(.needsConsent, "creates or overwrites a file", summary: "write a file", detail: path)
+                return decision(.needsConsent, toolName == "edit_file" ? "changes a file" : "creates or overwrites a file", summary: "\(verb) a file", detail: path)
             }
 
         case "bash":
             let command = string(arguments["command"])
             let verdict = ShellCommandClassifier.classify(command)
-            return decision(verdict.risk, verdict.reason, summary: "run a command", detail: command)
+            let workingDirectory = string(arguments["working_directory"])
+            guard !workingDirectory.isEmpty else {
+                return decision(verdict.risk, verdict.reason, summary: "run a command", detail: command)
+            }
+            // The command reads relative names from its folder, so `cat config` run in ~/.ssh is a
+            // key read even though no word in it says so. Judge the folder like a read of it.
+            let detail = "(in \(workingDirectory)) \(command)"
+            let isOwnFolder = PathPolicy.isSameOrInside(path: workingDirectory, directory: settings.projectDirectory, home: settings.homeDirectory)
+                || PathPolicy.isSameOrInside(path: workingDirectory, directory: settings.agentFilesDirectory, home: settings.homeDirectory)
+            let folderKind: PathPolicy.Kind = isOwnFolder && !PathPolicy.looksLikeCredentialPath(workingDirectory) ? .plain : PathPolicy.classifyRead(path: workingDirectory, home: settings.homeDirectory)
+            switch folderKind {
+            case .credential where verdict.risk < .alwaysAsk:
+                return decision(.alwaysAsk, "runs in a folder that looks like it holds keys or credentials", summary: "run a command", detail: detail)
+            case .privateArea where verdict.risk < .needsConsent:
+                return decision(.needsConsent, "runs in a hidden or system folder", summary: "run a command", detail: detail)
+            default:
+                return decision(verdict.risk, verdict.reason, summary: "run a command", detail: detail)
+            }
 
         case "run_applescript":
             let script = string(arguments["script"])
@@ -272,6 +291,50 @@ enum ToolPolicy {
 
         default:
             return classifyUnknown(toolName: toolName, arguments: arguments, context: context)
+        }
+    }
+
+    // MARK: Reading files and searching folders
+
+    /// read_file, grep, glob and list_directory share one rule: credentials always ask, hidden
+    /// and system places need a yes, a plain file or folder in home is safe. Inside the job's own
+    /// folder (a named agent's files, or the project it works on) reading is safe, except for
+    /// secret-looking files such as a project's .env.
+    private static func classifyFileRead(toolName: String, arguments: [String: Any], settings: ToolPolicySettings) -> ToolPolicyDecision {
+        let path = string(arguments["path"])
+        let summary: String
+        var detail = path
+        switch toolName {
+        case "grep":
+            summary = "search files"
+            detail = "\(string(arguments["pattern"])) in \(path)"
+        case "glob":
+            summary = "find files"
+            detail = "\(string(arguments["pattern"])) in \(path)"
+        case "list_directory":
+            summary = "list a folder"
+        default:
+            summary = "read a file"
+        }
+        func decision(_ risk: ToolRisk, _ reason: String) -> ToolPolicyDecision {
+            ToolPolicyDecision(toolName: toolName, risk: risk, reason: reason, summary: summary, detail: clipped(detail), appScope: "")
+        }
+
+        for (ownDirectory, label) in [(settings.agentFilesDirectory, "this agent's own folder"), (settings.projectDirectory, "the project Teachy is working on")] {
+            guard PathPolicy.isSameOrInside(path: path, directory: ownDirectory, home: settings.homeDirectory) else { continue }
+            let inner = PathPolicy.relative(path: path, to: ownDirectory, home: settings.homeDirectory)
+            if PathPolicy.looksLikeCredentialPath(inner) {
+                return decision(.alwaysAsk, "the path looks like credentials or keys")
+            }
+            return decision(.safe, "reads inside \(label)")
+        }
+        switch PathPolicy.classifyRead(path: path, home: settings.homeDirectory) {
+        case .plain:
+            return decision(.safe, "reads a normal file in your home folder")
+        case .credential:
+            return decision(.alwaysAsk, "the path looks like credentials or keys")
+        case .privateArea:
+            return decision(.needsConsent, toolName == "read_file" ? "the file is hidden, in Library, or outside your home folder" : "the folder is hidden, in Library, outside your home folder, or the whole home folder")
         }
     }
 
@@ -610,6 +673,15 @@ enum PathPolicy {
         let base = normalize(trimmedDirectory, home: home)
         guard base != "/" else { return false }
         return normalize(path, home: home).hasPrefix(base + "/")
+    }
+
+    /// `isInside`, or the directory itself (a search of the project folder is "in" the project).
+    static func isSameOrInside(path: String, directory: String, home: String) -> Bool {
+        let trimmedDirectory = directory.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDirectory.isEmpty, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        let base = normalize(trimmedDirectory, home: home)
+        guard base != "/" else { return false }
+        return normalize(path, home: home) == base || isInside(path: path, directory: directory, home: home)
     }
 
     /// The part of `path` below `directory` ("" when it is not inside).

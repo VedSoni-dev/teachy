@@ -177,6 +177,13 @@ struct NotchChatView: View {
                     .padding(.bottom, 5)
                     .help("Open chat window")
                     .accessibilityLabel("Open chat window")
+
+                // A fresh chat; the old one stays in the chat window's history and in memory.
+                Button { ChatSessionList.shared.startNewChat() } label: { Image(systemName: "square.and.pencil") }
+                    .teachyIconButton(sideLength: 30)
+                    .padding(.bottom, 5)
+                    .help("New chat")
+                    .accessibilityLabel("New chat")
             }
         }
         .padding(.horizontal, DS.Spacing.xxl)

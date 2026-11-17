@@ -48,8 +48,9 @@ final class BackgroundAgentManager: ObservableObject {
     - mcp__browser__…: a real web browser you control (open pages, click, fill forms, read). Use it for websites.
     - capture_screen: a fresh screenshot
     - web_search, web_fetch: current information from the public web. Use 1-2 focused searches, then answer.
-    - read_file / write_file: files
-    - bash: shell commands (not interactive; never vim, nano, less)
+    - read_file (numbered lines, offset/limit) / edit_file (exact replacement, returns a diff) / write_file (new files or full rewrites): files
+    - grep (search contents), glob (find files by pattern), list_directory: explore folders and code
+    - bash: shell commands (not interactive; never vim, nano, less). Runs in the job's working folder unless you pass working_directory
     - run_applescript: script Mac apps
     - control_app: open, activate, quit or hide an app. control_browser / open_browser_tab: tabs and pages
     - authenticated_fetch / list_browser_sessions: only work if the user switched on browser sign-in access in settings
@@ -114,6 +115,8 @@ final class BackgroundAgentManager: ObservableObject {
         /// With no `agentSlug`: run as the agent the request names ("ask Research buddy to…"), else as a plain job.
         var picksAgentByName = true
         var routineID: String?
+        /// A code project to work in (absolute or ~/). nil = use a git project the request names, if any.
+        var projectDirectory: String?
         /// A routine run: no card, nothing spoken, nobody to ask (anything needing a yes is refused).
         var isUnattended = false
         /// Sentences of the answer as they are ready, cleaned for speech. Give this to start speaking early.
@@ -131,10 +134,12 @@ final class BackgroundAgentManager: ObservableObject {
         screenCaptures: [CompanionScreenCapture] = [],
         mouseOutlineContext: CompanionMouseOutlineContext? = nil,
         agentSlug: String? = nil,
+        projectDirectory: String? = nil,
         onAnswerSentence: ((String) -> Void)? = nil,
         onAnswerRetracted: (() -> Void)? = nil
     ) {
         var launch = JobLaunch(transcript: transcript)
+        launch.projectDirectory = projectDirectory
         launch.screenCaptures = screenCaptures
         launch.mouseOutlineContext = mouseOutlineContext
         launch.agentSlug = agentSlug
@@ -160,6 +165,16 @@ final class BackgroundAgentManager: ObservableObject {
         request.showsCard = !launch.isUnattended
         request.routineID = launch.routineID
         request.isUnattended = launch.isUnattended
+        // "Fix the failing test in ~/code/app" works in that project without being told twice.
+        request.projectDirectory = launch.projectDirectory ?? CodingProjectDetection.projectDirectory(
+            inRequestText: launch.transcript,
+            home: NSHomeDirectory(),
+            isDirectory: { path in
+                var isDirectory: ObjCBool = false
+                return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+            },
+            hasGitEntry: { path in FileManager.default.fileExists(atPath: (path as NSString).appendingPathComponent(".git")) }
+        )
         if let slug = launch.agentSlug {
             request.agent = AgentRoster.shared.agent(slug: slug)
         } else if launch.picksAgentByName, !launch.isUnattended {

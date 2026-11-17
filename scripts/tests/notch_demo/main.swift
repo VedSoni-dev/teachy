@@ -66,7 +66,7 @@ struct StandInDesktop: View {
 
 @MainActor
 final class NotchDemo {
-    let windowSize = NSSize(width: 1040, height: 480)
+    var windowSize = NSSize(width: 1040, height: 480)
     let window: NSWindow
     let notchManager = NotchWindowManager()
     let companionManager = CompanionManager()
@@ -74,7 +74,12 @@ final class NotchDemo {
     var recordingDirectory: URL?
     let frameQueue = DispatchQueue(label: "notch-demo.frames", qos: .userInitiated)
 
-    init(hasCameraHousing: Bool) {
+    let cyclesPages: Bool
+
+    init(hasCameraHousing: Bool, cyclesPages: Bool = false) {
+        self.cyclesPages = cyclesPages
+        // Settings is 650pt tall: give the stand-in desktop room for it.
+        if cyclesPages { windowSize = NSSize(width: 1040, height: 720) }
         if hasCameraHousing {
             notchManager.notchGeometry = NotchScreenGeometry(
                 screenFrame: CGRect(x: 0, y: 0, width: 1040, height: 480),
@@ -143,6 +148,7 @@ final class NotchDemo {
 
     /// Closed for a moment, then open, then closed again, on a loop.
     func startLoop() {
+        if cyclesPages { startPageLoop(); return }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.6))
             while true {
@@ -150,6 +156,26 @@ final class NotchDemo {
                 try? await Task.sleep(for: .seconds(4.2))
                 notchManager.collapse()
                 try? await Task.sleep(for: .seconds(2.6))
+            }
+        }
+    }
+}
+
+extension NotchDemo {
+    /// Open, then Home -> Chat -> Settings -> Chat -> Home, then closed, on a loop.
+    func startPageLoop() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.0))
+            while true {
+                notchManager.selectedTab = .home
+                notchManager.expand()
+                for tab in [NotchPanelTab.chat, .settings, .chat, .home] {
+                    try? await Task.sleep(for: .seconds(1.6))
+                    notchManager.selectedTab = tab
+                }
+                try? await Task.sleep(for: .seconds(1.6))
+                notchManager.collapse()
+                try? await Task.sleep(for: .seconds(1.6))
             }
         }
     }
@@ -167,7 +193,7 @@ func runDemo() {
 
     _ = NSApplication.shared
     NSApp.setActivationPolicy(.accessory)
-    let demo = NotchDemo(hasCameraHousing: hasCameraHousing)
+    let demo = NotchDemo(hasCameraHousing: hasCameraHousing, cyclesPages: arguments.contains("--pages"))
     demo.window.orderFrontRegardless()
     if let recordPath = value(after: "--record") {
         demo.startRecording(into: URL(fileURLWithPath: recordPath, isDirectory: true))

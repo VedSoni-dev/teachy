@@ -213,6 +213,14 @@ do {
     let pictureUser = E(kind: .user, cost: 6_050, bytes: 900, hasImages: true, isCompacted: false)
     let lastUser = E(kind: .user, cost: 6_050, bytes: 900, hasImages: true, isCompacted: false)
     expectEqual(AgentCompaction.plan([system, pictureUser, call, tool(60), lastUser], budget: byteBudget), [.stripImages(index: 1)], "when results are not enough, pictures leave older user messages; the newest keeps its picture")
+
+    // Under budget, old screenshots still go: each step re-sends the whole job.
+    let pictureTool = E(kind: .tool, cost: 6_100, bytes: 900, hasImages: true, isCompacted: false)
+    expectEqual(
+        AgentCompaction.plan([system, pictureUser, call, pictureTool, call, pictureTool], budget: AgentCompaction.Budget()),
+        [.stripImages(index: 1), .stripImages(index: 3)],
+        "only the newest screenshot is sent again, even well under budget"
+    )
 }
 
 section("compaction: applied to a real conversation")

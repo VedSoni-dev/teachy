@@ -47,10 +47,12 @@ final class AgentToolGate {
         )
     }
 
-    /// The settings for one job: a job run as a named agent may read and write its own `files/` freely.
+    /// The settings for one job: a job run as a named agent may read and write its own `files/` freely,
+    /// and a job pointed at a code project may read it freely and edit it with a yes.
     func settings(for job: AgentJob) -> ToolPolicySettings {
         var settings = self.settings
-        settings.agentFilesDirectory = job.workingDirectory ?? ""
+        settings.agentFilesDirectory = job.agentFilesDirectory ?? ""
+        settings.projectDirectory = job.projectDirectory ?? ""
         return settings
     }
 
@@ -85,10 +87,21 @@ final class AgentToolGate {
 
         // Judge file tools by where the path really leads, not by how it is spelled.
         var argumentsForPolicy = arguments
-        if toolName == "read_file" || toolName == "write_file", let path = arguments["path"] as? String {
+        if Self.fileToolNames.contains(toolName) {
             // A relative path starts in the job's working folder, exactly as the tool itself reads it.
-            let absolute = PathPolicy.absolute(path, workingDirectory: job.workingDirectory, home: NSHomeDirectory())
-            argumentsForPolicy["path"] = Self.resolvedPath(absolute)
+            // Search tools with no path search the working folder (else home), as the tools do.
+            let requestedPath = (arguments["path"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !requestedPath.isEmpty {
+                let absolute = PathPolicy.absolute(requestedPath, workingDirectory: job.workingDirectory, home: NSHomeDirectory())
+                argumentsForPolicy["path"] = Self.resolvedPath(absolute)
+            } else if Self.folderSearchToolNames.contains(toolName) {
+                argumentsForPolicy["path"] = Self.resolvedPath(job.workingDirectory ?? NSHomeDirectory())
+            }
+        }
+        if toolName == "bash", let requestedDirectory = arguments["working_directory"] as? String,
+           !requestedDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let absolute = PathPolicy.absolute(requestedDirectory, workingDirectory: job.workingDirectory, home: NSHomeDirectory())
+            argumentsForPolicy["working_directory"] = Self.resolvedPath(absolute)
         }
 
         let decision = ToolPolicy.classify(toolName: toolName, arguments: argumentsForPolicy, settings: settings(for: job), context: context)
@@ -150,6 +163,11 @@ final class AgentToolGate {
         return .refuse("The user said not now to this (\(decision.summary)). Do not ask again in this job and do not try another route to the same thing. Carry on without it if you can, otherwise stop and tell them what is left to do.")
     }
 
+    /// Tools whose `path` argument the gate resolves before judging it.
+    static let fileToolNames: Set<String> = ["read_file", "write_file", "edit_file", "grep", "glob", "list_directory"]
+    /// File tools that search a folder, and default to the job's working folder without a path.
+    static let folderSearchToolNames: Set<String> = ["grep", "glob", "list_directory"]
+
     /// Follows symlinks as far as the path exists, so a link into ~/.ssh is judged as ~/.ssh.
     static func resolvedPath(_ path: String) -> String {
         let expanded = (path as NSString).expandingTildeInPath
@@ -184,6 +202,11 @@ final class BackgroundAgentToolRegistry {
         register(BashTool())
         register(ReadFileTool())
         register(WriteFileTool())
+        // Coding: exact edits, content search, file finding, folder listing (Agent/Coding/).
+        register(EditFileTool())
+        register(GrepTool())
+        register(GlobTool())
+        register(ListDirectoryTool())
         register(RunAppleScriptTool())
         register(OpenBrowserTabTool())
         register(CaptureScreenTool())
@@ -295,6 +318,9 @@ final class BackgroundAgentToolRegistry {
         case "authenticated_fetch": return 50
         case "run_applescript", "control_app", "control_browser", "open_browser_tab": return 45
         case "capture_screen": return 20
+        case "grep": return 40
+        case "glob": return 30
+        case "read_file", "edit_file", "write_file", "list_directory": return 20
         case "computer": return 40
         case _ where toolName.hasPrefix("drive_"): return 25
         default: return 70

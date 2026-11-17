@@ -37,6 +37,10 @@ final class ChatTimeline: ObservableObject {
     private let conversationFileURL: URL?
     private let store: ChatTimelineStore
     private let changeNotification: Notification.Name?
+    /// The open saved chat, stamped on posted rows. nil when chats are not used (tests).
+    private let currentSessionID: () -> String?
+    /// Whether a posted row belongs in the thread being shown.
+    private let rowBelongsToOpenChat: (ChatTimelineRow) -> Bool
 
     private var messages: [ChatMessage] = []
     private var rows: [ChatTimelineRow] = []
@@ -59,12 +63,25 @@ final class ChatTimeline: ObservableObject {
         loadMessages: @escaping () -> [ChatMessage],
         conversationFileURL: URL?,
         store: ChatTimelineStore,
-        changeNotification: Notification.Name? = nil
+        changeNotification: Notification.Name? = nil,
+        currentSessionID: @escaping () -> String? = { nil },
+        rowBelongsToOpenChat: @escaping (ChatTimelineRow) -> Bool = { _ in true }
     ) {
         self.loadMessages = loadMessages
         self.conversationFileURL = conversationFileURL
         self.store = store
         self.changeNotification = changeNotification
+        self.currentSessionID = currentSessionID
+        self.rowBelongsToOpenChat = rowBelongsToOpenChat
+        reload()
+    }
+
+    /// The open chat changed (new chat, or another one picked): drop the live turn and reload.
+    func openChatDidChange() {
+        clearStreamingTask?.cancel()
+        streaming = nil
+        pendingQuestion = nil
+        isWaitingForReply = false
         reload()
     }
 
@@ -73,8 +90,8 @@ final class ChatTimeline: ObservableObject {
     /// Adds a drawing, a job or a note to the thread and saves it. Posting a
     /// drawing or job again with the same id updates its row.
     func post(_ event: ChatTimelineEvent) {
-        store.post(event)
-        rows = store.rows()
+        store.post(event, sessionID: currentSessionID())
+        rows = store.rows().filter(rowBelongsToOpenChat)
         lastTimelineModification = store.modificationDate
         rebuild()
     }
@@ -151,7 +168,7 @@ final class ChatTimeline: ObservableObject {
         let loaded = loadMessages()
         let conversationChanged = loaded != messages
         messages = loaded
-        rows = store.rows()
+        rows = store.rows().filter(rowBelongsToOpenChat)
 
         if conversationChanged {
             // The turn has been saved: the saved messages replace the live ones.

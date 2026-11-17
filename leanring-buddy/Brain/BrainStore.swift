@@ -32,9 +32,17 @@ nonisolated final class BrainStore: @unchecked Sendable {
 
     let directoryURL: URL
     private let lock = NSLock()
+    /// Every chat in full, its summaries and the day-by-day journal (`sessions/`, `JOURNAL.md`).
+    /// `conversation.jsonl` stays as the short rolling window across all chats.
+    let sessions: ChatSessionStore
 
     init(directoryURL: URL) {
         self.directoryURL = directoryURL
+        self.sessions = ChatSessionStore(
+            directoryURL: directoryURL.appendingPathComponent("sessions", isDirectory: true),
+            journalFileURL: directoryURL.appendingPathComponent("JOURNAL.md"),
+            legacyConversationFileURL: directoryURL.appendingPathComponent("conversation.jsonl")
+        )
     }
 
     var profileFileURL: URL { fileURL(for: .profile) }
@@ -61,12 +69,14 @@ nonisolated final class BrainStore: @unchecked Sendable {
     func forget(matching phrase: String) -> [String] {
         let removedTexts = updateMemory { $0.forget(matching: phrase) } ?? []
         forgetConversationMessages(mentioning: phrase)
+        sessions.removeMessages(mentioning: phrase)
         return removedTexts
     }
 
     /// Resets both files to their empty templates and deletes the saved conversation.
     @discardableResult
     func forgetEverything() -> Bool {
+        sessions.removeAll()
         lock.lock()
         defer { lock.unlock() }
         var didSucceed = true
@@ -166,6 +176,8 @@ nonisolated final class BrainStore: @unchecked Sendable {
     }
 
     func appendMessage(_ message: BrainMessage) {
+        // The full chat (kept whole, with history and summaries) and the short rolling window.
+        sessions.append(message)
         lock.lock()
         defer { lock.unlock() }
         let existingMessages = loadConversation()
