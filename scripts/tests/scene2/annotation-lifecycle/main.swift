@@ -21,7 +21,6 @@ func run() async {
         anchor.modelTopLeft = CGPoint(x: -30000, y: -30000)
         anchor.cardTopLeft = CGPoint(x: -30000, y: -30000)
     }
-    director.speechLeadTime = 0
     let display = CGRect(x: -1440, y: 120, width: 1440, height: 900)
     var anchor = SceneAnchor.display(frame: display, timing: .stagger)
     director.placement?(&anchor)
@@ -39,7 +38,7 @@ func run() async {
     let savedAudio = director.scene.narration
     let historyCount = SceneHistory.shared.entries.count
     var spoken: [String] = []
-    director.speak = { text in spoken.append(text); await pause(0.05) }
+    director.speak = { text, onStarted in onStarted(); spoken.append(text); await pause(0.05) }
     director.beginAnnotation(question: "Circle Name", displayFrame: display)
     director.annotationScene.feed(chunk: "say 1 \"Here is the name.\"\nring name at=500,400 rx=70 ry=25\ncard forbidden title=\"Wrong\"\ntext \"Not a screen mark\"\n")
     director.finishCurrentStream()
@@ -59,19 +58,43 @@ func run() async {
     await pause(0.1)
     expect(director.scene.modelWindow === model && director.scene.cards.first === card, "annotation clear cannot remove the content being circled")
 
+    // The voice can spend arbitrarily long fetching audio. Geometry waits for playback,
+    // not a speculative delay, and duplicate start notifications are harmless.
+    var playbackStarted: (@MainActor () -> Void)?
+    var finishDelayedSpeech: CheckedContinuation<Void, Never>?
+    director.speak = { _, started in
+        playbackStarted = started
+        await withCheckedContinuation { finishDelayedSpeech = $0 }
+    }
+    director.beginAnnotation(question: "Delayed voice", displayFrame: display)
+    director.annotationScene.feed(chunk: "say 1 \"Waiting for audio.\"\nring delayed at=500,500 r=30\n")
+    director.finishCurrentStream()
+    await pause(0.4)
+    expect(director.annotationScene.overlayModel.items.isEmpty, "drawing waits beyond the old timer until playback starts")
+    playbackStarted?()
+    await pause(0.1)
+    expect(director.annotationScene.overlayModel.items.map(\.id) == ["delayed"], "actual playback releases geometry")
+    let revealedAt = director.annotationScene.overlayModel.items.first?.createdAt
+    playbackStarted?()
+    expect(director.annotationScene.overlayModel.items.first?.createdAt == revealedAt, "duplicate playback notifications do not restart the drawing")
+    finishDelayedSpeech?.resume()
+    await pause(0.1)
+
     // Hold an old speech callback open across replacement; its completion must not reveal
     // queued old marks or end the new turn's annotation layer.
     var resumeOldSpeech: CheckedContinuation<Void, Never>?
-    director.speak = { _ in await withCheckedContinuation { resumeOldSpeech = $0 } }
+    var staleStart: (@MainActor () -> Void)?
+    director.speak = { _, started in staleStart = started; await withCheckedContinuation { resumeOldSpeech = $0 } }
     director.beginAnnotation(question: "Old mark", displayFrame: display)
     director.annotationScene.feed(chunk: "say 1 \"Old voice.\"\nring old at=100,100 r=20\nsay 2 \"Queued voice.\"\nring queued at=200,200 r=20\n")
     director.finishCurrentStream()
     await pause(0.1)
     expect(resumeOldSpeech != nil, "old speech is pending")
-    director.speak = { _ in }
+    director.speak = { _, _ in }
     director.beginAnnotation(question: "New mark", displayFrame: display)
     director.annotationScene.feed(chunk: "say 1 \"New voice.\"\nring fresh at=700,600 r=30\n")
     director.finishCurrentStream()
+    staleStart?()
     resumeOldSpeech?.resume()
     await pause(0.4)
     expect(director.annotationScene.overlayModel.items.map(\.id) == ["fresh"], "stale speech cannot reveal old marks into a replacement annotation")
@@ -85,7 +108,14 @@ func run() async {
     expect(director.annotationScene.overlayModel.items.isEmpty, "cancelled reveal and fade callbacks do not resurrect annotations")
     expect(director.scene.log == savedLog && director.lastSavedEntryID == "saved-fixture", "drawing state survives cancellation and delayed callbacks")
     expect(SceneHistory.shared.entries.count == historyCount, "annotations are never saved as drawings")
+    let originalModel = director.scene.modelWindow
+    expect(director.adjustImmediately("slow it down") != nil, "live motion controls take the local director path")
+    expect(director.scene.modelWindow === originalModel && model.controller.motionRate == 0.5, "local adjustment preserves scene identity and changes speed immediately")
+    expect(director.adjustImmediately("pause the animation") != nil && model.controller.motionRate == 0, "local pause stops model motion")
+    expect(director.adjustImmediately("resume the animation") != nil && model.controller.motionRate == 0.5, "resume restores the prior motion speed")
+    expect(director.adjustImmediately("show the airflow") == nil, "semantic additions remain on the model refinement path")
     director.clear()
+    expect(director.adjustImmediately("zoom in") == nil, "no live drawing means no local interception")
     expect(director.scene.modelWindow == nil && director.scene.cards.isEmpty && director.annotationScene.overlayModel.items.isEmpty, "clear removes both content and annotations")
     try? FileManager.default.removeItem(at: testRoot)
     print("\(checks) checks, \(failures) failures")

@@ -1096,6 +1096,23 @@ final class CompanionManager: ObservableObject {
             voiceState = .processing
             ChatTimeline.shared.userAsked(transcript)
 
+            if let response = SceneDirector.shared.adjustImmediately(transcript) {
+                _ = mouseOutlineTracker.consumeFinalizedOutlinePoints()
+                _ = GazeTracker.shared.consumeQuestionGaze()
+                ChatTimeline.shared.streamingReply(text: response, isFinal: true)
+                conversationHistory.append((userTranscript: transcript, assistantResponse: response))
+                if conversationHistory.count > 10 { conversationHistory.removeFirst(conversationHistory.count - 10) }
+                BrainStore.shared.appendMessage(role: .user, text: transcript)
+                BrainStore.shared.appendMessage(role: .assistant, text: response)
+                ChatMemoryKeeper.shared.scheduleMaintenance()
+                voiceState = .responding
+                try? await speechSynthesizer.speakText(response)
+                guard !Task.isCancelled else { return }
+                voiceState = .idle
+                scheduleTransientHideIfNeeded()
+                return
+            }
+
             let screenCaptures: [CompanionScreenCapture]
             let mouseOutlineContext: CompanionMouseOutlineContext?
 
@@ -1296,10 +1313,11 @@ final class CompanionManager: ObservableObject {
                         self.conversationHistory.removeFirst(self.conversationHistory.count - 10)
                     }
                 }
-                SceneDirector.shared.speak = { [weak self] sentence in
+                SceneDirector.shared.speak = { [weak self] sentence, onStarted in
                     guard let self else { return }
                     await self.speechSynthesizer.finishStream()            // let the one-line reply finish
-                    try? await self.speechSynthesizer.speakText(sentence)  // returns when the sentence has played
+                    guard !Task.isCancelled else { return }
+                    try? await self.speechSynthesizer.speakText(sentence, onStarted: onStarted)
                 }
                 SceneDirector.shared.cancelSpeech = { [weak self] in self?.speechSynthesizer.stopPlayback() }
                 if let markRequest = SceneDirector.extractMarkRequest(from: fullResponseText).request {

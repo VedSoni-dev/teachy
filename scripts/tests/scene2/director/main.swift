@@ -61,7 +61,8 @@ func run() async {
     var spoken: [(text: String, at: CFTimeInterval, partsThen: Int, labelsThen: Int)] = []
     var cancels = 0
     let sentenceLength = 1.6
-    director.speak = { text in
+    director.speak = { text, onStarted in
+            onStarted()
         let log = director.scene.log
         spoken.append((text, CACurrentMediaTime(), director.scene.partCount, log.entries.filter { $0.command.verb == .label }.count))
         try? await Task.sleep(nanoseconds: UInt64(sentenceLength * 1_000_000_000))

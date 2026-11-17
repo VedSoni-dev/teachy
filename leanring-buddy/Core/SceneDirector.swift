@@ -31,7 +31,7 @@ final class SceneDirector {
 
     /// Speaks one sentence and returns when it has finished playing (the realtime voice).
     /// Set once by the voice turn. Nil: drawings build silently with stagger timing.
-    var speak: ((String) async -> Void)?
+    var speak: ((String, @escaping @MainActor () -> Void) async -> Void)?
     /// Silences whatever `speak` is saying. Called by `stop()`.
     var cancelSpeech: (() -> Void)?
     /// Called when the person taps a follow-up chip (or, with `refinesInPlace` off, a part of a 3D model).
@@ -40,9 +40,6 @@ final class SceneDirector {
     /// "zoom in on the turbine"): what was asked, and the sentences that were spoken in reply. The
     /// voice turn keeps it in the conversation, so the next question can build on it.
     var onRefinementAnswered: ((_ question: String, _ spokenAnswer: String) -> Void)?
-    /// Seconds between handing a sentence to the voice and showing what it describes
-    /// (voices take a moment to produce their first sound).
-    var speechLeadTime: TimeInterval = 0.25
     /// Marks drawn without any narration stay at least this long.
     var silentMarkTime: TimeInterval = 5
     /// A follow-up within this long of the last drawing is told what that drawing showed.
@@ -220,6 +217,21 @@ final class SceneDirector {
         run(body: SceneRefinePrompt.requestBody(request: request, state: state, tappedPart: tappedPart), hasImages: false)
     }
 
+    /// Direct manipulation stays local: no screen capture, model request, or scene rebuild.
+    /// Returns nil for semantic requests that still need an explanation or new geometry.
+    func adjustImmediately(_ request: String) -> String? {
+        guard scene.canRefine, let controller = scene.modelWindow?.controller,
+              let plan = SceneLiveAdjustment.plan(request: request, sceneIsLive: true,
+                  motionRate: controller.motionRate, resumeRate: controller.resumeMotionRate) else { return nil }
+        stop()
+        scene.beginRefinement(timing: .stagger, maximumHold: 8)
+        scene.perform(plan.script)
+        lastTurn = TurnTiming(kind: .refinement, request: request, startedAt: Date(),
+                              reason: "local control", instantScript: plan.script, firstLine: 0)
+        scene.end()
+        return plan.response
+    }
+
     // MARK: Draw on the real screen
 
     /// Marks up the live screen to answer `question`. `screenshotJPEG` is the picture the
@@ -227,6 +239,7 @@ final class SceneDirector {
     /// marks land on that display whichever monitor it is.
     func annotate(question: String, screenshotJPEG: Data, displayFrame: CGRect) {
         beginAnnotation(question: question, displayFrame: displayFrame)
+        annotationScene.enableLiveAnnotationTracking()
         let turn = generation
         streamTask = Task { [weak self] in
             let visibleText = await SceneAnnotationText.context(imageData: screenshotJPEG, question: question)
@@ -360,21 +373,16 @@ final class SceneDirector {
             case .speak(let index, let text):
                 guard let speak else { continue }
                 let task = Task { [weak self, target] in
-                    // Show what the sentence describes a moment after the voice is asked for it.
-                    let reveal = Task { [weak self, target] in
-                        let lead = self?.speechLeadTime ?? 0
-                        if lead > 0 { try? await Task.sleep(nanoseconds: UInt64(lead * 1_000_000_000)) }
-                        guard let self, !Task.isCancelled, self.generation == turn else { return }
+                    var revealed = false
+                    let reveal: @MainActor () -> Void = { [weak self, target] in
+                        guard let self, self.generation == turn, !revealed else { return }
+                        revealed = true
                         target.sentenceStarted(index: index)
                     }
-                    await speak(text)
-                    guard let self, !Task.isCancelled, self.generation == turn else {
-                        reveal.cancel()
-                        return
-                    }
-                    // A voice that returns at once (muted, failed) must not skip the reveal.
-                    await reveal.value
-                    target.sentenceStarted(index: index)
+                    await speak(text, reveal)
+                    guard let self, !Task.isCancelled, self.generation == turn else { return }
+                    // Muted or unavailable speech still releases the drawing exactly once.
+                    reveal()
                     self.perform(self.sequencer.speechFinished(), turn: turn)
                 }
                 speechTasks.append(task)

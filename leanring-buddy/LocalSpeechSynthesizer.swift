@@ -47,7 +47,7 @@ final class LocalSpeechSynthesizer: NSObject {
         return spokenLog.filter { $0.at >= cutoff }.map(\.text)
     }
 
-    private let legacySynthesizer: NSSpeechSynthesizer
+    private var legacySynthesizer: NSSpeechSynthesizer
     private let avSynthesizer = AVSpeechSynthesizer()
     private var audioPlayer: AVAudioPlayer?
 
@@ -62,6 +62,15 @@ final class LocalSpeechSynthesizer: NSObject {
     /// made the cancelled fetch fall through to the LOCAL voice, which started
     /// speaking the stale line over the new turn).
     private var playbackGeneration = 0
+    /// Scoped to one speakText call; consumed only when a backend starts output.
+    private var playbackStarted: (@MainActor () -> Void)?
+
+    private func notePlaybackStarted(generation: Int) {
+        guard generation == playbackGeneration else { return }
+        let callback = playbackStarted
+        playbackStarted = nil
+        callback?()
+    }
     /// The AVSpeech utterance currently on stage — delegate callbacks for any
     /// other (stopped/stale) utterance are ignored so they can't stomp the
     /// `isPlaying` state of a newer speech turn.
@@ -85,13 +94,18 @@ final class LocalSpeechSynthesizer: NSObject {
         }
     }
 
-    func speakText(_ text: String) async throws {
+    func speakText(_ text: String, onStarted: (@MainActor () -> Void)? = nil) async throws {
+        try Task.checkCancellation()
         let cleaned = Self.prepareForSpeech(text)
         guard !cleaned.isEmpty else { return }
 
         stopPlayback()
         playbackGeneration += 1
         let speechGeneration = playbackGeneration
+        playbackStarted = onStarted
+        defer {
+            if speechGeneration == playbackGeneration { playbackStarted = nil }
+        }
 
         // Muted Mac, or on a call: show it and copy it instead of playing it.
         if case .captionsAndClipboard = SpokenOutputGate.shared.decideForNextReply() {
@@ -135,7 +149,9 @@ final class LocalSpeechSynthesizer: NSObject {
 
         // 1b) publik realtime voice: audio starts streaming ~0.5 s after the text is sent.
         if RealtimeVoice.shared.isAvailable {
-            switch await Self.speakWithRealtimeVoice(cleaned) {
+            switch await speakWithRealtimeVoice(cleaned, onStarted: { [weak self] in
+                self?.notePlaybackStarted(generation: speechGeneration)
+            }) {
             case .played:
                 if speechGeneration == playbackGeneration { isPlaying = false }
                 return
@@ -168,6 +184,11 @@ final class LocalSpeechSynthesizer: NSObject {
         if wasInterrupted() { throw CancellationError() }
 
         // 3) Legacy NSSpeech last resort
+        // A distinct sender lets delayed delegate callbacks from stopped speech
+        // be rejected even when the next fallback is already speaking.
+        legacySynthesizer = NSSpeechSynthesizer()
+        legacySynthesizer.delegate = self
+        if let voice = Self.preferredNSVoice() { legacySynthesizer.setVoice(voice) }
         legacySpeechGeneration = speechGeneration
         let success = legacySynthesizer.startSpeaking(cleaned)
         if !success {
@@ -205,7 +226,9 @@ final class LocalSpeechSynthesizer: NSObject {
     /// Shows one sentence as a caption for about as long as it would take to say.
     /// Returns false if the reply was interrupted meanwhile.
     private func showSilently(_ sentence: String, generation: Int) async -> Bool {
+        guard generation == playbackGeneration, !Task.isCancelled else { return false }
         CaptionPresenter.shared.show(sentence: sentence)
+        notePlaybackStarted(generation: generation)
         let seconds = SpokenOutputDecision.captionSeconds(for: sentence, speed: TeachySettingsStorage.speechSpeed())
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {
@@ -216,11 +239,15 @@ final class LocalSpeechSynthesizer: NSObject {
     }
 
     /// Reads text through the realtime voice, stopping it if the calling task is cancelled.
-    private static func speakWithRealtimeVoice(_ text: String) async -> RealtimeVoice.SpeakResult {
-        await withTaskCancellationHandler {
-            await RealtimeVoice.shared.speak(text)
+    private func speakWithRealtimeVoice(_ text: String, onStarted: (@MainActor () -> Void)? = nil) async -> RealtimeVoice.SpeakResult {
+        let generation = playbackGeneration
+        return await withTaskCancellationHandler {
+            await RealtimeVoice.shared.speak(text, onStarted: onStarted)
         } onCancel: {
-            Task { @MainActor in RealtimeVoice.shared.stop() }
+            Task { @MainActor [weak self] in
+                guard let self, self.playbackGeneration == generation else { return }
+                RealtimeVoice.shared.stop()
+            }
         }
     }
     private var streamQueue: [QueuedSentence] = []
@@ -319,7 +346,7 @@ final class LocalSpeechSynthesizer: NSObject {
                 audioData = await audioFetch.value
             } else {
                 isPlaying = true
-                let realtimeResult = await Self.speakWithRealtimeVoice(next.text)
+                let realtimeResult = await speakWithRealtimeVoice(next.text)
                 guard generation == playbackGeneration, !Task.isCancelled else { return }
                 isPlaying = false
                 switch realtimeResult {
@@ -348,6 +375,7 @@ final class LocalSpeechSynthesizer: NSObject {
         // Invalidate any in-flight speakText turn FIRST so its post-await
         // checks see the interruption before any audio object is touched.
         playbackGeneration += 1
+        playbackStarted = nil
         CaptionPresenter.shared.hide()
         for queued in streamQueue { queued.audioFetch?.cancel() }
         RealtimeVoice.shared.stop()
@@ -435,6 +463,7 @@ final class LocalSpeechSynthesizer: NSObject {
     }
 
     private func playAudioData(_ data: Data, speechGeneration: Int) async throws {
+        guard speechGeneration == playbackGeneration, !Task.isCancelled else { throw CancellationError() }
         let player = try AVAudioPlayer(data: data)
         player.delegate = self
         player.prepareToPlay()
@@ -451,6 +480,7 @@ final class LocalSpeechSynthesizer: NSObject {
             )
         }
 
+        notePlaybackStarted(generation: speechGeneration)
         while isPlaying, speechGeneration == playbackGeneration {
             if Task.isCancelled {
                 // Stop OUR audio on cancellation — checkCancellation alone would
@@ -592,15 +622,31 @@ final class LocalSpeechSynthesizer: NSObject {
 // still talking (overlap + early-idle glitches).
 
 extension LocalSpeechSynthesizer: NSSpeechSynthesizerDelegate {
+    nonisolated func speechSynthesizer(_ sender: NSSpeechSynthesizer, willSpeakWord characterRange: NSRange, of string: String) {
+        Task { @MainActor in
+            guard sender === self.legacySynthesizer,
+                  self.legacySpeechGeneration == self.playbackGeneration else { return }
+            self.notePlaybackStarted(generation: self.legacySpeechGeneration)
+        }
+    }
+
     nonisolated func speechSynthesizer(_ sender: NSSpeechSynthesizer, didFinishSpeaking finishedSpeaking: Bool) {
         Task { @MainActor in
-            guard self.legacySpeechGeneration == self.playbackGeneration else { return }
+            guard sender === self.legacySynthesizer,
+                  self.legacySpeechGeneration == self.playbackGeneration else { return }
             self.isPlaying = false
         }
     }
 }
 
 extension LocalSpeechSynthesizer: AVSpeechSynthesizerDelegate {
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            guard utterance === self.activeAVSpeechUtterance else { return }
+            self.notePlaybackStarted(generation: self.playbackGeneration)
+        }
+    }
+
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor in
             guard utterance === self.activeAVSpeechUtterance else { return }

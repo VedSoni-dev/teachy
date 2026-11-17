@@ -135,6 +135,7 @@ final class SceneSession {
     /// A sentence has started and its subject has not been worked out yet (its lines are still appearing).
     private var pendingSubject: (cue: Int, startedAt: Double)?
 
+    private var annotationTracker: SceneAnnotationTracker?
     private var overlayWindow: SceneOverlayWindow?
     private(set) var cards: [SceneCardWindow] = []
     private var cardIDs: [String] = []
@@ -163,6 +164,15 @@ final class SceneSession {
         isRefining = false
         resetDirection()
         overlayModel.clock = anchor.headless ? { [weak self] in Date(timeIntervalSinceReferenceDate: self?.headlessClock ?? 0) } : { Date() }
+    }
+
+    /// Opt in only for live screen annotations, after begin(anchor:).
+    func enableLiveAnnotationTracking() {
+        annotationTracker?.stop()
+        annotationTracker = nil
+        guard !anchor.headless, !isReplaying else { return }
+        annotationTracker = SceneAnnotationTracker(model: overlayModel, displayFrame: anchor.screenFrame,
+                                                  primaryHeight: NSScreen.screens.first?.frame.height ?? 0)
     }
 
     /// Model text, in whatever pieces it arrives.
@@ -246,6 +256,8 @@ final class SceneSession {
 
     /// Fades the on-screen annotations out, leaving cards and 3D models.
     func clearOverlay(animated: Bool = true) {
+        annotationTracker?.stop()
+        annotationTracker = nil
         overlayModel.clearAll(animated: animated)
         if !animated {
             overlayWindow?.close()
@@ -467,6 +479,7 @@ final class SceneSession {
                 overlayWindow?.show(on: anchor.screenFrame)
             }
             overlayModel.apply(command)
+            annotationTracker?.register(command)
         case .card:
             card(for: command).model.apply(command)
         case .scene3d:
@@ -623,6 +636,8 @@ final class SceneSession {
     }
 
     private func clearRenderers() {
+        annotationTracker?.stop()
+        annotationTracker = nil
         overlayModel.clearAll(animated: false)
         overlayWindow?.close()
         overlayWindow = nil

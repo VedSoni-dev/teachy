@@ -163,11 +163,14 @@ final class RealtimeVoice {
         var responseDone = false
         var buffersWaitingToPlay = 0
         var receivedAudio = false
+        var onStarted: (@MainActor () -> Void)?
         let startedAt = Date()
         init(id: Int) { self.id = id }
     }
     private var utterance: Utterance?
     private var nextUtteranceID = 0
+    /// Also invalidates a request stopped while it is still connecting.
+    private var playbackGeneration = 0
 
     private init() {}
 
@@ -323,17 +326,22 @@ final class RealtimeVoice {
     // MARK: - Speaking
 
     /// Reads `text` aloud. Returns when the audio has finished playing.
-    func speak(_ text: String) async -> SpeakResult {
+    func speak(_ text: String, onStarted: (@MainActor () -> Void)? = nil) async -> SpeakResult {
+        guard !Task.isCancelled else { return .interrupted }
+        let generation = playbackGeneration
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .played }
         guard utterance == nil else { return .failed }
         // The voice, speed or language changed since this socket was opened: start a new one.
         if socket != nil, connectTask == nil, socketSettings != SessionSettings.current { teardownSocket() }
-        guard await ensureConnected(), let activeSocket = socket else { return .failed }
+        let connected = await ensureConnected()
+        guard generation == playbackGeneration, !Task.isCancelled else { return .interrupted }
+        guard connected, let activeSocket = socket, utterance == nil else { return .failed }
         guard prepareAudioEngine() else { return .failed }
 
         nextUtteranceID += 1
         let current = Utterance(id: nextUtteranceID)
+        current.onStarted = onStarted
         utterance = current
         utterancesOnSocket += 1
         idleCloseTask?.cancel()
@@ -343,6 +351,8 @@ final class RealtimeVoice {
             "item": ["type": "message", "role": "user", "content": [["type": "input_text", "text": trimmed]]],
         ]
         guard await send(item, on: activeSocket), await send(["type": "response.create"], on: activeSocket) else {
+            guard utterance === current else { return .interrupted }
+            current.onStarted = nil
             utterance = nil
             markUnavailable(reason: "could not send text", generation: socketGeneration)
             return .failed
@@ -380,6 +390,7 @@ final class RealtimeVoice {
     /// Cuts speech off immediately (barge-in). The socket is dropped so late audio for the
     /// cancelled sentence can never be played over the next one, then reopened in the background.
     func stop() {
+        playbackGeneration += 1
         guard let current = utterance else { return }
         player.stop()
         teardownSocket()
@@ -390,6 +401,7 @@ final class RealtimeVoice {
     private func finish(_ target: Utterance, with result: SpeakResult) {
         guard utterance === target else { return }
         utterance = nil
+        target.onStarted = nil
         if result != .played { player.stop() }
         let continuation = target.continuation
         target.continuation = nil
@@ -467,6 +479,7 @@ final class RealtimeVoice {
 
     /// 16-bit mono PCM at 24 kHz → a float buffer queued on the player.
     private func schedule(pcm16: Data, for target: Utterance) {
+        guard utterance === target else { return }
         let sampleCount = pcm16.count / 2
         guard sampleCount > 0,
               let buffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(sampleCount)),
@@ -488,5 +501,9 @@ final class RealtimeVoice {
             }
         }
         if !player.isPlaying { player.play() }
+        // The first buffer is now on the running audio player, not merely fetched.
+        let onStarted = target.onStarted
+        target.onStarted = nil
+        onStarted?()
     }
 }

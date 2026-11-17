@@ -61,6 +61,11 @@ enum SceneRefineClassifier {
 
         let asksForNew = newPhrases.contains { lowered.contains($0) }
         let startsWithCreation = tokens.first.map { creationVerbs.contains($0) } ?? false
+        // These requests add an explanation to the live subject; they do not name a new one.
+        let flowRequests: Set<String> = ["show airflow", "show the airflow", "show me the airflow", "show the flow", "show how air moves", "show how the air moves"]
+        if flowRequests.contains(tokens.joined(separator: " ")) {
+            return .refine(parts: matched, reason: "adds flow to the live drawing")
+        }
         if asksForNew && matched.isEmpty { return .newDrawing(reason: "asks for something else") }
 
         if let phrase = refinePhrases.first(where: { lowered.contains($0) }) {
@@ -123,6 +128,61 @@ enum SceneRefineClassifier {
         guard let noun = following.first else { return false }
         if ["bit", "little", "lot", "closer", "look", "moment", "second", "different"].contains(noun) { return noun == "different" }
         return !following.contains(where: known.contains)
+    }
+}
+
+// MARK: - Immediate adjustments
+
+/// A complete, local instruction. Nil means the normal semantic refinement path still owns it.
+/// Deliberately matches whole requests: "slow my computer" and "zoom in and explain airflow"
+/// must not be swallowed as camera controls. Call only for a visible 3D drawing.
+struct SceneLiveAdjustment: Equatable {
+    let script: String
+    let response: String
+
+    static func plan(request: String, sceneIsLive: Bool, motionRate: Double = 1,
+                     resumeRate: Double = 1) -> SceneLiveAdjustment? {
+        guard sceneIsLive else { return nil }
+        var words = SceneSubjectMatcher.words(request)
+        for prefix in [["hey", "teachy"], ["teachy"], ["please"], ["can", "you"], ["could", "you"], ["would", "you"]] {
+            if words.starts(with: prefix) { words.removeFirst(prefix.count) }
+        }
+        if words.first == "please" { words.removeFirst() }
+        if words.last == "please" { words.removeLast() }
+        let text = words.joined(separator: " ")
+        if ["zoom in", "zoom in more", "zoom closer", "get closer", "move closer", "a little closer", "closer"].contains(text) {
+            return .init(script: "camera zoom=1.3 dur=0.28", response: "Zoomed in.")
+        }
+        if ["zoom out", "zoom out more", "back out", "zoom back out", "a little further out"].contains(text) {
+            return .init(script: "camera zoom=0.77 dur=0.28", response: "Zoomed out.")
+        }
+        if ["recenter", "re center", "recenter it", "center it", "reset the view", "reset view", "show the whole thing", "show the whole model", "show everything again"].contains(text) {
+            return .init(script: "frame all hold dur=0.35", response: "Back to the whole drawing.")
+        }
+        let running = resumeRate.isFinite && resumeRate > 0 ? min(max(resumeRate, 0.125), 4) : 1
+        let current = motionRate.isFinite && motionRate > 0 ? min(max(motionRate, 0.125), 4) : running
+        let rate: Double
+        let response: String
+        switch text {
+        case "slow it down", "slow that down", "slow this down", "slow down", "slower", "a little slower", "slow the animation", "slow down the animation", "slow the motion", "half speed":
+            rate = max(current / 2, 0.125)
+            response = "Slowed the motion."
+        case "speed it up", "speed that up", "speed this up", "speed up", "faster", "a little faster", "speed up the animation", "faster animation", "double speed":
+            rate = min(current * 2, 4)
+            response = "Sped up the motion."
+        case "pause motion", "pause the motion", "pause the animation", "freeze the animation", "stop the animation", "freeze motion", "stop moving", "pause the simulation":
+            rate = 0
+            response = "Motion paused."
+        case "resume motion", "resume the motion", "resume the animation", "continue the animation", "keep moving", "resume the simulation":
+            rate = running
+            response = "Motion resumed."
+        case "normal speed", "back to normal speed", "reset speed":
+            rate = 1
+            response = "Back to normal speed."
+        default:
+            return nil
+        }
+        return .init(script: "set scene-motion bind=timescale value=\(rate)", response: response)
     }
 }
 
@@ -222,6 +282,7 @@ enum SceneRefinePrompt {
     say N "sentence" is spoken aloud; the lines after it happen while it is spoken. Write 1-2 short sentences (under 16 words) that answer what was asked. For a pure camera request ("rotate it", "go back") one very short sentence.
     focus id[,id] zoom=tight|medium|wide (ease the camera onto those parts) / frame all (back to the whole model) / orbit id deg=180 dur=5 (swing slowly round a part; `orbit all` = round the model) / ghost id id (make parts see-through to show what is inside; `ghost others` ghosts everything but the focused part) / show all (everything solid and visible again) / hide id / highlight id color=yellow (a glow on the part you are talking about) / explode (pull the parts apart; `explode dist=0` puts them back) / detail id (adds finer pieces and their names to a part marked `detail`; use it when you zoom in on one) / label x on=id text="Name" / pulse id
     You may add a FEW small things in the focused part: arrow3 id from=x,y,z to=x,y,z, flow id pts=x,y,z;x,y,z color=, text3 id at= text="…", or one shape with parent=partId.
+    For "show the airflow" or a flow request, add flow paths through the EXISTING parts using their supplied positions. Preserve those parts and their motion; never replace the drawing.
     "zoom in on X": focus X zoom=tight, and detail X if marked. "show me inside": ghost what is around it (a part's inside= names what hides it) or `ghost others`. "what is that <colour> part": find it by colour, focus and highlight it, say what it is. "go back", "zoom out", "reset": show all, frame all (and explode dist=0 if exploded). A tapped part: focus it, highlight it, say what it does.
 
     Example (zoom in on the turbine):

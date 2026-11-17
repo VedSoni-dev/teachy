@@ -84,6 +84,7 @@ final class SceneOverlayModel: ObservableObject {
         var createdAt: Date
         /// When set, the item fades out starting at this moment and is then dropped.
         var fadeStart: Date?
+        var hiddenByTracking = false
     }
 
     @Published private(set) var items: [Item] = []
@@ -114,6 +115,21 @@ final class SceneOverlayModel: ObservableObject {
             items.append(item)
         }
         scheduleSweep()
+    }
+
+    /// Moving a live target must not restart its reveal or extend its lifetime.
+    func isTrackingActive(id: String, createdAt: Date) -> Bool {
+        guard let item = items.first(where: { $0.id == id && $0.createdAt == createdAt }) else { return false }
+        return item.fadeStart.map { $0 > clock() } ?? true
+    }
+
+    func updateTrackedGeometry(id: String, createdAt: Date, command: SceneCommand?) {
+        guard isTrackingActive(id: id, createdAt: createdAt),
+              let index = items.firstIndex(where: { $0.id == id && $0.createdAt == createdAt }) else { return }
+        let hidden = command == nil
+        guard items[index].hiddenByTracking != hidden || command.map({ $0 != items[index].command }) == true else { return }
+        items[index].hiddenByTracking = hidden
+        if let command { items[index].command = command }
     }
 
     func remove(id: String) {
@@ -260,6 +276,7 @@ struct SceneOverlayView: View {
 
 enum SceneOverlayPainter {
     static func draw(_ item: SceneOverlayModel.Item, at now: Date, in rect: CGRect, context: inout GraphicsContext) {
+        guard !item.hiddenByTracking else { return }
         let c = item.command
         let age = now.timeIntervalSince(item.createdAt)
         let progress = min(max(age / SceneOverlayModel.drawDuration, 0), 1)

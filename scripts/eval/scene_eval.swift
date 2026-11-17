@@ -551,7 +551,8 @@ enum SceneEval {
         // What the voice turn would keep in the conversation.
         var answered: [(question: String, answer: String)] = []
         director.onRefinementAnswered = { question, answer in answered.append((question, answer)) }
-        director.speak = { text in
+        director.speak = { text, onStarted in
+            onStarted()
             spoken.append(text)
             try? await Task.sleep(nanoseconds: UInt64(min(spokenLength(text), 2.6) * 1_000_000_000))
         }

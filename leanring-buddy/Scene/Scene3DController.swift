@@ -263,6 +263,8 @@ final class Scene3DController: NSObject {
     private var plotBuffers: [String: [Double]] = [:]
     private var isSimulation = false
     private var speed = 1.0
+    private(set) var resumeMotionRate = 1.0
+    var motionRate: Double { speed }
     /// SCNPhysicsBody.velocity read from the main thread is stale, so speeds are
     /// measured from how far each moving body travelled since the last tick.
     private var movingIDs: Set<String> = []
@@ -422,8 +424,8 @@ final class Scene3DController: NSObject {
     }
 
     private var hasTransformMotion: Bool {
-        if !actionNodeIDs.isEmpty { return true }
         guard speed > 1e-6 else { return false }
+        if !actionNodeIDs.isEmpty { return true }
         return spins.values.contains { abs($0.rpm) > 1e-6 }
             || solvedRPM.values.contains { abs($0) > 1e-6 }
             || pistons.values.contains { abs($0.rpm) > 1e-6 }
@@ -600,6 +602,7 @@ final class Scene3DController: NSObject {
         scene.physicsWorld.removeAllBehaviors()
         scene.physicsWorld.gravity = SCNVector3(0, -9.8, 0)
         scene.physicsWorld.speed = 1
+        resumeMotionRate = 1
         builder = ScenePartBuilder()
         nodes = [:]; parts = [:]; baseOrientation = [:]; order = []
         spins = [:]; spinAngles = [:]; solvedRPM = [:]; flows = [:]; pistons = [:]; orbits = [:]; coils = [:]; explodedOffsets = [:]
@@ -701,7 +704,15 @@ final class Scene3DController: NSObject {
             }
         case .slider: addSlider(c)
         case .set:
-            if let value = c.number("value", "to", "v") { setSlider(c.id, value: value, fromUser: false) }
+            if let value = c.number("value", "to", "v"), value.isFinite {
+                // Explicit global binding also works without a visible slider. Kept as a normal
+                // command so live adjustments replay exactly like other person actions.
+                if c.string("bind") == "timescale" {
+                    applyBinding("timescale", value: min(max(value, 0), 4))
+                } else {
+                    setSlider(c.id, value: value, fromUser: false)
+                }
+            }
         case .plot: addPlot(c)
         case .remove: remove(c.id)
         case .hide:
@@ -1283,8 +1294,11 @@ final class Scene3DController: NSObject {
         back.timingMode = .easeInEaseOut
         if node.physicsBody?.type == .dynamic { node.physicsBody?.type = .kinematic }
         if c.flag("loop") || c.flag("repeat") {
-            node.runAction(.repeatForever(.sequence([action, .wait(duration: 0.25), back, .wait(duration: 0.25)])), forKey: "move")
+            let loop = SCNAction.repeatForever(.sequence([action, .wait(duration: 0.25), back, .wait(duration: 0.25)]))
+            loop.speed = CGFloat(speed)
+            node.runAction(loop, forKey: "move")
         } else {
+            action.speed = CGFloat(speed)
             node.runAction(action, forKey: "move")
         }
     }
@@ -1426,6 +1440,7 @@ final class Scene3DController: NSObject {
             let action = SCNAction.move(to: SCNVector3(homes[index] + offset), duration: duration)
             action.timingMode = .easeInEaseOut
             if let name = node.name { actionNodeIDs.insert(name) }
+            action.speed = CGFloat(speed)
             node.runAction(action, forKey: "explode")
         }
         labelBoxes = [:]
@@ -1481,6 +1496,10 @@ final class Scene3DController: NSObject {
         guard simd_length(position - look) > 1e-4 else { return }
         var target = SceneCameraPose(center: SceneVec3(look), direction: SceneVec3(position - look), distance: Double(simd_length(position - look)))
         target.elevation = min(max(target.elevation, -SceneCameraPose.maximumElevation), SceneCameraPose.maximumElevation)
+        if c.number("zoom") != nil, c.vec3("to") == nil {
+            let limits = zoomLimits
+            target.distance = min(max(target.distance, limits.minimumDistance), limits.maximumDistance)
+        }
         startMove(to: target, duration: c.number("dur", "t") ?? 1.0, sway: 0, then: .pinned)
         policy.noteMove(now: now, sentence: c.cue)
     }
@@ -1703,8 +1722,15 @@ final class Scene3DController: NSObject {
         case "gravity", "g":
             scene.physicsWorld.gravity = SCNVector3(0, -abs(value), 0)
         case "speed", "time", "timescale":
+            guard value.isFinite else { return }
             speed = max(value, 0)
+            if speed > 0 { resumeMotionRate = speed }
             scene.physicsWorld.speed = CGFloat(speed)
+            // SceneKit move/loop actions use their own clock; scale them too. Camera and
+            // narration keep their wall clock so a paused model can still be inspected.
+            for id in actionNodeIDs {
+                for key in ["move", "explode"] { nodes[id]?.action(forKey: key)?.speed = CGFloat(speed) }
+            }
         case "length", "len", "l":
             if joints[target] != nil { setJointLength(target, length: value) }
         case "mass", "m":

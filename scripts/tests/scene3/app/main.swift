@@ -1244,6 +1244,20 @@ func renderingEfficiency() async {
         expect(!controller.isRenderingContinuously, "zero RPM lets the model sleep")
         controller.stop()
     }
+    await section("rendering: local motion pause sleeps and resume wakes the model") {
+        let controller = Scene3DController()
+        for command in SceneScriptParser.parse("scene3d sample\nbox part size=(1,1,1)\nspin part rpm=20\nmove part by=(2,0,0) dur=1 loop") { controller.apply(command) }
+        for command in SceneScriptParser.parse("set scene-motion bind=timescale value=0") { controller.apply(command) }
+        await pause(2.4)
+        expect(!controller.isRenderingContinuously, "paused spins and actions allow the renderer to sleep")
+        expect(!controller.view.rendersContinuously && !controller.view.isPlaying, "paused SceneKit rendering is idle too")
+        let angle = controller.debugSpinAngle(of: "part") ?? 0
+        for command in SceneScriptParser.parse("set scene-motion bind=timescale value=0.5") { controller.apply(command) }
+        expect(controller.isRenderingContinuously, "resuming motion wakes rendering")
+        await pause(0.15)
+        expect((controller.debugSpinAngle(of: "part") ?? 0) != angle, "resumed model actually moves")
+        controller.stop()
+    }
     await section("rendering: removing the last animated part releases the timer") {
         let controller = Scene3DController()
         for command in SceneScriptParser.parse("scene3d sample\nbox part size=(1,1,1)\nmove part by=(2,0,0) dur=1 loop\npulse part\nremove part") { controller.apply(command) }
