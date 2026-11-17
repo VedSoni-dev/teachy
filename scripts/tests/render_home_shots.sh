@@ -10,6 +10,7 @@ OUT="${TMPDIR:-/tmp}/teachy-home-shots-bin"
 APP=leanring-buddy
 swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/DesignSystem.swift" \
+  "$APP/Touch/ScreenTapSignalProcessing.swift" \
   "$APP/Dictation/DictationDictionary.swift" \
   "$APP/Dictation/DictationShortcut.swift" \
   "$APP/Dictation/DictationHotkeyStateMachine.swift" \
@@ -24,6 +25,8 @@ swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/Voice/AlwaysOnPillView.swift" \
   "$APP/NotchHomeTabView.swift" \
   "$APP/NotchPanelTab.swift" \
+  "$APP/Settings/TeachyProjectsPage.swift" \
+  "$APP/Agent/AgentProjectStore.swift" \
   "$APP/Settings/TeachySettingsPage.swift" \
   "$APP/ClickyNotchRootView.swift" \
   "$APP/ClickyAudioSpectrumView.swift" \
@@ -39,6 +42,7 @@ swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/Agent/Routines/RoutineSchedule.swift" \
   "$APP/Agent/Routines/RoutineStore.swift" \
   "$APP/Brain/BrainMarkdown.swift" \
+  scripts/tests/home_shots/ProjectsFixtures.swift \
   scripts/tests/home_shots/Stubs.swift \
   scripts/tests/home_shots/main.swift
 "$OUT"

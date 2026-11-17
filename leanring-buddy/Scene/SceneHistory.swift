@@ -48,8 +48,8 @@ final class SceneHistory: ObservableObject {
 
     /// Keeps a finished drawing. `thumbnail` is drawn small; nil saves the drawing without a picture.
     @discardableResult
-    func save(log: SceneReplayLog, question: String, thumbnail: NSImage?, narration: SceneNarrationAudio = SceneNarrationAudio()) -> SceneHistoryEntry? {
-        let entry = store.save(log: log, question: question, thumbnailPNG: thumbnail.flatMap(Self.png), narration: narration)
+    func save(log: SceneReplayLog, question: String, thumbnail: NSImage?, narration: SceneNarrationAudio = SceneNarrationAudio(), projectID: String? = nil) -> SceneHistoryEntry? {
+        let entry = store.save(log: log, question: question, thumbnailPNG: thumbnail.flatMap(Self.png), narration: narration, projectID: projectID)
         if entry != nil { reload() }
         return entry
     }
@@ -60,6 +60,13 @@ final class SceneHistory: ObservableObject {
         let entry = store.update(id: id, log: log, thumbnailPNG: thumbnail.flatMap(Self.png), narration: narration)
         if entry != nil { reload() }
         return entry
+    }
+
+    @discardableResult
+    func assign(entryID: String, toProjectID projectID: String?) -> Bool {
+        guard store.assign(entryID: entryID, toProjectID: projectID) else { return false }
+        reload()
+        return true
     }
 
     func thumbnail(for id: String) -> NSImage? {

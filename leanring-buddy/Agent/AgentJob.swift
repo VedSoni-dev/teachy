@@ -76,6 +76,7 @@ final class AgentJob: ObservableObject, Identifiable {
     nonisolated let projectDirectory: String?
     let startedAt = Date()
 
+    @Published fileprivate(set) var projectID: String?
     @Published var title: String
     @Published var plan = AgentPlan()
     @Published var status: AgentJobStatus = .planning
@@ -119,6 +120,7 @@ final class AgentJob: ObservableObject, Identifiable {
         workingDirectory: String? = nil,
         agentFilesDirectory: String? = nil,
         projectDirectory: String? = nil,
+        projectID: String? = nil,
         routineID: String? = nil,
         isUnattended: Bool = false
     ) {
@@ -134,6 +136,7 @@ final class AgentJob: ObservableObject, Identifiable {
         // pass workingDirectory keep that meaning.
         self.agentFilesDirectory = agentFilesDirectory ?? (projectDirectory == nil ? workingDirectory : nil)
         self.projectDirectory = projectDirectory
+        self.projectID = projectID
         self.routineID = routineID
         self.isUnattended = isUnattended
         self.title = title ?? AgentJobTitle.fallback(from: request)
@@ -210,6 +213,7 @@ struct AgentJobRequest {
     /// A code project folder (absolute or ~/) to work in: it becomes the working folder, its
     /// AGENTS.md / CLAUDE.md go in the prompt, and reading it needs no yes. Ignored if it is not a folder.
     var projectDirectory: String?
+    var projectID: String?
     var routineID: String?
     /// A routine run: nobody can be asked, so anything needing a yes is refused.
     var isUnattended = false
@@ -264,6 +268,22 @@ final class AgentJobCenter: ObservableObject {
         activeJobs.forEach { $0.stop(reason: reason) }
     }
 
+    func assignProject(jobID: String, to projectID: String?) throws {
+        if let projectID, !AgentProjectStore.shared.projects.contains(where: { $0.id == projectID }) {
+            throw AgentJobError(message: "This project no longer exists.")
+        }
+        let liveJob = job(withID: jobID)
+        // A reopened job can still have a completed snapshot on disk.
+        if let historyStore, var record = historyStore.record(id: jobID) {
+            record.projectID = projectID
+            try historyStore.save(record)
+        } else if liveJob == nil {
+            throw AgentJobError(message: "This job is no longer available.")
+        }
+        liveJob?.projectID = projectID
+        historyRevision += 1
+    }
+
     // MARK: Starting
 
     /// Starts a job and returns at once. It runs alongside whatever else is running; if four
@@ -288,6 +308,7 @@ final class AgentJobCenter: ObservableObject {
             workingDirectory: projectDirectory ?? agentFilesDirectory,
             agentFilesDirectory: agentFilesDirectory,
             projectDirectory: projectDirectory,
+            projectID: request.projectID,
             routineID: request.routineID,
             isUnattended: request.isUnattended
         )
@@ -654,6 +675,7 @@ final class AgentJobCenter: ObservableObject {
             agentSlug: job.agentSlug,
             agentName: job.agentName,
             routineID: job.routineID,
+            projectID: job.projectID,
             plan: job.plan.steps.map { AgentJobRecord.PlanStep(text: $0.text, state: $0.state.rawValue) },
             steps: job.steps.map { AgentJobRecord.Step(tool: $0.toolName, result: AgentJobRecord.shortResult($0.result), seconds: ($0.duration * 10).rounded() / 10) },
             answer: job.answer,

@@ -628,13 +628,19 @@ enum Scene2Tests {
                 expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent(file).path), "\(file) is written")
             }
             expect(store.entries() == [first], "listed")
+            expect(first.projectID == nil, "legacy metadata without a project decodes as unassigned")
+            expect(store.assign(entryID: first.id, toProjectID: "studio"), "a saved drawing can join a project")
+            expect(store.update(id: first.id, log: log, thumbnailPNG: nil)?.projectID == "studio", "refining a drawing retains its project")
+            expect(store.assign(entryID: first.id, toProjectID: nil) && store.entries() == [first], "removing an assignment preserves the drawing")
+            expect(!store.assign(entryID: "..", toProjectID: "studio"), "project assignment checks the drawing ID")
             expect(store.log(for: first.id) == log, "the log comes back exactly")
             let narration = store.narration(for: first)
             expect(narration.sampleRate == 24000 && narration.mixed().count == 6000 + 480, "the voice track comes back with its lead-in silence")
 
             var cardLog = SceneReplayLog()
             for command in SceneScriptParser.parse("card c\ntext \"hello\"") { cardLog.record(command, at: 0) }
-            let second = store.save(log: cardLog, question: "explain the chain rule on a card please, slowly and with every step shown", thumbnailPNG: nil, date: day.addingTimeInterval(60))
+            let second = store.save(log: cardLog, question: "explain the chain rule on a card please, slowly and with every step shown", thumbnailPNG: nil, date: day.addingTimeInterval(60), projectID: "studio")
+            expect(store.entries().first?.projectID == "studio", "new drawings keep the originating project")
             expect(second?.kind == "card" && second?.hasNarration == false, "a card without a voice")
             expect(second?.title.hasSuffix("…") == true && (second?.title.count ?? 99) <= 48, "an untitled drawing is named from the question: \(second?.title ?? "")")
             expect(store.entries().map(\.id) == [second?.id ?? "", first.id], "newest first")

@@ -115,6 +115,7 @@ final class BackgroundAgentManager: ObservableObject {
         /// With no `agentSlug`: run as the agent the request names ("ask Research buddy to…"), else as a plain job.
         var picksAgentByName = true
         var routineID: String?
+        var projectID: String?
         /// A code project to work in (absolute or ~/). nil = use a git project the request names, if any.
         var projectDirectory: String?
         /// A routine run: no card, nothing spoken, nobody to ask (anything needing a yes is refused).
@@ -139,6 +140,7 @@ final class BackgroundAgentManager: ObservableObject {
         onAnswerRetracted: (() -> Void)? = nil
     ) {
         var launch = JobLaunch(transcript: transcript)
+        launch.projectID = AgentProjectStore.shared.activeProjectID
         launch.projectDirectory = projectDirectory
         launch.screenCaptures = screenCaptures
         launch.mouseOutlineContext = mouseOutlineContext
@@ -163,6 +165,7 @@ final class BackgroundAgentManager: ObservableObject {
         request.allowedToolNames = nil
         request.usesPlan = true
         request.showsCard = !launch.isUnattended
+        request.projectID = launch.projectID
         request.routineID = launch.routineID
         request.isUnattended = launch.isUnattended
         // "Fix the failing test in ~/code/app" works in that project without being told twice.

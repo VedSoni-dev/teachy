@@ -24,6 +24,7 @@ struct AgentsSectionActions {
     var runRoutineNow: (_ id: String) -> Void = { _ in }
     var deleteRoutine: (_ id: String) -> Void = { _ in }
     var markRoutineRead: (_ id: String) -> Void = { _ in }
+    var assignProject: ((_ jobID: String, _ projectID: String?) -> Void)?
     var copy: (_ text: String) -> Void = { _ in }
 }
 
@@ -33,6 +34,7 @@ struct AgentsSectionContent: View {
     var runningRoutineIDs: Set<String> = []
     var routinesProblem: String?
     let jobs: [AgentJobRecord]
+    var projectOptions: [(id: String, name: String)] = []
     var showsRoutines = true
     var showsAgents = true
     var showsJobs = true
@@ -560,6 +562,20 @@ struct AgentsSectionContent: View {
                     .font(DS.Fonts.caption)
                     .foregroundColor(DS.Colors.warningText)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let assign = actions.assignProject, !projectOptions.isEmpty {
+                Picker("Project", selection: Binding<String?>(
+                    get: { job.projectID },
+                    set: { assign(job.id, $0) }
+                )) {
+                    Text("Unassigned").tag(String?.none)
+                    ForEach(projectOptions, id: \.id) { project in
+                        Text(project.name).tag(Optional(project.id))
+                    }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
             }
 
             if !job.steps.isEmpty {

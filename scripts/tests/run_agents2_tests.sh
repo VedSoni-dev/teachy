@@ -27,6 +27,7 @@ SOURCES=(
     "$APP/Agent/ConsentLedger.swift"
     "$APP/Agent/AgentJobModel.swift"
     "$APP/Agent/AgentConcurrency.swift"
+    "$APP/Agent/AgentProjectStore.swift"
     "$APP/Agent/AgentHistory.swift"
     "$APP/Agent/AgentCompaction.swift"
     "$APP/Agent/AgentRoster.swift"

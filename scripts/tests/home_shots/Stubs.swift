@@ -54,6 +54,7 @@ enum AgentStatus: Equatable {
 
 final class BackgroundAgentManager: ObservableObject {
     @Published var status: AgentStatus = .idle
+    func runTask(transcript: String, agentSlug: String?) {}
 }
 
 final class CompanionManager: ObservableObject {
@@ -231,7 +232,10 @@ struct AgentsSection: View {
     }
 }
 struct ConnectorsSection: View { var body: some View { SectionPlaceholder(title: "Connectors", detail: "2 connected") } }
-struct DrawingsSection: View { var startsExpanded = false; var body: some View { SectionPlaceholder(title: "Drawings", detail: "12") } }
+struct DrawingsSection: View {
+    var startsExpanded = false
+    var projectOptions: [(id: String, name: String)] = []
+    var body: some View { SectionPlaceholder(title: "Drawings", detail: "12") } }
 struct BrainMemorySection: View { var body: some View { SectionPlaceholder(title: "Memory", detail: "14 things") } }
 struct PublikAccountSection: View {
     var body: some View {
@@ -246,6 +250,8 @@ struct BrowserExtensionSection: View {
 
 
 struct HomeShotDrawing: Identifiable {
+    var projectID: String?
+    var kind = "3D model"
     let id: String
     let title: String
 }

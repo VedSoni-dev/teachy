@@ -20,6 +20,8 @@ struct SceneHistoryEntry: Identifiable, Codable, Equatable {
     var kind: String
     var narrationSampleRate: Double?
 
+    var projectID: String? = nil
+
     var hasNarration: Bool { (narrationSampleRate ?? 0) > 0 }
 }
 
@@ -66,7 +68,7 @@ struct SceneHistoryStore {
     /// Writes a drawing. Returns nil when there is nothing worth keeping or the folder cannot be written.
     @discardableResult
     func save(log: SceneReplayLog, question: String, thumbnailPNG: Data?, narration: SceneNarrationAudio = SceneNarrationAudio(),
-              date: Date = Date()) -> SceneHistoryEntry? {
+              date: Date = Date(), projectID: String? = nil) -> SceneHistoryEntry? {
         guard log.entries.contains(where: { $0.command.verb != .say }) else { return nil }
         let id = Self.makeID(date: date)
         let folder = folder(for: id)
@@ -74,12 +76,9 @@ struct SceneHistoryStore {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let title = (log.title?.isEmpty == false ? log.title : nil) ?? Self.titleFromQuestion(question)
             let entry = SceneHistoryEntry(id: id, title: title, question: question, date: date, duration: log.duration, kind: Self.kind(of: log),
-                                          narrationSampleRate: narration.isEmpty ? nil : narration.sampleRate)
+                                          narrationSampleRate: narration.isEmpty ? nil : narration.sampleRate, projectID: projectID)
             try log.encoded().write(to: folder.appendingPathComponent("scene.json"), options: .atomic)
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(entry).write(to: folder.appendingPathComponent("meta.json"), options: .atomic)
+            try writeMetadata(entry, to: folder.appendingPathComponent("meta.json"))
             if let thumbnailPNG { try thumbnailPNG.write(to: thumbnailURL(for: id), options: .atomic) }
             if !narration.isEmpty { try narration.data().write(to: folder.appendingPathComponent("narration.pcm"), options: .atomic) }
             prune()
@@ -106,17 +105,12 @@ struct SceneHistoryStore {
         guard Self.isValidID(id), log.entries.contains(where: { $0.command.verb != .say }) else { return nil }
         let folder = folder(for: id)
         let metaURL = folder.appendingPathComponent("meta.json")
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: metaURL), var entry = try? decoder.decode(SceneHistoryEntry.self, from: data) else { return nil }
+        guard var entry = readMetadata(at: metaURL) else { return nil }
         entry.duration = log.duration
         if !narration.isEmpty { entry.narrationSampleRate = narration.sampleRate }
         do {
             try log.encoded().write(to: folder.appendingPathComponent("scene.json"), options: .atomic)
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(entry).write(to: metaURL, options: .atomic)
+            try writeMetadata(entry, to: metaURL)
             if let thumbnailPNG { try thumbnailPNG.write(to: thumbnailURL(for: id), options: .atomic) }
             if !narration.isEmpty { try narration.data().write(to: folder.appendingPathComponent("narration.pcm"), options: .atomic) }
             try? FileManager.default.removeItem(at: videoURL(for: id))
@@ -126,13 +120,37 @@ struct SceneHistoryStore {
         }
     }
 
-    func entries() -> [SceneHistoryEntry] {
-        guard let folders = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return [] }
+    private func readMetadata(at url: URL) -> SceneHistoryEntry? {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? decoder.decode(SceneHistoryEntry.self, from: data)
+    }
+
+    private func writeMetadata(_ entry: SceneHistoryEntry, to url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(entry).write(to: url, options: .atomic)
+    }
+
+    func assign(entryID: String, toProjectID projectID: String?) -> Bool {
+        guard Self.isValidID(entryID) else { return false }
+        let url = folder(for: entryID).appendingPathComponent("meta.json")
+        guard var entry = readMetadata(at: url) else { return false }
+        entry.projectID = projectID
+        do {
+            try writeMetadata(entry, to: url)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func entries() -> [SceneHistoryEntry] {
+        guard let folders = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { return [] }
         return folders.compactMap { folder -> SceneHistoryEntry? in
-            guard Self.isValidID(folder.lastPathComponent), let data = try? Data(contentsOf: folder.appendingPathComponent("meta.json")),
-                  var entry = try? decoder.decode(SceneHistoryEntry.self, from: data) else { return nil }
+            guard Self.isValidID(folder.lastPathComponent), var entry = readMetadata(at: folder.appendingPathComponent("meta.json")) else { return nil }
             entry.id = folder.lastPathComponent
             return entry
         }

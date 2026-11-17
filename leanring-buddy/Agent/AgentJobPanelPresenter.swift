@@ -2,10 +2,10 @@
 //  AgentJobPanelPresenter.swift
 //  leanring-buddy
 //
-//  Hangs the job cards under the notch and keeps them in step with the live
+//  Presents the rail and the selected detail card, synchronized with the live
 //  jobs in `AgentJobCenter`.
 //
-//  - One card per job that wants one; they stack, newest running job in front.
+//  - One square per visible job. Clicking it selects its card under the notch.
 //  - ← / → flip between cards while the pointer is over the stack (and the
 //    little arrows on the card do the same with a click).
 //  - A finished card shows its answer with Copy. After a while it folds to one
@@ -92,6 +92,23 @@ final class AgentJobPanelPresenter {
     static let dismissAfterSeconds: TimeInterval = 90
 
     private let model = AgentCardStackModel()
+    private var selectedJobID: String?
+    private lazy var rail: AgentSideRail = {
+        let rail = AgentSideRail()
+        rail.onSelect = { [weak self] id in self?.selectFromRail(id) }
+        return rail
+    }()
+
+    private func selectFromRail(_ id: String) {
+        selectedJobID = selectedJobID == id ? nil : id
+        if selectedJobID != nil { model.deck.setCollapsed(false, id: id) }
+        refresh()
+    }
+
+    private func updateRail() {
+        let cards = model.deck.ids.compactMap { AgentJobCenter.shared.job(withID: $0) }.map { AgentJobCardModel(job: $0) }
+        rail.update(cards, selected: selectedJobID)
+    }
     private var panel: NSPanel?
     private var jobWatchers: [String: AnyCancellable] = [:]
     private var dismissed: Set<String> = []
@@ -113,7 +130,13 @@ final class AgentJobPanelPresenter {
 
         var deck = model.deck
         deck.sync(visible: visibleJobs.map(\.id), active: Set(visibleJobs.filter { !$0.status.isFinished }.map(\.id)))
+        if let selectedJobID, let chosen = deck.ids.firstIndex(of: selectedJobID) {
+            deck.flip(by: chosen - (deck.frontIndex - 1))
+        } else {
+            selectedJobID = nil
+        }
         if deck != model.deck { model.deck = deck }
+        updateRail()
         center.frontJobID = deck.frontID
 
         // Redraw and resize whenever a visible job changes.
@@ -124,6 +147,7 @@ final class AgentJobPanelPresenter {
                 .receive(on: RunLoop.main)
                 .sink { [weak self] _ in
                     self?.model.revision += 1
+                    self?.updateRail()
                     self?.resize()
                 }
         }
@@ -143,7 +167,8 @@ final class AgentJobPanelPresenter {
             return
         }
         // The question card sits in the same place: let it have the spot.
-        if visibleJobs.contains(where: { $0.status == .waitingForConsent }) {
+        if selectedJobID == nil || visibleJobs.contains(where: { $0.status == .waitingForConsent }) {
+            setHovering(false)
             panel?.orderOut(nil)
             return
         }
@@ -154,21 +179,22 @@ final class AgentJobPanelPresenter {
         finishTimers[jobID] = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(Self.collapseAfterSeconds * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
-            await self.waitWhileHovering()
+            await self.waitWhileHovering(jobID: jobID)
             guard !Task.isCancelled else { return }
             self.model.deck.setCollapsed(true, id: jobID)
             self.resize()
             try? await Task.sleep(nanoseconds: UInt64(Self.dismissAfterSeconds * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            await self.waitWhileHovering()
+            await self.waitWhileHovering(jobID: jobID)
             guard !Task.isCancelled else { return }
             self.dismiss(jobID: jobID)
         }
     }
 
     /// Nothing folds or leaves under the pointer.
-    private func waitWhileHovering() async {
-        while isHovering, !Task.isCancelled {
+    private func waitWhileHovering(jobID: String) async {
+        while (isHovering && selectedJobID == jobID) || rail.hoveredID == jobID {
+            if Task.isCancelled { return }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
     }
@@ -177,6 +203,8 @@ final class AgentJobPanelPresenter {
 
     func flip(by step: Int) {
         model.deck.flip(by: step)
+        selectedJobID = model.deck.frontID
+        updateRail()
         AgentJobCenter.shared.frontJobID = model.deck.frontID
         resize()
     }

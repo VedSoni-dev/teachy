@@ -135,7 +135,9 @@ final class BackgroundAgentSideDockManager: ObservableObject {
 
         guard let targetScreen else { return }
 
-        let originX = targetScreen.frame.maxX - expandedPanelWidth
+        // Leave the trailing edge available for agent job squares while connecting an app.
+        let bounds = targetScreen.visibleFrame
+        let originX = max(bounds.minX, bounds.maxX - expandedPanelWidth - 46)
         let originY = targetScreen.frame.midY - (expandedPanelHeight / 2)
         panel.setFrame(
             NSRect(x: originX, y: originY, width: expandedPanelWidth, height: expandedPanelHeight),

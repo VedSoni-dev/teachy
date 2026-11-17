@@ -66,6 +66,8 @@ final class SceneDirector {
     private var sequencer = SceneNarrationSequencer()
     /// Goes up with every show/annotate/stop, so callbacks from an older drawing are ignored.
     private var generation = 0
+    var currentProjectID: () -> String? = { nil }
+    private var drawingProjectID: String?
     private var currentQuestion = ""
     private var savesToHistory = false
     private var beganAt = Date()
@@ -379,6 +381,7 @@ final class SceneDirector {
         // A new drawing: anything still pending from the one before (its history picture, late speech) is stale.
         generation += 1
         currentQuestion = question
+        drawingProjectID = saves ? currentProjectID() : nil
         savesToHistory = saves
         beganAt = Date()
         sequencer = SceneNarrationSequencer()
@@ -517,16 +520,17 @@ final class SceneDirector {
         guard savesToHistory else { return }
         savesToHistory = false
         let question = currentQuestion
+        let projectID = drawingProjectID
         let turn = generation
         // Give the last parts a moment to appear and the camera to settle before the picture is taken.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self, self.generation == turn else {
                 // A newer drawing replaced this one: keep the log, without a picture of the wrong scene.
-                SceneHistory.shared.save(log: log, question: question, thumbnail: nil)
+                SceneHistory.shared.save(log: log, question: question, thumbnail: nil, projectID: projectID)
                 return
             }
             let thumbnail = SceneVideoExporter.picture(of: self.scene, size: CGSize(width: 640, height: 360))
-            self.lastSavedEntryID = SceneHistory.shared.save(log: log, question: question, thumbnail: thumbnail, narration: self.scene.narration)?.id
+            self.lastSavedEntryID = SceneHistory.shared.save(log: log, question: question, thumbnail: thumbnail, narration: self.scene.narration, projectID: projectID)?.id
         }
     }
 

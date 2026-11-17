@@ -4,6 +4,7 @@ import SwiftUI
 /// Full settings workspace. The containing notch or window owns its dimensions.
 struct TeachySettingsWorkspace: View {
     @ObservedObject var companionManager: CompanionManager
+    @ObservedObject private var projects = AgentProjectStore.shared
     @Binding var selection: TeachySettingsPage
     @ObservedObject private var updater = TeachySoftwareUpdater.shared
 
@@ -17,7 +18,7 @@ struct TeachySettingsWorkspace: View {
                         sidebarHeading("TEACHY")
                         ForEach([TeachySettingsPage.voice, .microphone, .dictation, .shortcuts, .cursor, .touchAndGaze, .camera]) { categoryButton($0) }
                         sidebarHeading("WORK")
-                        ForEach([TeachySettingsPage.integrations, .agents, .routines, .drawings, .memory]) { categoryButton($0) }
+                        ForEach([TeachySettingsPage.projects, .integrations, .agents, .routines, .drawings, .memory]) { categoryButton($0) }
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 12)
@@ -64,12 +65,13 @@ struct TeachySettingsWorkspace: View {
         case .cursor: TeachyCursorSettingsPage(companionManager: companionManager)
         case .touchAndGaze: TeachyTouchAndGazeSettingsPage()
         case .camera: CameraInputSettingsPage()
+        case .projects: TeachyProjectsPage(companionManager: companionManager)
         case .integrations:
             SettingsPageGroup(title: "Browser") { BrowserExtensionSection(startsExpanded: true) }
             ConnectorsSection()
         case .agents: AgentsSection(showsRoutines: false)
         case .routines: RoutinesSection()
-        case .drawings: DrawingsSection(startsExpanded: true)
+        case .drawings: DrawingsSection(startsExpanded: true, projectOptions: projects.projects.map { (id: $0.id, name: $0.name) })
         case .memory: BrainMemorySection()
         }
     }

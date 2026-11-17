@@ -20,6 +20,10 @@ struct NotchHomeTabView: View {
                 .lineLimit(1).minimumScaleFactor(0.8)
             Spacer(minLength: 10)
             HStack(spacing: 8) {
+                Button { notchManager.openSettings(.projects) } label: {
+                    Label("Projects", systemImage: "folder")
+                }
+                .teachyButton(.secondary, size: .compact)
                 Button { notchManager.openSettings(.drawings) } label: {
                     Label("Drawings", systemImage: "scribble.variable")
                 }

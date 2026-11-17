@@ -77,6 +77,18 @@ func runShots() {
     render(panel(), width: notchManager.hostingSize.width, name: "07-live-external-display")
     companionManager.voiceState = .idle
 
+    defer { try? FileManager.default.removeItem(at: ProjectsFixture.root) }
+    if let project = try? AgentProjectStore.shared.create(name: "Mechanical design") {
+        AgentJobCenter.shared.activeJobs = [AgentJob(projectID: project.id)]
+        SceneHistory.shared.entries[0].projectID = project.id
+        render(VStack(alignment: .leading, spacing: 18) {
+            Text("Projects").font(DS.Fonts.workspaceTitle)
+            TeachyProjectsPage(companionManager: companionManager)
+        }.padding(24).background(DS.Colors.workspaceBackground), width: 550, name: "08-projects")
+    } else {
+        failureCount += 1
+    }
+
     if failureCount > 0 {
         print("\(failureCount) FAILED")
         exit(1)

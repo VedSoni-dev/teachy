@@ -34,3 +34,7 @@ extension AgentRoster {
 extension AgentHistoryStore {
     nonisolated static let shared = AgentHistoryStore(directory: AgentHome.historyDirectory)
 }
+
+extension AgentProjectStore {
+    static let shared = AgentProjectStore(file: AgentHome.root.appendingPathComponent("projects.json"))
+}

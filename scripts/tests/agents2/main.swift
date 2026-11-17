@@ -128,6 +128,48 @@ func makeRecord(_ id: String, startedAt: Date, title: String = "Job", status: St
     )
 }
 
+section("projects: active selection, legacy jobs and saved membership")
+do {
+    let file = scratch.appendingPathComponent("projects.json")
+    let projects = AgentProjectStore(file: file)
+    let history = AgentHistoryStore(directory: scratch.appendingPathComponent("project-history"))
+    let first = try projects.create(name: "  Calculus  ")
+    var job = makeRecord("lesson", startedAt: Date())
+    job.projectID = projects.activeProjectID
+    try history.save(job)
+
+    let second = try projects.create(name: "Robotics")
+    expectEqual(first.name, "Calculus", "project names are trimmed")
+    expectEqual(projects.activeProjectID, second.id, "creating a project selects it")
+    expectEqual(history.record(id: job.id)?.projectID, first.id, "switching leaves job membership intact")
+    try projects.rename(id: first.id, name: "Math")
+    try projects.select(first.id)
+    let reopened = AgentProjectStore(file: file)
+    expectEqual(reopened.projects.first?.name, "Math", "rename survives relaunch")
+    expectEqual(reopened.activeProjectID, first.id, "selection survives relaunch")
+    do {
+        try reopened.rename(id: first.id, name: "robotics")
+        expect(false, "duplicate names should fail")
+    } catch {
+        expectEqual(reopened.projects.first?.name, "Math", "rejected rename preserves the old name")
+    }
+    try reopened.select(nil)
+    expectEqual(AgentProjectStore(file: file).activeProjectID, nil, "All projects survives relaunch")
+    try history.save(makeRecord("legacy", startedAt: Date()))
+    let legacy = history.record(id: "legacy")
+    expect(legacy != nil && legacy?.projectID == nil, "records with no project key remain available")
+
+    let malformed = Data("broken".utf8)
+    try malformed.write(to: file)
+    let unreadable = AgentProjectStore(file: file)
+    do {
+        try unreadable.create(name: "New")
+        expect(false, "unreadable catalogs should not be overwritten")
+    } catch {
+        expectEqual(try Data(contentsOf: file), malformed, "preserves an unreadable catalog")
+    }
+}
+
 section("history: saved, listed newest first, pruned to the cap")
 do {
     let directory = scratch.appendingPathComponent("history", isDirectory: true)

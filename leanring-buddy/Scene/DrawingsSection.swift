@@ -24,9 +24,11 @@ struct DrawingsSection: View {
     @Environment(\.accessibilityReduceMotion) private var isReduceMotionEnabled
 
     /// How many drawings are shown before "Show all".
+    private let projectOptions: [(id: String, name: String)]
     private let previewCount = 4
 
-    init(history: SceneHistory? = nil, startsExpanded: Bool = false) {
+    init(history: SceneHistory? = nil, startsExpanded: Bool = false, projectOptions: [(id: String, name: String)] = []) {
+        self.projectOptions = projectOptions
         self.history = history ?? SceneHistory.shared
         self._isExpanded = State(initialValue: startsExpanded)
     }
@@ -89,6 +91,19 @@ struct DrawingsSection: View {
                                     onReplay: { history.replay(entry.id) },
                                     onSaveVideo: { saveVideo(entry) },
                                     onDelete: { history.delete(entry.id) })
+                            .contextMenu {
+                                if !projectOptions.isEmpty {
+                                    Menu("Move to project") {
+                                        ForEach(projectOptions, id: \.id) { option in
+                                            Button(option.name) { move(entry, to: option.id) }
+                                                .disabled(entry.projectID == option.id)
+                                        }
+                                        Divider()
+                                        Button("Unassigned") { move(entry, to: nil) }
+                                            .disabled(entry.projectID == nil)
+                                    }
+                                }
+                            }
                     }
                 }
                 if let problem {
@@ -109,6 +124,10 @@ struct DrawingsSection: View {
                 .padding(.vertical, 10)
             }
         }
+    }
+
+    private func move(_ entry: SceneHistoryEntry, to projectID: String?) {
+        problem = history.assign(entryID: entry.id, toProjectID: projectID) ? nil : "Couldn’t move this drawing."
     }
 
     private func saveVideo(_ entry: SceneHistoryEntry) {

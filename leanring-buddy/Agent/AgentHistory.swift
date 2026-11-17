@@ -32,6 +32,7 @@ nonisolated struct AgentJobRecord: Codable, Equatable, Identifiable, Sendable {
     var agentName: String?
     /// Set when a routine started it.
     var routineID: String?
+    var projectID: String?
     var plan: [PlanStep]
     var steps: [Step]
     var answer: String

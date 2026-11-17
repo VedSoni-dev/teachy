@@ -68,7 +68,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
         // Register saved-drawing playback before Home can offer Replay.
         // The director would otherwise stay lazy until the first new AI drawing.
-        _ = SceneDirector.shared
+        SceneDirector.shared.currentProjectID = { AgentProjectStore.shared.activeProjectID }
 
         notchManager = NotchWindowManager(companionManager: companionManager)
         menuBarPanelManager = MenuBarPanelManager(
