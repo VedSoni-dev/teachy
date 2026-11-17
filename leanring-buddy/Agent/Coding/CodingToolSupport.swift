@@ -35,7 +35,7 @@ nonisolated enum CodingFileReading {
     static func splitIntoLines(_ text: String) -> [String] {
         if text.isEmpty { return [] }
         var lines = text.components(separatedBy: "\n")
-        if text.hasSuffix("\n") { lines.removeLast() }
+        if text.hasSuffix("\n") || text.hasSuffix("\r\n") { lines.removeLast() }
         return lines.map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
     }
 

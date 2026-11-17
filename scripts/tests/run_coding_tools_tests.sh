@@ -9,6 +9,7 @@ cd "$(dirname "$0")/../.."
 OUT="${TMPDIR:-/tmp}/teachy-coding-tools-tests"
 swiftc -default-isolation MainActor -o "$OUT" \
   leanring-buddy/Agent/ToolPolicy.swift \
+  leanring-buddy/Agent/Drive/AXSnapshotModel.swift \
   leanring-buddy/Browser/BrowserRisk.swift \
   leanring-buddy/Agent/Coding/CodingToolSupport.swift \
   scripts/tests/coding_tools/main.swift
