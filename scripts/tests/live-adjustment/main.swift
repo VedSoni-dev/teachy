@@ -1,4 +1,5 @@
 import Foundation
+import simd
 #if LIVE_ENGINE
 import AppKit
 import SceneKit
@@ -39,6 +40,11 @@ func runChecks() {
     expect(rate("resume motion", current: .nan, resume: .infinity) == 1, "finite fallback")
     expect(plan("recenter")?.script.contains("hold") == true, "explicit framing wins")
     
+    for degrees in [SceneVec3(15, 25, -35), SceneVec3(0, 90, 0), SceneVec3(90, 0, 0), SceneVec3(0, 0, -90)] {
+        let original = SceneOrientation.euler(degrees: degrees)
+        let recovered = SceneOrientation.euler(degrees: SceneLiveState.rotationDegrees(original))
+        expect(abs(simd_dot(original.vector, recovered.vector)) > 0.999999, "snapshot rotation round-trips command convention")
+    }
     #if LIVE_ENGINE
     let controller = Scene3DController(headless: true)
     func apply(_ script: String) {
@@ -70,6 +76,38 @@ func runChecks() {
     controller.advance(by: 0.5)
     expect(controller.debugSpinAngle(of: "rotor")! > secondAngle, "resume restarts motion")
     expect(node.geometry === originalGeometry, "adjustments preserve geometry identity")
+    expect(controller.view.preferredFramesPerSecond == 30 && Scene3DController.liveFramesPerSecond == 30, "live renderer and timer share 30 FPS cap")
+    apply("group assembly at=(10,0,0)\nbox unnamed parent=assembly at=(0,0,0) size=(1,1,1)")
+    let edited = controller.scene.rootNode.childNode(withName: "unnamed", recursively: true)!
+    let shape = edited.geometry
+    apply("set unnamed at=(1,2,3) rotation=(0,90,0) scale=(2,2,2)")
+    expect(edited === controller.scene.rootNode.childNode(withName: "unnamed", recursively: true) && edited.geometry === shape, "transform command preserves existing node and geometry")
+    let livePart = controller.liveState.parts.first { $0.id == "unnamed" }!
+    expect(livePart.parent == "assembly" && livePart.position == SceneVec3(1,2,3), "snapshot includes unlabelled part and current parent-local position")
+    expect(livePart.worldPosition == SceneVec3(11,2,3) && livePart.scale == SceneVec3(2,2,2), "snapshot exposes real world transform and scale")
+    expect(abs((livePart.rotation?.y ?? 0) - 90) < 0.05, "snapshot rotation uses degrees")
+    expect(livePart.geometry == "box" && livePart.boundsLow != nil, "snapshot includes geometry type and world bounds")
+    apply("hide assembly")
+    expect(controller.liveState.parts.first { $0.id == "unnamed" }?.isHidden == true, "child snapshot includes inherited visibility")
+    apply("show assembly\nset unnamed color=red opacity=0.5")
+    expect(controller.liveState.parts.first { $0.id == "unnamed" }?.colour == "red" && controller.liveState.parts.first { $0.id == "unnamed" }?.opacity == 0.5, "material edit appears in authoritative state")
+    func allowed(_ text: String) -> Bool { SceneScriptParser.parse(text).first.map { controller.canApplyCanvasCommand($0) } ?? false }
+    expect(!allowed("set missing at=0,0,0"), "unknown edit target rejected")
+    expect(!allowed("set unnamed scale=0,1,1"), "degenerate scale rejected")
+    expect(!allowed("set unnamed rotation=90"), "malformed transform rejected")
+    expect(!allowed("box unnamed size=5,5,5"), "shape command cannot replace an existing part")
+    expect(!allowed("sphere fresh parent=missing r=1"), "unknown parent rejected")
+    expect(allowed("arrow3 fresh from=0,0,0 to=1,0,0"), "fresh explanatory geometry accepted")
+    expect(allowed("set scene-motion bind=timescale value=0.5"), "global speed command accepted")
+    expect(controller.canApplyCanvasCommand(SceneScriptParser.parse("label lab on=fresh text=Flow")[0], additionalPartIDs: ["fresh"]), "batch can label a newly added part")
+    apply("set rotor rotation=0,0,90")
+    let fixedOrientation = node.simdOrientation
+    controller.advance(by: 0.5)
+    expect(node.simdOrientation == fixedOrientation, "orientation edits stay fixed instead of spinning back")
+    let stateText = controller.liveState.text(limit: 1, maximumCharacters: 1600, matching: "unnamed")
+    expect(stateText.contains("unnamed") && stateText.count <= 1600 && stateText.contains("omitted"), "bounded snapshot prioritizes requested part")
+    apply("remove assembly")
+    expect(!controller.liveState.parts.contains { $0.id == "unnamed" }, "deleting parent removes non-dotted descendant IDs too")
     controller.reset()
     expect(controller.motionRate == 1 && controller.resumeMotionRate == 1, "new scene resets motion")
     #endif

@@ -1027,7 +1027,7 @@ final class CompanionManager: ObservableObject {
         HOW YOU WORK (the same instincts as a great coding agent, aimed at everyday life):
         - Own the outcome, not just the literal question. Work out what they are really trying to do and help with THAT: answer what they asked, then take the obvious next step for them (point at it, mark it, open it, write it, or do it) without asking permission for things that are clearly wanted and easy to undo.
         - Bias to action. If they want something done and you can do it, do it ([DO:], [JOB:], [WRITE:], [OPEN:]) and say in one short line that you are on it. Only ask a question when the answer really changes what you would do, and then ask one, specific.
-        - Ground everything in what you see. Name the real button, tab, file, error line or number on their screen. Never guess at something you could read off the screenshot.
+        - Ground external app answers in the screen. For Teachy’s own canvas, use the live engine state and part IDs provided below; screenshots are not the source of truth for that drawing.
         - Go a step beyond, with taste. One genuinely useful extra (the shortcut they did not know, the mistake about to bite them, the better way, the link that answers the next question) beats three generic tips. Skip the extra when it would only be noise.
         - Be honest. If you are not sure, say what you would check. Never invent a button, a fact or a link.
 
@@ -1038,7 +1038,8 @@ final class CompanionManager: ObservableObject {
           in the same reply. If you can't confidently identify a specific, pointable target, describe it
           in words instead: saying "here" with nothing behind it is worse than not pointing at all.
         \(SceneDirector.voicePromptRules)
-        - Proactively mark the screen: when your answer is about things that are visible (the parts of a diagram, the fields of a form, the lines of an error, the settings that matter), use [MARK:] even if they did not ask you to circle anything. That is what makes you feel like you are really looking with them.
+        \(SceneDirector.shared.canvasPromptContext)
+        - Proactively mark external screen content: when your answer is about another app (the fields of a form, the lines of an error, the settings that matter), use [MARK:] even if they did not ask you to circle anything. That is what makes you feel like you are really looking with them.
         - Open links: [OPEN: https://…] opens a page in their browser while you talk: the right docs page, a tutorial or video, a search (e.g. https://www.google.com/search?q=… or https://www.youtube.com/results?search_query=…), a site they named. At most two. Only real, well-known URLs or searches; never guess a deep link you are not sure exists, use a search instead. Never open anything to buy, send or sign in for them.
         - When they want it DONE, do it rather than explain it: [DO:] for a single native command, [JOB:] for real multi-step work (it can browse the web in a real browser, use the mouse and keyboard, and work across apps), [WALK:] when they'd rather click through it themselves. If it's unclear whether they want you to do it, answer, then offer in one short line ("want me to just do it?").
         - When they want real multi-step work DONE for them (research something on the web, fill something in, sort or rename files, build or change something, anything across several apps or their connected services) add [JOB: the whole task in one clear sentence, with every detail they gave and anything you can see that it needs] and SAY one short line that you're on it. A job runs in the background, shows its plan, and asks them before anything risky. Don't use [JOB:] for a single native command (that's [DO:]).
@@ -1086,15 +1087,81 @@ final class CompanionManager: ObservableObject {
         sendCompanionChatResponse(transcript: transcript)
     }
 
+    private var activeCanvasQuestion: String?
+    private var receivedCanvasReply = false
+
+    private func connectCanvas() {
+        // [SHOW: …] draws and explains something aloud while it builds; [MARK: …] draws on
+        // what is on their screen right now. The drawing narrates itself in Teachy's voice.
+        SceneDirector.shared.onFollowUpQuestion = { [weak self] question in
+            self?.submitSyntheticCompanionRequest(question)
+        }
+        // Answers given on the drawing itself (a tapped part, "zoom in on…") skip the
+        // voice turn, so they are added to the conversation here.
+        SceneDirector.shared.onRefinementAnswered = { [weak self] question, spokenAnswer in
+            guard let self else { return }
+            if self.activeCanvasQuestion == question {
+                ChatTimeline.shared.streamingReply(text: spokenAnswer, isFinal: true)
+            }
+            self.conversationHistory.append((userTranscript: question, assistantResponse: spokenAnswer))
+            BrainStore.shared.appendMessage(role: .user, text: question)
+            BrainStore.shared.appendMessage(role: .assistant, text: spokenAnswer)
+            if self.conversationHistory.count > 10 {
+                self.conversationHistory.removeFirst(self.conversationHistory.count - 10)
+            }
+        }
+        SceneDirector.shared.speak = { [weak self] sentence, onStarted in
+            guard let self else { return }
+            await self.speechSynthesizer.finishStream()            // let the one-line reply finish
+            guard !Task.isCancelled else { return }
+            try? await self.speechSynthesizer.speakText(sentence, onStarted: onStarted)
+        }
+        SceneDirector.shared.cancelSpeech = { [weak self] in self?.speechSynthesizer.stopPlayback() }
+        SceneDirector.shared.onRefinementProgress = { [weak self] question, answer in
+            guard self?.activeCanvasQuestion == question else { return }
+            self?.receivedCanvasReply = true
+            ChatTimeline.shared.streamingReply(text: answer, isFinal: false)
+        }
+        SceneDirector.shared.onRefinementFinished = { [weak self] question in
+            guard let self, self.activeCanvasQuestion == question else { return }
+            if !self.receivedCanvasReply {
+                ChatTimeline.shared.streamingReply(text: "I couldn't finish that canvas edit. The drawing is still open; try a specific part or command.", isFinal: true)
+            }
+            self.activeCanvasQuestion = nil
+            self.voiceState = .idle
+            self.scheduleTransientHideIfNeeded()
+        }
+    }
+
     /// Quick companion chat with vision, conversation memory, and spoken replies.
     private func sendCompanionChatResponse(transcript: String) {
         currentResponseTask?.cancel()
         speechSynthesizer.stopPlayback()
         SceneDirector.shared.stop()
+        connectCanvas()
 
         currentResponseTask = Task {
             voiceState = .processing
             ChatTimeline.shared.userAsked(transcript)
+
+            let canvasRoute = SceneDirector.shared.canvasRoute(for: transcript)
+            switch canvasRoute {
+            case .inspect, .commands:
+                _ = mouseOutlineTracker.consumeFinalizedOutlinePoints()
+                _ = GazeTracker.shared.consumeQuestionGaze()
+                let result: String
+                if case .commands(let script) = canvasRoute { result = SceneDirector.shared.applyCanvasCommands(script) }
+                else { result = SceneDirector.shared.canvasStateText() }
+                ChatTimeline.shared.streamingReply(text: result, isFinal: true)
+                conversationHistory.append((userTranscript: transcript, assistantResponse: result))
+                if conversationHistory.count > 10 { conversationHistory.removeFirst(conversationHistory.count - 10) }
+                BrainStore.shared.appendMessage(role: .user, text: transcript)
+                BrainStore.shared.appendMessage(role: .assistant, text: result)
+                voiceState = .idle
+                scheduleTransientHideIfNeeded()
+                return
+            default: break
+            }
 
             if let response = SceneDirector.shared.adjustImmediately(transcript) {
                 _ = mouseOutlineTracker.consumeFinalizedOutlinePoints()
@@ -1110,6 +1177,15 @@ final class CompanionManager: ObservableObject {
                 guard !Task.isCancelled else { return }
                 voiceState = .idle
                 scheduleTransientHideIfNeeded()
+                return
+            }
+
+            if case .refine(let parts, let reason) = canvasRoute {
+                _ = mouseOutlineTracker.consumeFinalizedOutlinePoints()
+                _ = GazeTracker.shared.consumeQuestionGaze()
+                activeCanvasQuestion = transcript
+                receivedCanvasReply = false
+                SceneDirector.shared.refine(transcript, parts: parts, reason: "direct canvas: " + reason)
                 return
             }
 
@@ -1297,29 +1373,6 @@ final class CompanionManager: ObservableObject {
                 streamingSpeech.finish(fullResponseText)
                 ChatTimeline.shared.streamingReply(text: fullResponseText, isFinal: true)
 
-                // [SHOW: …] draws and explains something aloud while it builds; [MARK: …] draws on
-                // what is on their screen right now. The drawing narrates itself in Teachy's voice.
-                SceneDirector.shared.onFollowUpQuestion = { [weak self] question in
-                    self?.submitSyntheticCompanionRequest(question)
-                }
-                // Answers given on the drawing itself (a tapped part, "zoom in on…") skip the
-                // voice turn, so they are added to the conversation here.
-                SceneDirector.shared.onRefinementAnswered = { [weak self] question, spokenAnswer in
-                    guard let self else { return }
-                    self.conversationHistory.append((userTranscript: question, assistantResponse: spokenAnswer))
-                    BrainStore.shared.appendMessage(role: .user, text: question)
-                    BrainStore.shared.appendMessage(role: .assistant, text: spokenAnswer)
-                    if self.conversationHistory.count > 10 {
-                        self.conversationHistory.removeFirst(self.conversationHistory.count - 10)
-                    }
-                }
-                SceneDirector.shared.speak = { [weak self] sentence, onStarted in
-                    guard let self else { return }
-                    await self.speechSynthesizer.finishStream()            // let the one-line reply finish
-                    guard !Task.isCancelled else { return }
-                    try? await self.speechSynthesizer.speakText(sentence, onStarted: onStarted)
-                }
-                SceneDirector.shared.cancelSpeech = { [weak self] in self?.speechSynthesizer.stopPlayback() }
                 if let markRequest = SceneDirector.extractMarkRequest(from: fullResponseText).request {
                     let mark = ScreenAnnotationRequest(markRequest)
                     if let index = mark.captureIndex(count: screenCaptures.count,

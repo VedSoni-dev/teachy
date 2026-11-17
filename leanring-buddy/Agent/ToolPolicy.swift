@@ -131,6 +131,13 @@ enum ToolPolicy {
         case "update_plan":
             return decision(.safe, "only updates the plan the user sees", summary: "update the plan")
 
+        case "canvas_inspect":
+            return decision(.safe, "reads Teachy's own live drawing engine", summary: "inspect the drawing", app: "Teachy canvas")
+
+        case "canvas_edit":
+            // This narrow engine API never relaxes the separate ban on driving Teachy's UI.
+            return decision(.safe, "only applies validated local edits to Teachy's drawing", summary: "edit the drawing", detail: string(arguments["script"]), app: "Teachy canvas")
+
         case "capture_screen":
             return decision(.safe, "takes a screenshot for Teachy only", summary: "look at the screen")
 

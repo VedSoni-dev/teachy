@@ -211,6 +211,7 @@ final class Scene3DController: NSObject {
     private var nodes: [String: SCNNode] = [:]
     private var parts: [String: ScenePart] = [:]
     private var baseOrientation: [String: simd_quatf] = [:]
+    private var fixedRotationIDs: Set<String> = []
     private var order: [String] = []
 
     // Motion
@@ -478,7 +479,7 @@ final class Scene3DController: NSObject {
         view.autoenablesDefaultLighting = false
         view.isPlaying = false
         view.rendersContinuously = false
-        view.preferredFramesPerSecond = 60
+        view.preferredFramesPerSecond = Self.liveFramesPerSecond
         view.wantsLayer = true
         view.layer?.isOpaque = false
         view.onViewportChanged = { [weak self] in
@@ -576,7 +577,7 @@ final class Scene3DController: NSObject {
     private func startTicking() {
         guard timer == nil else { return }
         lastTick = CACurrentMediaTime()
-        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+        let timer = Timer(timeInterval: 1.0 / Double(Self.liveFramesPerSecond), repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
                 if let self { self.tick() } else { timer.invalidate() }
             }
@@ -604,7 +605,7 @@ final class Scene3DController: NSObject {
         scene.physicsWorld.speed = 1
         resumeMotionRate = 1
         builder = ScenePartBuilder()
-        nodes = [:]; parts = [:]; baseOrientation = [:]; order = []
+        nodes = [:]; parts = [:]; baseOrientation = [:]; fixedRotationIDs = []; order = []
         spins = [:]; spinAngles = [:]; solvedRPM = [:]; flows = [:]; pistons = [:]; orbits = [:]; coils = [:]; explodedOffsets = [:]
         beats = [:]; chipExtent = nil; leaderOffsets = [:]; labelRowsDecidedFor = ""
         labels = [:]; chipTargets = [:]; springVelocity = [:]; bodyMass = [:]; joints = [:]; forces = [:]; sliderBindings = [:]; plotSources = [:]; plotBuffers = [:]
@@ -620,6 +621,8 @@ final class Scene3DController: NSObject {
         model.title = ""; model.sliders = []; model.plots = []; model.chips = []; model.tappedLabel = nil
         placeCamera()
     }
+
+    static let liveFramesPerSecond = 30
 
     // MARK: Commands
 
@@ -660,6 +663,7 @@ final class Scene3DController: NSObject {
                 model.onLayoutChanged?()
             }
         case .spin:
+            fixedRotationIDs.remove(c.id)
             // A piece of a ready-made object that already turns keeps its own axle: the script cannot
             // know which way the object lies, and a wrong axis would swing the piece round.
             let keepsAxle = macroOf[c.id] != nil && spins[c.id] != nil && spins[c.id]?.axis == nil
@@ -704,7 +708,9 @@ final class Scene3DController: NSObject {
             }
         case .slider: addSlider(c)
         case .set:
-            if let value = c.number("value", "to", "v"), value.isFinite {
+            if c.string("bind") == nil, nodes[c.id] != nil, !Set(c.args.keys).isDisjoint(with: ["at", "rotation", "rot", "scale", "color", "opacity"]) {
+                editPart(c)
+            } else if let value = c.number("value", "to", "v"), value.isFinite {
                 // Explicit global binding also works without a visible slider. Kept as a normal
                 // command so live adjustments replay exactly like other person actions.
                 if c.string("bind") == "timescale" {
@@ -751,6 +757,95 @@ final class Scene3DController: NSObject {
         }
     }
 
+    /// Validate direct edits against live IDs before accepting an AI command batch.
+    /// `additionalPartIDs` contains fresh IDs already introduced earlier in that batch.
+    func canApplyCanvasCommand(_ c: SceneCommand, additionalPartIDs: Set<String> = []) -> Bool {
+        guard SceneRefinePrompt.allows(c) else { return false }
+        func known(_ id: String) -> Bool { nodes[id] != nil || additionalPartIDs.contains(id) }
+        func vector(_ key: String, positive: Bool = false) -> Bool {
+            guard c.args[key] != nil else { return true }
+            let values = c.numbers(key)
+            return values.count == 3 && values.allSatisfy { $0.isFinite && abs($0) <= 10000 && (!positive || $0 > 0) }
+        }
+        for key in ["at", "rotation", "rot", "scale", "from", "to", "by"] where c.args[key] != nil {
+            if !vector(key, positive: key == "scale") { return false }
+        }
+        switch c.verb {
+        case .set:
+            if c.string("bind") == "timescale" { return true }
+            guard known(c.id) else { return false }
+            if c.args["color"] != nil && c.color() == nil { return false }
+            if c.args["opacity"] != nil { guard let value = c.number("opacity"), value.isFinite, (0...1).contains(value) else { return false } }
+            return true
+        case .say, .chip: return true
+        case .camera: return true
+        case .label: return c.string("on").map(known) ?? false
+        case .move:
+            return known(c.id) && (c.vec3("to") != nil || c.vec3("by") != nil)
+        case .spin, .beat, .pulse, .remove, .detail:
+            return known(c.id)
+        case .focus, .frame, .ghost, .highlight, .hide, .show, .explode, .orbit:
+            return c.targetIDs.allSatisfy(known) && (c.targetIDs.count > 0 || ["all", "everything", "none", "others", "other", "rest", "whole"].contains(where: c.names) || c.verb == .explode)
+        default:
+            if c.verb.makes3DPart || c.verb == .arrow || c.verb == .line {
+                return !known(c.id) && (c.string("parent").map(known) ?? true)
+            }
+            return false
+        }
+    }
+
+    /// Transform/material commands operate on retained nodes instead of regenerating a model.
+    private func editPart(_ c: SceneCommand) {
+        guard canApplyCanvasCommand(c), let node = nodes[c.id] else { return }
+        if let position = c.vec3("at") {
+            node.removeAction(forKey: "move"); node.removeAction(forKey: "explode")
+            actionNodeIDs.remove(c.id); orbits[c.id] = nil; explodedOffsets[c.id] = nil
+            if node.physicsBody?.type == .dynamic { node.physicsBody?.type = .kinematic }
+            node.simdPosition = simd_float3(position)
+            parts[c.id]?.position = position
+        }
+        if let rotation = c.vec3("rotation") ?? c.vec3("rot") {
+            spins[c.id] = nil; solvedRPM = [:]; spinAngles[c.id] = nil
+            fixedRotationIDs.insert(c.id)
+            let orientation = simd_quatf(SceneOrientation.euler(degrees: rotation))
+            node.simdOrientation = orientation
+            baseOrientation[c.id] = orientation
+            parts[c.id]?.orientation = SceneOrientation.euler(degrees: rotation)
+            parts[c.id]?.eulerDegrees = rotation
+        }
+        if let scale = c.vec3("scale") {
+            beats[c.id] = nil
+            node.simdScale = simd_float3(scale)
+            parts[c.id]?.scale = scale
+        }
+        if let color = c.color() {
+            for id in order where id == c.id || isDescendant(id, of: c.id) {
+                guard let child = nodes[id], let original = child.geometry else { parts[id]?.color = color; continue }
+                // Bulk geometry can share materials; copy those resources, not the scene or node.
+                let geometry = original.copy() as! SCNGeometry
+                geometry.materials = original.materials.map { material in
+                    let copy = material.copy() as! SCNMaterial
+                    copy.diffuse.contents = color.nsColor
+                    if let original = emissionOriginals[ObjectIdentifier(material)] {
+                        copy.emission.contents = original.contents
+                        copy.emission.intensity = original.intensity
+                    }
+                    return copy
+                }
+                child.geometry = geometry
+                parts[id]?.color = color
+            }
+        }
+        if let opacity = c.number("opacity") {
+            node.removeAction(forKey: "fade")
+            parts[c.id]?.opacity = opacity
+            node.opacity = CGFloat(hiddenIDs.contains(c.id) ? 0 : min(opacity, ghosts[c.id]?.opacity ?? 1))
+            setSolid(node, opacity >= 0.999 && ghosts[c.id] == nil)
+        }
+        invalidateSpatialLayout()
+        labelRowsDecidedFor = ""
+    }
+
     /// Real engines turn thousands of rpm; on screen that is a blur (or looks frozen).
     /// Scripted speeds are capped to something the eye can follow. Sliders are not capped.
     private static func watchable(_ rpm: Double, limit: Double = 240) -> Double {
@@ -769,6 +864,7 @@ final class Scene3DController: NSObject {
     private func addNode(for part: ScenePart) {
         invalidateSpatialLayout()
         nodes[part.id]?.removeFromParentNode()
+        fixedRotationIDs.remove(part.id)
         // A scene past the node budget keeps its named parts and drops further small unnamed pieces.
         if nodes.count >= Self.maximumNodes, nodes[part.id] == nil, part.id.contains("."), part.label == nil, part.name == nil { return }
         let node = SCNNode()
@@ -789,7 +885,7 @@ final class Scene3DController: NSObject {
             node.opacity = CGFloat(part.opacity)
         } else {
             node.opacity = 0
-            node.runAction(.fadeOpacity(to: CGFloat(part.opacity), duration: 0.28))
+            node.runAction(.fadeOpacity(to: CGFloat(part.opacity), duration: 0.28), forKey: "fade")
         }
         if part.opacity < 0.999 { node.renderingOrder = 10 }
         nodes[part.id] = node
@@ -825,7 +921,7 @@ final class Scene3DController: NSObject {
 
     private func remove(_ id: String) {
         guard let node = nodes[id] else { return }
-        let doomed = [id] + nodes.keys.filter { $0.hasPrefix(id + ".") }
+        let doomed = [id] + nodes.keys.filter { $0 != id && isDescendant($0, of: id) }
         node.runAction(.sequence([.fadeOut(duration: 0.25), .removeFromParentNode()]))
         for key in doomed {
             nodes[key] = nil; parts[key] = nil; spins[key] = nil; flows[key] = nil; pistons[key] = nil; orbits[key] = nil; coils[key] = nil
@@ -1971,7 +2067,7 @@ final class Scene3DController: NSObject {
             solvedRPM = builder.train.solve(drivers: spins.mapValues(\.rpm))
         }
         for (id, rpm) in solvedRPM {
-            guard let node = nodes[id], let base = baseOrientation[id] else { continue }
+            guard !fixedRotationIDs.contains(id), let node = nodes[id], let base = baseOrientation[id] else { continue }
             let angle = (spinAngles[id] ?? 0) + rpm * dt * 2 * Double.pi / 60
             spinAngles[id] = angle
             let axis: simd_float3
@@ -3086,35 +3182,65 @@ final class Scene3DController: NSObject {
     var liveState: SceneLiveState {
         var state = SceneLiveState(title: model.title.isEmpty ? nil : model.title)
         let candidates = subjectCandidates
-        var boxes: [(id: String, box: SceneBox)] = []
-        for candidate in candidates {
-            if let box = bounds(ofParts: [candidate.id]) { boxes.append((candidate.id, box)) }
-        }
-        // Shells that can hide things: parts with a shape of their own.
-        let shells = boxes.filter { nodes[$0.id]?.geometry != nil }
-        func colour(of id: String) -> String? {
-            guard let part = parts[id] else { return nil }
-            if case .group = part.shape {
-                // A ready-made part is the colour of its biggest piece.
-                let child = order.first { parts[$0]?.parent == id && nodes[$0]?.geometry != nil && !$0.hasSuffix(".hub") }
-                return child.flatMap { parts[$0]?.color.nearestName }
+        let named = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, $0) })
+        let ordered = candidates.map(\.id) + order.filter { named[$0] == nil }
+        for id in ordered {
+            guard let node = nodes[id], let source = parts[id], !id.hasPrefix("_"), !id.hasSuffix("._bulk") else { continue }
+            let current = isHeadless ? node : node.presentation
+            var part = SceneLivePart(id: id, title: labelTexts[id] ?? source.label ?? source.name,
+                                     colour: source.color.nearestName)
+            part.parent = source.parent
+            part.position = SceneVec3(current.simdPosition)
+            part.worldPosition = SceneVec3(current.simdWorldPosition)
+            part.targetPosition = SceneVec3(node.simdPosition)
+            part.rotation = SceneLiveState.rotationDegrees(simd_quatd(vector: SIMD4<Double>(current.simdOrientation.vector)))
+            part.scale = SceneVec3(current.simdScale)
+            part.opacity = effectiveOpacity(id)
+            part.isGhosted = isEffectivelyGhosted(id)
+            part.isHidden = isEffectivelyHidden(id)
+            if let bounds = bounds(ofParts: [id]) { part.boundsLow = bounds.low; part.boundsHigh = bounds.high }
+            switch source.shape {
+            case .group: part.geometry = "group"
+            case .box: part.geometry = "box"
+            case .sphere: part.geometry = "sphere"
+            case .cylinder: part.geometry = "cylinder"
+            case .cone: part.geometry = "cone"
+            case .torus: part.geometry = "torus"
+            case .capsule: part.geometry = "capsule"
+            case .tube: part.geometry = "tube"
+            case .lathe: part.geometry = "lathe"
+            case .extrude: part.geometry = "extrude"
+            case .text: part.geometry = "text"
             }
-            return part.color.nearestName
-        }
-        let labelled = candidates.filter { $0.label != nil }, others = candidates.filter { $0.label == nil }
-        for candidate in labelled + others {
-            let id = candidate.id
-            var part = SceneLivePart(id: id, title: candidate.label ?? candidate.name, colour: colour(of: id))
-            if let box = boxes.first(where: { $0.id == id })?.box {
-                part.inside = SceneContainment.containers(of: id, subject: box, among: shells).first { !isDescendant(id, of: $0) && !isDescendant($0, of: id) }
-            }
-            part.isGhosted = ghosts[id] != nil
-            part.isHidden = hiddenIDs.contains(id)
+            if !fixedRotationIDs.contains(id), let rpm = solvedRPM[id] ?? spins[id]?.rpm { part.motion.append("spin rpm=\(rpm)") }
+            if let flow = flows[id] { part.motion.append("flow speed=\(flow.speed)") }
+            if let piston = pistons[id] { part.motion.append("piston rpm=\(piston.rpm)") }
+            if let orbit = orbits[id] { part.motion.append("orbit period=\(orbit.period)") }
+            if let beat = beats[id] { part.motion.append("beat bpm=\(beat.bpm)") }
+            if node.action(forKey: "move") != nil { part.motion.append("move") }
+            if node.action(forKey: "explode") != nil { part.motion.append("explode") }
             part.canDetail = (!detailed.contains(id) && SceneDetail.kind(of: detailSubject(id)) != nil)
                 || (detailLabels[id] ?? []).contains(where: suppressedLabels.contains)
             state.parts.append(part)
         }
+        // Geometric containment is useful to plan a cutaway; calculate only for named subjects.
+        let shells = state.parts.compactMap { p -> (id: String, box: SceneBox)? in
+            guard nodes[p.id]?.geometry != nil, let low = p.boundsLow, let high = p.boundsHigh else { return nil }
+            return (p.id, SceneBox(low: low, high: high))
+        }
+        for index in state.parts.indices where named[state.parts[index].id] != nil {
+            let part = state.parts[index]
+            if let low = part.boundsLow, let high = part.boundsHigh {
+                state.parts[index].inside = SceneContainment.containers(of: part.id, subject: SceneBox(low: low, high: high), among: shells).first {
+                    !isDescendant(part.id, of: $0) && !isDescendant($0, of: part.id)
+                }
+            }
+        }
         state.focus = focusIDs
+        state.cameraPosition = pose.position
+        state.cameraTarget = pose.center
+        state.motionRate = speed
+        state.renderFPS = Self.liveFramesPerSecond
         state.isExploded = explodedOffsets.values.contains { simd_length($0) > 1e-4 }
         return state
     }

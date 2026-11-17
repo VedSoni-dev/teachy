@@ -67,6 +67,15 @@ enum SceneRefineClassifier {
             return .refine(parts: matched, reason: "adds flow to the live drawing")
         }
         if asksForNew && matched.isEmpty { return .newDrawing(reason: "asks for something else") }
+        let referencesCanvas = tokens.contains { ["drawing", "diagram", "canvas", "model", "scene"].contains($0) }
+        let editVerbs: Set<String> = ["move", "rotate", "resize", "recolor", "colour", "color", "change", "explain", "describe", "edit", "adjust"]
+        if !asksForNew, referencesCanvas, tokens.contains(where: editVerbs.contains), !startsWithCreation {
+            return .refine(parts: matched, reason: "explicit live canvas request")
+        }
+        if !asksForNew, tokens.count <= 8, tokens.first == "make", tokens.contains("it"),
+           tokens.contains(where: { colourWords.contains($0) || ["bigger", "smaller", "larger", "transparent", "opaque"].contains($0) }) {
+            return .refine(parts: matched, reason: "changes the existing drawing")
+        }
 
         if let phrase = refinePhrases.first(where: { lowered.contains($0) }) {
             // "show me the inside of a rocket" while a jet engine is up is a new drawing: a camera
@@ -234,15 +243,24 @@ enum SceneSentenceSubject {
 
 struct SceneLivePart: Equatable {
     var id: String
-    /// Its label or built-in name.
     var title: String?
     var colour: String?
-    /// The part it sits inside (which hides it).
     var inside: String?
     var isGhosted = false
     var isHidden = false
-    /// `detail <id>` has something to add.
     var canDetail = false
+    var parent: String?
+    var geometry: String?
+    /// Current transforms are measured from the engine, never inferred from a screenshot.
+    var position: SceneVec3?
+    var worldPosition: SceneVec3?
+    var targetPosition: SceneVec3?
+    var rotation: SceneVec3?
+    var scale: SceneVec3?
+    var boundsLow: SceneVec3?
+    var boundsHigh: SceneVec3?
+    var opacity: Double = 1
+    var motion: [String] = []
 }
 
 struct SceneLiveState: Equatable {
@@ -250,25 +268,74 @@ struct SceneLiveState: Equatable {
     var parts: [SceneLivePart] = []
     var focus: [String] = []
     var isExploded = false
+    var cameraPosition: SceneVec3?
+    var cameraTarget: SceneVec3?
+    var motionRate: Double = 1
+    var renderFPS: Int = 30
 
-    /// A few lines a model can read. Capped so a big scene does not swamp the request.
-    func text(limit: Int = 44) -> String {
-        var lines: [String] = []
-        lines.append("Model on screen: \"\(title ?? "untitled")\"")
-        lines.append("Parts (id \"name\" colour notes):")
-        for part in parts.prefix(limit) {
+    /// Inverse of SceneOrientation.euler (fixed X, then Y, then Z), independent of
+    /// SceneKit's differently signed Euler getter. Commands and snapshots share one convention.
+    static func rotationDegrees(_ orientation: simd_quatd) -> SceneVec3 {
+        let q = simd_normalize(orientation)
+        let x = q.imag.x, y = q.imag.y, z = q.imag.z, w = q.real
+        let pitch = asin(min(1, max(-1, 2 * (w * y - z * x))))
+        let roll = atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+        let yaw = atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+        return SceneVec3(roll, pitch, yaw) * (180 / Double.pi)
+    }
+
+    /// The complete state stays in memory; this bounded view prioritizes the requested parts.
+    /// Labels and names are quoted data, not instructions.
+    func text(limit: Int = 64, maximumCharacters: Int = 18000, matching request: String? = nil) -> String {
+        func quoted(_ value: String) -> String { String(reflecting: String(value.prefix(160))) }
+        func number(_ value: Double) -> String { value.isFinite ? String(format: "%.3f", value) : "unknown" }
+        func vector(_ value: SceneVec3) -> String { [value.x, value.y, value.z].map(number).joined(separator: ",") }
+        var lines = ["Live Teachy canvas (engine state, not a screenshot): " + quoted(title ?? "untitled"),
+                     "Coordinates: right-handed; at/rotation/scale are parent-local, worldAt/bounds are world-space. Rotation is XYZ degrees.",
+                     "Camera now: " + (focus.isEmpty ? "the whole model" : "on " + focus.joined(separator: ","))]
+        if let cameraPosition { lines.append("camera position=\(vector(cameraPosition)) target=\(vector(cameraTarget ?? .zero))") }
+        lines.append("motionRate=\(number(motionRate)) renderFPS=\(renderFPS) exploded=\(isExploded) totalParts=\(parts.count)")
+        let words = Set(SceneSubjectMatcher.words(request ?? "").filter { $0.count > 2 && !SceneSubjectMatcher.stopWords.contains($0) })
+        func rank(_ part: SceneLivePart) -> Int {
+            let description = Set(SceneSubjectMatcher.words(part.id.replacingOccurrences(of: ".", with: " ") + " " + (part.title ?? "")))
+            return (!words.isDisjoint(with: description) ? 8 : 0) + (focus.contains(part.id) ? 4 : 0) + (part.title != nil ? 2 : 0) + (part.parent == nil ? 1 : 0)
+        }
+        let ordered = parts.enumerated().sorted { a, b in
+            let ra = rank(a.element), rb = rank(b.element)
+            return ra == rb ? a.offset < b.offset : ra > rb
+        }.map(\.element)
+        var shown = 0
+        let budget = max(800, maximumCharacters)
+        var index: [String] = [], indexCharacters = 0
+        for part in parts {
+            let id = quoted(part.id)
+            if indexCharacters + id.count + 2 > budget / 4 { break }
+            index.append(id); indexCharacters += id.count + 2
+        }
+        lines.append("Part ID index (\(index.count)/\(parts.count)): " + index.joined(separator: ", "))
+        if index.count < parts.count { lines.append("ID index truncated; request matching part names/IDs for focused inspection.") }
+        for part in ordered.prefix(max(0, limit)) {
             var line = part.id
-            if let title = part.title, !title.isEmpty { line += " \"\(title)\"" }
-            if let colour = part.colour { line += " \(colour)" }
-            if let inside = part.inside { line += " inside=\(inside)" }
+            if let title = part.title, !title.isEmpty { line += " " + quoted(title) }
+            if let colour = part.colour { line += " color=" + quoted(colour) }
+            if let parent = part.parent { line += " parent=" + quoted(parent) }
+            if let geometry = part.geometry { line += " shape=" + geometry }
+            if let position = part.position { line += " at=" + vector(position) }
+            if let worldPosition = part.worldPosition { line += " worldAt=" + vector(worldPosition) }
+            if let target = part.targetPosition, target != part.position { line += " destination=" + vector(target) }
+            if let rotation = part.rotation { line += " rotation=" + vector(rotation) }
+            if let scale = part.scale { line += " scale=" + vector(scale) }
+            if let low = part.boundsLow, let high = part.boundsHigh { line += " bounds=" + vector(low) + ";" + vector(high) }
+            if let inside = part.inside { line += " inside=" + inside }
             if part.canDetail { line += " detail" }
             if part.isGhosted { line += " ghosted" }
             if part.isHidden { line += " hidden" }
-            lines.append(line)
+            line += " opacity=" + number(part.opacity)
+            if !part.motion.isEmpty { line += " motion=" + quoted(part.motion.joined(separator: ";")) }
+            if lines.reduce(0, { $0 + $1.count + 1 }) + line.count + 100 > budget { break }
+            lines.append(line); shown += 1
         }
-        if parts.count > limit { lines.append("(and \(parts.count - limit) smaller parts)") }
-        lines.append("Camera now: " + (focus.isEmpty ? "the whole model" : "on " + focus.joined(separator: ",")))
-        if isExploded { lines.append("The model is exploded (pulled apart).") }
+        if shown < parts.count { lines.append("\(parts.count - shown) parts omitted from this bounded snapshot; use exact IDs from included parts, do not invent missing geometry.") }
         return lines.joined(separator: "\n")
     }
 }
@@ -277,10 +344,11 @@ struct SceneLiveState: Equatable {
 
 enum SceneRefinePrompt {
     static let system = """
-    A 3D model is ALREADY on screen and the person asked about it. You direct the camera and say a little. Output ONLY TeachyScene lines: one command per line, no prose, no markdown.
+    You have first-hand access to Teachy’s live 3D canvas. The supplied state comes directly from its engine: exact part IDs, hierarchy, transforms, bounds, visibility, motion, and camera. Treat this as authoritative; do not ask for a screenshot of your own drawing. The person asked about or wants to edit this canvas. Output ONLY TeachyScene lines: one command per line, no prose, no markdown.
     Do NOT rebuild the model: never write scene3d, card, clear, or the object again. Use part ids exactly as listed.
     say N "sentence" is spoken aloud; the lines after it happen while it is spoken. Write 1-2 short sentences (under 16 words) that answer what was asked. For a pure camera request ("rotate it", "go back") one very short sentence.
     focus id[,id] zoom=tight|medium|wide (ease the camera onto those parts) / frame all (back to the whole model) / orbit id deg=180 dur=5 (swing slowly round a part; `orbit all` = round the model) / ghost id id (make parts see-through to show what is inside; `ghost others` ghosts everything but the focused part) / show all (everything solid and visible again) / hide id / highlight id color=yellow (a glow on the part you are talking about) / explode (pull the parts apart; `explode dist=0` puts them back) / detail id (adds finer pieces and their names to a part marked `detail`; use it when you zoom in on one) / label x on=id text="Name" / pulse id
+    Edit existing parts directly with `set id at=x,y,z rotation=x,y,z scale=x,y,z color=blue opacity=1` (any subset). at and rotation use parent-local coordinates; rotation is XYZ degrees, scale is positive. This changes the existing object, never recreates it. `move id to=x,y,z dur=0.4` animates a position change; `move id by=x,y,z dur=0.4` offsets it. Use `set id at=...` for instant placement or while motion is paused. `set scene-motion bind=timescale value=0|0.5|1|2` pauses or changes global speed; `spin id rpm=0` stops a part’s rotation. Rotation edits stop that part’s spin so it keeps the requested orientation. `remove id` deletes only that named part and its descendants. Use only exact IDs present in the snapshot; new additions must use fresh IDs. Never replace an existing part by emitting its shape again. Answer questions from this live state and the subject; do not make the user restate what is on the canvas.
     You may add a FEW small things in the focused part: arrow3 id from=x,y,z to=x,y,z, flow id pts=x,y,z;x,y,z color=, text3 id at= text="…", or one shape with parent=partId.
     For "show the airflow" or a flow request, add flow paths through the EXISTING parts using their supplied positions. Preserve those parts and their motion; never replace the drawing.
     "zoom in on X": focus X zoom=tight, and detail X if marked. "show me inside": ghost what is around it (a part's inside= names what hides it) or `ghost others`. "what is that <colour> part": find it by colour, focus and highlight it, say what it is. "go back", "zoom out", "reset": show all, frame all (and explode dist=0 if exploded). A tapped part: focus it, highlight it, say what it does.
@@ -301,7 +369,7 @@ enum SceneRefinePrompt {
     /// The chat-completions body for a refine turn (no "model": TeachyAIRouter sets it).
     /// Thinking is kept minimal: the answer is five short lines about a model that is already described.
     static func requestBody(request: String, state: SceneLiveState, tappedPart: String? = nil, reasoningEffort: String? = "minimal") -> [String: Any] {
-        var user = state.text() + "\n\n"
+        var user = state.text(matching: request) + "\n\n"
         if let tappedPart {
             user += "The person tapped the part \(tappedPart). " + request
         } else {
@@ -309,7 +377,7 @@ enum SceneRefinePrompt {
         }
         var body: [String: Any] = [
             "stream": true,
-            "max_tokens": 600,
+            "max_tokens": 1400,
             "temperature": 0.2,
             "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
         ]
@@ -322,8 +390,12 @@ enum SceneRefinePrompt {
     static func allows(_ command: SceneCommand) -> Bool {
         if command.directsView { return true }
         switch command.verb {
-        case .say, .show, .hide, .pulse, .explode, .spin, .beat, .move, .chip, .orbit:
+        case .say, .show, .hide, .remove, .pulse, .explode, .spin, .beat, .move, .chip, .orbit:
             return true
+        case .set:
+            if command.string("bind") == "timescale" { return command.number("value").map { $0.isFinite && (0...4).contains($0) } ?? false }
+            let editable: Set<String> = ["at", "rotation", "rot", "scale", "color", "opacity"]
+            return !command.args.isEmpty && Set(command.args.keys).isSubset(of: editable)
         case .label:
             return command.string("on") != nil
         case .arrow, .arrow3, .line:

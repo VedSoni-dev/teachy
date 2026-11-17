@@ -407,11 +407,11 @@ section("prompts: the examples parse, and a refine turn cannot rebuild the model
     }
     expect(SceneScriptPrompt.system.contains("focus") && SceneScriptPrompt.system.contains("frame all") && SceneScriptPrompt.system.contains("ghost"), "the drawing prompt teaches the camera verbs")
     expect(SceneScriptPrompt.examples.contains { $0.contains("focus j.turbine") }, "with an example that opens on the part asked about")
-    expect(SceneRefinePrompt.system.count < 2_600, "the refine prompt stays compact (\(SceneRefinePrompt.system.count) chars)")
-    for line in ["scene3d t title=\"x\"", "jet j", "card c title=\"x\"", "clear", "gear g teeth=12", "slider s min=0 max=1 bind=g.rpm", "remove j.fan", "ring a at=1,2 r=3", "text \"hello\""] {
+    expect(SceneRefinePrompt.system.count < 4_000, "the refine prompt stays compact (\(SceneRefinePrompt.system.count) chars)")
+    for line in ["scene3d t title=\"x\"", "jet j", "card c title=\"x\"", "clear", "gear g teeth=12", "slider s min=0 max=1 bind=g.rpm", "ring a at=1,2 r=3", "text \"hello\""] {
         if let command = SceneScriptParser.parse(line).first { expect(!SceneRefinePrompt.allows(command), "a refine turn drops \"\(line)\"") }
     }
-    for line in ["say 1 \"Here.\"", "focus j.fan", "frame all", "ghost others", "show all", "hide j.nacelle", "highlight j.fan", "detail j.fan", "explode dist=0", "label x on=j.fan text=\"Fan\"",
+    for line in ["say 1 \"Here.\"", "remove j.fan", "set j.fan rotation=0,90,0 color=blue", "focus j.fan", "frame all", "ghost others", "show all", "hide j.nacelle", "highlight j.fan", "detail j.fan", "explode dist=0", "label x on=j.fan text=\"Fan\"",
                  "arrow3 a from=0,0,0 to=1,0,0", "flow f pts=0,0,0;1,0,0", "orbit j.fan deg=90", "pulse j.fan", "sphere s parent=j.fan r=0.1"] {
         if let command = SceneScriptParser.parse(line).first { expect(SceneRefinePrompt.allows(command), "a refine turn keeps \"\(line)\"") } else { expect(false, "\"\(line)\" parses") }
     }
@@ -421,7 +421,7 @@ section("prompts: the examples parse, and a refine turn cannot rebuild the model
                                        SceneLivePart(id: "j.nacelle", title: "Nacelle", colour: "white", isGhosted: true)],
                                focus: ["j.turbine"], isExploded: true)
     let text = state.text()
-    expect(text.contains("j.fan \"Fan\" steel detail") && text.contains("j.turbine \"Turbine\" copper inside=j.casing") && text.contains("j.nacelle \"Nacelle\" white ghosted"), "the scene is described part by part:\n\(text)")
+    expect(text.contains("j.fan \"Fan\" color=\"steel\" detail") && text.contains("j.turbine \"Turbine\" color=\"copper\" inside=j.casing") && text.contains("j.nacelle \"Nacelle\" color=\"white\" ghosted"), "the scene is described part by part:\n\(text)")
     expect(text.contains("Camera now: on j.turbine") && text.contains("exploded"), "with where the camera is and whether it is exploded")
     let body = SceneRefinePrompt.requestBody(request: "zoom in on the turbine", state: state)
     let messages = body["messages"] as? [[String: Any]] ?? []

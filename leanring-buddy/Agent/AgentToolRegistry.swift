@@ -210,6 +210,8 @@ final class BackgroundAgentToolRegistry {
         register(RunAppleScriptTool())
         register(OpenBrowserTabTool())
         register(CaptureScreenTool())
+        register(CanvasInspectTool())
+        register(CanvasEditTool())
         register(AuthenticatedFetchTool())
         register(WebSearchTool())
         register(WebFetchTool())

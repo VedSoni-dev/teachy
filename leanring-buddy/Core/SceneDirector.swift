@@ -39,6 +39,8 @@ final class SceneDirector {
     /// A request about the drawing on screen was answered on the drawing itself (a tapped part, or
     /// "zoom in on the turbine"): what was asked, and the sentences that were spoken in reply. The
     /// voice turn keeps it in the conversation, so the next question can build on it.
+    var onRefinementProgress: ((String, String) -> Void)?
+    var onRefinementFinished: ((String) -> Void)?
     var onRefinementAnswered: ((_ question: String, _ spokenAnswer: String) -> Void)?
     /// Marks drawn without any narration stay at least this long.
     var silentMarkTime: TimeInterval = 5
@@ -105,7 +107,12 @@ final class SceneDirector {
         scene.photoFetcher = { [photos] query in await photos.photo(for: query) }
         scene.onSay = { [weak self] index, text in
             guard let self, !self.isAnnotating else { return }
-            if self.refinementInProgress != nil { self.refinementInProgress?.sentences.append(text) }
+            if self.refinementInProgress != nil {
+                self.refinementInProgress?.sentences.append(text)
+                if let progress = self.refinementInProgress {
+                    self.onRefinementProgress?(progress.question, progress.sentences.joined(separator: " "))
+                }
+            }
             self.sentenceArrived(index: index, text: text)
         }
         scene.onFinished = { [weak self] in
@@ -199,7 +206,13 @@ final class SceneDirector {
         savesToHistory = false
         beganAt = Date()
         sequencer = SceneNarrationSequencer()
-        scene.commandFilter = SceneRefinePrompt.allows
+        var declaredPartIDs: Set<String> = []
+        scene.commandFilter = { [weak controller] command in
+            guard let controller, SceneRefinePrompt.allows(command),
+                  controller.canApplyCanvasCommand(command, additionalPartIDs: declaredPartIDs) else { return false }
+            if command.verb.makes3DPart { declaredPartIDs.insert(command.id) }
+            return true
+        }
         // What is on screen, described before anything moves.
         let state = controller.liveState
         scene.beginRefinement(timing: speak == nil ? .stagger : .speech, maximumHold: speak == nil ? 8 : 120)
@@ -230,6 +243,67 @@ final class SceneDirector {
                               reason: "local control", instantScript: plan.script, firstLine: 0)
         scene.end()
         return plan.response
+    }
+
+    func canvasStateText(partIDs: [String] = [], offset: Int = 0) -> String {
+        guard let controller = scene.modelWindow?.controller, controller.hasContent else {
+            return "No live Teachy 3D canvas is open."
+        }
+        var state = controller.liveState
+        let requested = Set(partIDs)
+        let missing = requested.subtracting(state.parts.map(\.id))
+        let total = state.parts.count
+        let pageStart = min(max(0, offset), total)
+        let pageInfo: String
+        if !requested.isEmpty {
+            state.parts = state.parts.filter { requested.contains($0.id) }
+            pageInfo = "Exact part lookup (\(state.parts.count) of \(total) total editable parts).\n"
+        } else {
+            state.parts = Array(state.parts.dropFirst(pageStart).prefix(64))
+            let next = pageStart + state.parts.count
+            pageInfo = "Part page offset=\(pageStart) count=\(state.parts.count) total=\(total). "
+                + (next < total ? "More parts: call canvas_inspect with offset=\(next)." : "End of part index.") + "\n"
+        }
+        let warning = missing.isEmpty ? "" : "Unknown part IDs: " + missing.sorted().joined(separator: ", ") + "\n"
+        return "LIVE TEACHY CANVAS — authoritative engine state, not a screenshot.\n" + pageInfo + warning + state.text()
+    }
+
+    var canvasPromptContext: String {
+        guard scene.modelWindow?.controller.hasContent == true else { return "" }
+        return "\n\n" + canvasStateText() + "\nThis is your own editable canvas. Prefer this state over screenshot pixels. For questions/edits about its parts use SHOW with the exact existing part IDs and requested edit; never send a desktop job or infer those parts from a screenshot. Use MARK only for external screen content."
+    }
+
+    func canvasRoute(for request: String) -> SceneCanvasRoute {
+        let controller = scene.modelWindow?.controller
+        return SceneCanvasRoute.decide(request, live: scene.canRefine,
+            title: controller?.model.title, parts: controller?.subjectCandidates ?? [])
+    }
+
+    /// Command-style local API shared by chat and agent tools. Validate the complete batch
+    /// before changing anything; no shell process, screen capture, or model round trip.
+    func applyCanvasCommands(_ script: String) -> String {
+        guard scene.canRefine, let controller = scene.modelWindow?.controller else { return "No editable 3D canvas is open." }
+        guard script.utf8.count <= 16_384 else { return "Command batch exceeds 16 KB; split it into smaller edits." }
+        let parser = SceneScriptParser()
+        let commands = parser.feed(script) + parser.finish()
+        guard !commands.isEmpty, commands.count <= 80, parser.stats.invalid == 0, parser.stats.prose == 0 else {
+            return "No changes applied: invalid command batch. Use TeachyScene commands such as focus PART, move PART by=1,0,0, or set PART color=blue."
+        }
+        var addedIDs: Set<String> = []
+        for command in commands {
+            guard SceneRefinePrompt.allows(command),
+                  controller.canApplyCanvasCommand(command, additionalPartIDs: addedIDs),
+                  ![SceneVerb.say, .chip].contains(command.verb) else {
+                return "No changes applied: unsupported command or unknown part. Inspect the canvas for valid IDs; replacing or clearing the scene is not allowed here."
+            }
+            if command.verb.makes3DPart { addedIDs.insert(command.id) }
+        }
+        stop()
+        scene.beginRefinement(timing: .stagger)
+        scene.perform(script)
+        lastTurn = TurnTiming(kind: .refinement, request: "Canvas commands", startedAt: Date(), reason: "direct engine commands", instantScript: script, firstLine: 0)
+        scene.end()
+        return "Applied \(commands.count) canvas command(s).\n" + canvasStateText()
     }
 
     // MARK: Draw on the real screen
@@ -417,6 +491,7 @@ final class SceneDirector {
     private func reportRefinement() {
         guard let refinement = refinementInProgress else { return }
         refinementInProgress = nil
+        defer { onRefinementFinished?(refinement.question) }
         let answer = refinement.sentences.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !answer.isEmpty else { return }
         onRefinementAnswered?(refinement.question, answer)

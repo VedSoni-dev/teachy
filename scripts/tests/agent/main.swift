@@ -204,6 +204,9 @@ do {
 
 section("policy: safe tools")
 expect(tool("capture_screen", [:]).risk == .safe, "capture_screen is safe")
+expect(tool("canvas_inspect", [:]).risk == .safe, "direct canvas inspection is safe")
+expect(tool("canvas_edit", ["script": "move rotor by=1,0,0"]).risk == .safe, "validated local canvas edits need no additional prompt")
+expect(tool("canvas_edit", ["script": "hide casing"]).appScope == "Teachy canvas", "canvas editing grants are limited to its own surface")
 expect(tool("web_search", ["query": "swift"]).risk == .safe, "web_search is safe")
 expect(tool("web_fetch", ["url": "https://example.com/a"]).risk == .safe, "public web_fetch is safe")
 expect(tool("web_fetch", ["url": "http://localhost:3000"]).risk == .needsConsent, "localhost fetch needs consent")

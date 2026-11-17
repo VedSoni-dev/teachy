@@ -471,7 +471,8 @@ enum SceneValidator {
         case .plot:
             return c.string("of") != nil ? nil : "plot needs of=part.property"
         case .set:
-            return c.hasExplicitID && c.number("value", "to", "v") != nil ? nil : "set needs a slider id and value="
+            let hasEdit = ["at", "rotation", "scale", "color", "opacity"].contains { c.args[$0] != nil }
+            return c.hasExplicitID && (c.number("value", "to", "v") != nil || hasEdit) ? nil : "set needs a target id and value= or transform/material edits"
         case .camera:
             return c.args["to"] != nil || c.args["look"] != nil || c.args["zoom"] != nil ? nil : "camera needs to= or look="
         default:
