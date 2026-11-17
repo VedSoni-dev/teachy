@@ -13,6 +13,12 @@
 import Foundation
 import simd
 
+enum ScenePresentationExpectation {
+    case any
+    case drawing
+    case referenceCard
+}
+
 struct SceneQualityReport: Equatable {
     var surface = "-"
     var parseRate = 0.0
@@ -32,6 +38,11 @@ struct SceneQualityReport: Equatable {
     var boundsSanity = 1.0
     /// 0–100.
     var score = 0.0
+    var presentationMatches = true
+    var presentationMismatch: String?
+    /// Distinct visible geometry, excluding groups and text placed in 3D.
+    var geometryPartCount = 0
+    var overlayGeometryCount = 0
 
     var usesMacros: Bool { macroLines > 0 }
 }
@@ -43,7 +54,7 @@ enum SceneQuality {
         verb.isLibraryPart || verb == .lathe || verb == .orbit || verb == .joint || verb == .body
     }
 
-    static func report(commands: [SceneCommand], stats: SceneParseStats) -> SceneQualityReport {
+    static func report(commands: [SceneCommand], stats: SceneParseStats, expected: ScenePresentationExpectation = .any) -> SceneQualityReport {
         var report = SceneQualityReport()
         report.parseRate = stats.parseRate
 
@@ -51,6 +62,7 @@ enum SceneQuality {
         var current: SceneSurface?
         var surfaces: [String] = []
         var built: [ScenePart] = []
+        var overlayGeometry: Set<String> = []
         for (index, command) in commands.enumerated() where command.verb == .say {
             if index + 1 < commands.count, commands[index + 1].verb != .say, commands[index + 1].verb != .chip { report.tiedSays += 1 }
         }
@@ -74,17 +86,46 @@ enum SceneQuality {
             case .card:
                 if command.verb == .chip { report.chipCount += 1 } else if command.verb != .card { report.cardItems += 1 }
             case .overlay:
+                if [.ring, .rect, .arrow, .line, .poly, .highlight].contains(command.verb) {
+                    overlayGeometry.insert(command.id)
+                }
                 if command.verb == .label || command.string("label") != nil { report.labelCount += 1 }
             }
         }
         report.surface = surfaces.isEmpty ? "-" : surfaces.joined(separator: "+")
         report.partCount = built.filter { if case .group = $0.shape { return false } else { return true } }.count
+        let distinctParts = Dictionary(built.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        report.geometryPartCount = distinctParts.values.filter { part in
+            switch part.shape {
+            case .group, .text: return false
+            default: return approximateRadius(of: part) > 0
+            }
+        }.count
+        report.overlayGeometryCount = overlayGeometry.count
+        switch expected {
+        case .any: break
+        case .drawing:
+            if report.geometryPartCount < 2 && report.overlayGeometryCount < 2 {
+                report.presentationMatches = false
+                report.presentationMismatch = "Expected a drawing with at least two geometry parts; got \(report.surface) (\(report.geometryPartCount) solid parts, \(report.overlayGeometryCount) overlay shapes). Text, bullets and text3 labels are not a diagram."
+            }
+        case .referenceCard:
+            if !surfaces.contains("card") || report.cardItems == 0 {
+                report.presentationMatches = false
+                report.presentationMismatch = "Expected a reference card with text, formulas or data; got \(report.surface)."
+            }
+        }
         report.boundsSanity = boundsSanity(of: built)
         report.score = score(report)
         return report
     }
 
     static func score(_ r: SceneQualityReport) -> Double {
+        let rawScore = baseScore(r)
+        return r.presentationMatches ? rawScore : min(40, rawScore)
+    }
+
+    private static func baseScore(_ r: SceneQualityReport) -> Double {
         let narration = min(Double(r.sayCount) / 3, 1)
         if r.surface.contains("3D") {
             let parts = min(Double(r.partCount) / 12, 1)

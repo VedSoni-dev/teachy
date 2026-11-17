@@ -159,14 +159,17 @@ func run() async {
     // A display to the left of the main one and set lower, to prove marks are anchored to the display given.
     let display = CGRect(x: -1440, y: -120, width: 1440, height: 900)
     var seen: [SceneCommand] = []
+    let retainedModel = director.scene.modelWindow
+    let retainedCards = director.scene.cards
+    let retainedLog = director.scene.log
     director.annotate(question: "where is the Save button?", screenshotJPEG: jpeg, displayFrame: display)
     let marked = await wait(40) {
-        for item in director.scene.overlayModel.items where !seen.contains(where: { $0.id == item.id }) { seen.append(item.command) }
+        for item in director.annotationScene.overlayModel.items where !seen.contains(where: { $0.id == item.id }) { seen.append(item.command) }
         return !spoken.isEmpty && !seen.isEmpty
     }
     expect(marked, "a mark appeared and a sentence was spoken")
     await pause(0.6)
-    for item in director.scene.overlayModel.items where !seen.contains(where: { $0.id == item.id }) { seen.append(item.command) }
+    for item in director.annotationScene.overlayModel.items where !seen.contains(where: { $0.id == item.id }) { seen.append(item.command) }
     print("  said: \(spoken.map(\.text))   marks: \(seen.map(\.scriptLine))")
     let low = SceneScreenMapping.normalized(pixel: CGPoint(x: save.minX, y: save.minY), screenshotSize: size)
     let high = SceneScreenMapping.normalized(pixel: CGPoint(x: save.maxX, y: save.maxY), screenshotSize: size)
@@ -177,8 +180,10 @@ func run() async {
     } else {
         expect(false, "there is a mark to judge")
     }
-    expect(director.scene.cards.isEmpty && director.scene.modelWindow == nil, "annotation drew no card and no 3D")
-    let cleared = await wait(12) { director.scene.overlayModel.items.isEmpty }
+    expect(director.annotationScene.cards.isEmpty && director.annotationScene.modelWindow == nil, "annotation drew no card and no 3D")
+    expect(director.scene.modelWindow === retainedModel && director.scene.cards.count == retainedCards.count && zip(director.scene.cards, retainedCards).allSatisfy { $0 === $1 }, "annotation preserves existing content identities")
+    expect(director.scene.log == retainedLog, "annotation preserves the drawing log")
+    let cleared = await wait(12) { director.annotationScene.overlayModel.items.isEmpty }
     expect(cleared, "marks clear after the speech ends")
     expect(SceneHistory.shared.entries.count <= 2, "an annotation is not saved as a drawing")
 

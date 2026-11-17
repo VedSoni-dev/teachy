@@ -56,6 +56,11 @@ final class SceneDirector {
     // MARK: State
 
     let scene = SceneSession()
+    /// Marks sit above the user's content, including the persistent drawing in `scene`.
+    /// Starting a mark must not close the very card or model being marked.
+    let annotationScene = SceneSession()
+    private var isAnnotating = false
+    private var activeScene: SceneSession { isAnnotating ? annotationScene : scene }
     private let photos: ScenePhotoFetcher
     private var streamTask: Task<Void, Never>?
     private var speechTasks: [Task<Void, Never>] = []
@@ -74,7 +79,7 @@ final class SceneDirector {
 
     /// How the most recent `show` or `refine` went, for measuring (seconds from the request).
     struct TurnTiming {
-        enum Kind { case drawing, refinement }
+        enum Kind { case drawing, refinement, annotation }
         var kind = Kind.drawing
         var request = ""
         var startedAt = Date()
@@ -102,11 +107,18 @@ final class SceneDirector {
         }
         scene.photoFetcher = { [photos] query in await photos.photo(for: query) }
         scene.onSay = { [weak self] index, text in
-            guard let self else { return }
+            guard let self, !self.isAnnotating else { return }
             if self.refinementInProgress != nil { self.refinementInProgress?.sentences.append(text) }
             self.sentenceArrived(index: index, text: text)
         }
-        scene.onFinished = { [weak self] in self?.sceneFinished() }
+        scene.onFinished = { [weak self] in
+            guard let self, !self.isAnnotating else { return }
+            self.sceneFinished()
+        }
+        annotationScene.onSay = { [weak self] index, text in
+            guard let self, self.isAnnotating else { return }
+            self.sentenceArrived(index: index, text: text)
+        }
         SceneHistory.shared.player = { [weak self] log in
             self?.replay(log)
             self?.adoptSavedDrawing(SceneHistory.shared.replayingID)
@@ -147,9 +159,10 @@ final class SceneDirector {
     /// The system-prompt rules that tell the voice model when to use each tag.
     /// (CompanionManager's prompt should carry this text; see the scene builder's report.)
     static let voicePromptRules = """
-    - When a 3D drawing Teachy made is still up and they ask to zoom in or out, look closer at or inside a part, rotate it, take it apart, go back, or ask what one of its parts is or does, add [SHOW: their request in a few words, naming the part] as usual. Teachy then moves the camera on the drawing that is already there instead of drawing it again.
-    - When a picture would explain it better than words — how a machine or a body part works, what a real object looks like inside, a concept, a comparison, numbers worth charting, or they say "show me" / "draw" / "in 3D" — add [SHOW: what to draw, in a few words] at the end and SAY only one short lead-in sentence ("Sure, here's how it works."). Teachy then draws it and explains it aloud while it draws, so do not explain it yourself. Use [SHOW:] for things that are NOT on their screen.
-    - When they ask about something that IS on their screen right now and it would help to mark it — "circle the bug", "where is the hypotenuse on this diagram", "which button do I press", "show me where that is" — add [MARK: what to point out, and why, in a few words] at the end. Teachy then draws on their screen (rings, boxes, arrows, small labels) and says what each mark is, right after your reply, so keep your own words to the big picture and do not describe each marked thing yourself. Use [MARK:] for several things or a region; use [POINT:] for one single control they should click. Never use [SHOW:] and [MARK:] in the same reply.
+    - When a 3D drawing Teachy made is still up and they ask to zoom in or out, look closer at or inside a part, rotate it, take it apart, go back, or ask what one of its parts is or does, add [SHOW: their request, naming the subject and part] as usual. Teachy then moves the camera on the drawing that is already there instead of drawing it again.
+    - When a picture would explain it better than words — how a machine or a body part works, what a real object looks like inside, a concept with structure or relationships, software layers, an algorithm, an agent loop, a network request, a process, a comparison, numbers worth charting, or they say "show me" / "draw" / "in 3D" — add [SHOW: the subject and what to show, preserving their requested medium, named parts, relationships, and constraints] at the end and SAY only one short lead-in sentence ("Sure, here's how it works."). Teachy then draws it and explains it aloud while it draws, so do not explain it yourself. Prefer a drawn explanation for how-it-works questions with parts, stages, or flows; do not wait for them to explicitly say "draw". Use [SHOW:] to explain a subject even when that subject is mentioned in the screenshot. Keep simple factual answers conversational, and preserve explicit requests for text summaries, formulas or charts.
+    - When they ask to circle, underline, highlight, box, draw an arrow to, or otherwise mark a visible name, word, label, object or control, use [MARK: screen=N | the exact mark and target, including its text, app and location]. N is the screen number from the supplied screenshots (1 on a single display). Preserve the requested shape and color. This works in any visible app, including Teachy's chat, settings, cards and drawings. Even ONE name or button should use MARK when they ask to circle it; POINT only moves the pointer and does not draw the requested mark. Say one short lead-in, then let the drawing narrate itself. Do not claim you cannot draw over an app or request Accessibility permission just to mark it.
+    - Use [MARK:] to locate actual screen content, and [SHOW:] to create a separate explanation. For "circle the Kernel label" on an existing diagram, mark that label instead of recreating the diagram. Never combine MARK with SHOW, POINT or a job for the same request. If a target is missing or ambiguous, ask one concise clarification instead of guessing. Use [POINT:] for a single control to click only when no drawn mark was requested.
     """
 
     // MARK: Explain a thing
@@ -213,11 +226,24 @@ final class SceneDirector {
     /// model reasons over and `displayFrame` the AppKit frame of the display it shows, so
     /// marks land on that display whichever monitor it is.
     func annotate(question: String, screenshotJPEG: Data, displayFrame: CGRect) {
-        begin(question: question, screenFrame: displayFrame, saves: false) { command in
-            // Only marks on the screen: no cards, no 3D.
+        beginAnnotation(question: question, displayFrame: displayFrame)
+        let turn = generation
+        streamTask = Task { [weak self] in
+            let visibleText = await SceneAnnotationText.context(imageData: screenshotJPEG, question: question)
+            guard let self, !Task.isCancelled, self.generation == turn else { return }
+            self.run(body: SceneScriptPrompt.annotateRequestBody(
+                question: question, screenshotJPEG: screenshotJPEG, visibleText: visibleText), hasImages: true)
+        }
+    }
+
+    /// Starts only the annotation layer. Kept separate from transport so its lifecycle can
+    /// also be exercised without capturing a screen or making a model request.
+    func beginAnnotation(question: String, displayFrame: CGRect) {
+        begin(question: question, screenFrame: displayFrame, saves: false, annotating: true) { command in
+            // Even a stray clear/remove command is confined to this disposable layer.
             command.verb.family == .overlay || command.verb.family == .control
         }
-        run(body: SceneScriptPrompt.annotateRequestBody(question: question, screenshotJPEG: screenshotJPEG), hasImages: true)
+        lastTurn = TurnTiming(kind: .annotation, request: question, startedAt: Date())
     }
 
     // MARK: Stopping
@@ -234,7 +260,9 @@ final class SceneDirector {
         let wasSpeaking = sequencer.isSpeaking
         sequencer.stop()
         if wasSpeaking { cancelSpeech?() }
-        scene.interrupt()
+        activeScene.interrupt()
+        annotationScene.clear()
+        isAnnotating = false
     }
 
     /// Removes everything, cards and models included.
@@ -259,7 +287,7 @@ final class SceneDirector {
 
     // MARK: Running a drawing
 
-    private func begin(question: String, screenFrame: CGRect, saves: Bool, filter: ((SceneCommand) -> Bool)?) {
+    private func begin(question: String, screenFrame: CGRect, saves: Bool, annotating: Bool = false, filter: ((SceneCommand) -> Bool)?) {
         stop()
         // A new drawing: anything still pending from the one before (its history picture, late speech) is stale.
         generation += 1
@@ -267,18 +295,20 @@ final class SceneDirector {
         savesToHistory = saves
         beganAt = Date()
         sequencer = SceneNarrationSequencer()
-        scene.commandFilter = filter
+        isAnnotating = annotating
+        activeScene.commandFilter = filter
         var anchor = SceneAnchor.display(frame: screenFrame, timing: speak == nil ? .stagger : .speech)
         // The sequencer always reports each sentence or the end of speech, so lines can wait as long as the voice needs.
         if speak != nil { anchor.maximumHold = 120 }
         placement?(&anchor)
-        scene.begin(anchor: anchor)
+        activeScene.begin(anchor: anchor)
     }
 
     private func run(body: [String: Any], hasImages: Bool) {
         let turn = generation
         let startedAt = Date()
-        streamTask = Task { [weak self, scene] in
+        let target = activeScene
+        streamTask = Task { [weak self, target] in
             var firstLineLogged = false
             do {
                 let bytes = try await TeachyAIRouter.openStream(job: .scene, hasImages: hasImages, session: .shared, body: body)
@@ -298,16 +328,21 @@ final class SceneDirector {
                         self.lastTurn.firstLine = Date().timeIntervalSince(self.lastTurn.startedAt)
                         print("🎨 First drawing line \(String(format: "%.2f", Date().timeIntervalSince(startedAt))) s after the request")
                     }
-                    scene.feed(chunk: chunk)
+                    target.feed(chunk: chunk)
                 }
             } catch {
                 print("⚠️ Drawing failed: \(error.localizedDescription)")
             }
             guard !Task.isCancelled, let self, self.generation == turn else { return }
             self.lastTurn.streamEnded = Date().timeIntervalSince(self.lastTurn.startedAt)
-            scene.end()
-            self.perform(self.sequencer.streamDidEnd(), turn: turn)
+            self.finishCurrentStream()
         }
+    }
+
+    /// Completes transport for the current turn; the generation check belongs to its caller.
+    func finishCurrentStream() {
+        activeScene.end()
+        perform(sequencer.streamDidEnd(), turn: generation)
     }
 
     // MARK: Narration
@@ -318,17 +353,19 @@ final class SceneDirector {
     }
 
     private func perform(_ actions: [SceneNarrationSequencer.Action], turn: Int) {
+        guard generation == turn else { return }
+        let target = activeScene
         for action in actions {
             switch action {
             case .speak(let index, let text):
                 guard let speak else { continue }
-                let task = Task { [weak self] in
+                let task = Task { [weak self, target] in
                     // Show what the sentence describes a moment after the voice is asked for it.
-                    let reveal = Task { [weak self] in
+                    let reveal = Task { [weak self, target] in
                         let lead = self?.speechLeadTime ?? 0
                         if lead > 0 { try? await Task.sleep(nanoseconds: UInt64(lead * 1_000_000_000)) }
                         guard let self, !Task.isCancelled, self.generation == turn else { return }
-                        self.scene.sentenceStarted(index: index)
+                        target.sentenceStarted(index: index)
                     }
                     await speak(text)
                     guard let self, !Task.isCancelled, self.generation == turn else {
@@ -337,7 +374,7 @@ final class SceneDirector {
                     }
                     // A voice that returns at once (muted, failed) must not skip the reveal.
                     await reveal.value
-                    self.scene.sentenceStarted(index: index)
+                    target.sentenceStarted(index: index)
                     self.perform(self.sequencer.speechFinished(), turn: turn)
                 }
                 speechTasks.append(task)
@@ -347,15 +384,17 @@ final class SceneDirector {
         }
     }
 
-    /// Speech is over: everything still waiting is drawn, and the marks on the screen fade.
+    /// Speech is over: everything still waiting is drawn, and marks fade after a reading pause.
+    /// Screen annotations stay for three seconds so a short “here it is” does not erase them at once.
     private func finishNarration(turn: Int) {
         let quietFor = Date().timeIntervalSince(beganAt)
         // Marks nobody talked over (no speak callback, or a script without `say`) still need time to be seen.
-        let wait = sequencer.spokenCount == 0 ? max(silentMarkTime - quietFor, 0) + 0.1 : 0.6
-        let task = Task { [weak self] in
+        let wait = sequencer.spokenCount == 0 ? max(silentMarkTime - quietFor, 0) + 0.1 : (isAnnotating ? 3.0 : 0.6)
+        let target = activeScene
+        let task = Task { [weak self, target] in
             try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             guard let self, !Task.isCancelled, self.generation == turn else { return }
-            self.scene.speechEnded()
+            target.speechEnded()
             self.reportRefinement()
         }
         speechTasks.append(task)
@@ -425,7 +464,8 @@ final class SceneDirector {
 
     /// Narration audio from the voice, for saved videos. The voice turn forwards PCM here as it plays.
     func appendNarrationAudio(_ pcm16: Data, sampleRate: Double) {
-        scene.appendNarrationAudio(pcm16, sampleRate: sampleRate)
+        guard sequencer.isSpeaking else { return }
+        activeScene.appendNarrationAudio(pcm16, sampleRate: sampleRate)
     }
 
     // MARK: Photos

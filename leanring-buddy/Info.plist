@@ -34,7 +34,7 @@
 	<key>ClickyAcademyWebsiteURL</key>
 	<string>https://vedsoni-dev.github.io/teachy/</string>
 	<key>NSCameraUsageDescription</key>
-	<string>With eye tracking on, Teachy uses your camera to see roughly where on the screen you're looking while you ask. Video never leaves your Mac.</string>
+	<string>When you enable eye tracking or start camera input setup, Teachy uses your camera for local hand and eye tracking. Frames are not recorded or uploaded.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Teachy uses your microphone so you can talk to your tutor</string>
 	<key>NSScreenCaptureUsageDescription</key>

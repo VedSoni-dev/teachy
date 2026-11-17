@@ -470,6 +470,51 @@ func narration() async {
         stage.session.clear()
     }
 
+    await section("frame all hold: a narrated diagram keeps every layer in view") {
+        let stage = Stage(timing: .speech)
+        stage.session.feed(chunk: """
+        say 1 "Apps ask the operating system to access files, memory, and devices."
+        scene3d os title="Operating system layers"
+        box apps at=0,4,0 size=4.5,1,0.25 color=sky label="Apps" n=1
+        box kernel at=0,0,0 size=4.5,1,0.25 color=purple label="Kernel" n=2
+        box hardware at=0,-4,0 size=4.5,1,0.25 color=teal label="Hardware" n=3
+        arrow3 request from=-0.7,3.4,0 to=-0.7,0.6,0
+        arrow3 command from=-0.7,-0.6,0 to=-0.7,-3.4,0
+        frame all hold
+        say 2 "The kernel checks each request before passing it to the device drivers."
+        frame all hold
+        label kernelLabel on=kernel text="Kernel" n=2
+        pulse kernel
+        say 3 "Hardware carries out the work and sends the results back."
+        frame all hold
+        label hardwareLabel on=hardware text="Hardware" n=3
+        pulse hardware
+
+        """)
+        stage.session.end()
+        let layers = ["apps", "kernel", "hardware"]
+        for cue in 1...3 {
+            stage.session.sentenceStarted(index: cue)
+            var focusedDuringSentence = false
+            stage.play(3) {
+                if let controller = stage.session.modelWindow?.controller, !controller.focusIDs.isEmpty {
+                    focusedDuringSentence = true
+                }
+            }
+            let controller = stage.controller
+            expect(!focusedDuringSentence && controller.cameraMode == .whole && controller.focusIDs.isEmpty, "cue \(cue) keeps the overview even when its words, label and pulse name one part")
+            expect(controller.projectedBounds(ofParts: layers + ["request", "command"])?.isInside == true, "all layers and arrows remain inside the viewport during cue \(cue)")
+            let labels = controller.visibleLabels
+            expect(Set(labels.map(\.part)).isSuperset(of: layers), "all layer labels remain visible during cue \(cue): \(labels.map(\.part))")
+            expect(labels.allSatisfy { abs($0.ndc.x) <= 1 && abs($0.ndc.y) <= 1 }, "all label anchors are inside the viewport during cue \(cue)")
+        }
+        expect(stage.cameraLines == ["@1 frame all hold", "@2 frame all hold", "@3 frame all hold"], "explicit overview commands are recorded at their cues, without automatic close-ups: \(stage.cameraLines)")
+        stage.session.speechEnded()
+        stage.play(3)
+        expect(stage.controller.cameraMode == .whole && stage.controller.focusIDs.isEmpty, "the diagram also ends on the overview")
+        stage.session.clear()
+    }
+
     await section("the old behaviour can be switched back on") {
         let stage = Stage(timing: .speech)
         stage.session.directsCamera = false

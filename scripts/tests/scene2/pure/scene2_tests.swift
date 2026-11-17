@@ -498,6 +498,11 @@ enum Scene2Tests {
                     expect(index + 1 < commands.count && commands[index + 1].verb != .say, "example: say \(command.cue ?? 0) is followed by a drawing line")
                 }
             }
+            let osExample = SceneScriptPrompt.examples.first { $0.contains("How an operating system works") } ?? ""
+            let osParser = SceneScriptParser()
+            let osCommands = osParser.feed(osExample) + osParser.finish()
+            let osQuality = SceneQuality.report(commands: osCommands, stats: osParser.stats, expected: .drawing)
+            expect(!osExample.isEmpty && osQuality.parseRate == 1 && osQuality.presentationMatches && !osQuality.surface.contains("card"), "the OS teaching example is a real drawing, never a text card: \(osQuality)")
             let annotate = SceneScriptPrompt.examples.last.map { SceneScriptParser.parse($0) } ?? []
             expect(!annotate.isEmpty && annotate.allSatisfy { $0.verb.family == .overlay || $0.verb.family == .control }, "the annotation example only marks the screen")
             let body = SceneScriptPrompt.annotateRequestBody(question: "circle the bug", screenshotJPEG: Data([0xFF, 0xD8, 0xFF]))
@@ -512,10 +517,10 @@ enum Scene2Tests {
         }
 
         section("quality score: rewards macros, labels and sane placement") {
-            func report(_ script: String) -> SceneQualityReport {
+            func report(_ script: String, expected: ScenePresentationExpectation = .any) -> SceneQualityReport {
                 let parser = SceneScriptParser()
                 let commands = parser.feed(script) + parser.finish()
-                return SceneQuality.report(commands: commands, stats: parser.stats)
+                return SceneQuality.report(commands: commands, stats: parser.stats, expected: expected)
             }
             let good = report("say 1 \"a\"\nscene3d s\nrocket r\nlabel a on=r.nose text=\"Nose\" n=1\nsay 2 \"b\"\nlabel b on=r.stage1 text=\"Stage\" n=2\nsay 3 \"c\"\nlabel c on=r.engine text=\"Engine\" n=3")
             expect(good.surface == "3D" && good.usesMacros && good.labelCount == 3 && good.sayCount == 3 && good.partCount > 8, "a labelled rocket: \(good)")
@@ -526,6 +531,23 @@ enum Scene2Tests {
             expect(flung.boundsSanity < 1, "a part flung far away is noticed (\(flung.boundsSanity))")
             let card = report("say 1 \"a\"\ncard c title=\"T\"\ntext \"one\"\nbullet \"two\"\nformula \"x\"\nchip \"q\"\nchip \"r\"")
             expect(card.surface == "card" && card.cardItems == 3 && card.chipCount == 2 && card.score > 80, "a card: \(card)")
+            let osCard = "card os title=\"Operating system layers\"\nsteps \"Apps\" \"Kernel\" \"Hardware\"\nbullet \"Apps request files and memory from the kernel.\"\nbullet \"Drivers communicate with hardware.\""
+            let wrongCard = report(osCard, expected: .drawing)
+            expect(wrongCard.parseRate == 1 && !wrongCard.presentationMatches && wrongCard.score <= 40 && wrongCard.presentationMismatch != nil, "a valid OS steps/bullets card fails a drawing expectation: \(wrongCard)")
+            let textOnly = report("scene3d s\ntext3 apps at=0,2,0 text=\"Apps\"\ntext3 kernel at=0,0,0 text=\"Kernel\"\ntext3 hardware at=0,-2,0 text=\"Hardware\"", expected: .drawing)
+            expect(textOnly.parseRate == 1 && textOnly.partCount == 3 && textOnly.geometryPartCount == 0 && !textOnly.presentationMatches && textOnly.score <= 40, "moving three text labels into 3D does not make a diagram: \(textOnly)")
+            let diagram = report("scene3d os\nbox apps at=0,2,0 label=\"Apps\"\nbox kernel at=0,0,0 label=\"Kernel\"\nbox hardware at=0,-2,0 label=\"Hardware\"\narrow3 request from=0,1.5,0 to=0,0.5,0", expected: .drawing)
+            expect(diagram.parseRate == 1 && diagram.geometryPartCount >= 3 && diagram.presentationMatches && diagram.presentationMismatch == nil, "boxes and an arrow form a real diagram: \(diagram)")
+            let overlay = report("rect apps at=0.2,0.2 size=0.2,0.1\narrow request from=0.3,0.3 to=0.3,0.5", expected: .drawing)
+            expect(overlay.parseRate == 1 && overlay.overlayGeometryCount == 2 && overlay.presentationMatches, "screen-space geometry also satisfies a drawing: \(overlay)")
+            let reference = report(osCard, expected: .referenceCard)
+            let textReference = report("card summary\ntext \"The kernel manages memory and devices.\"", expected: .referenceCard)
+            let chartReference = report("card requests\nchart traffic type=bar data=20,35,25", expected: .referenceCard)
+            expect(reference.presentationMatches && textReference.presentationMatches && chartReference.presentationMatches && chartReference.parseRate == 1, "explicit summaries and charts remain valid reference cards")
+            let wrongReference = report("scene3d s\nbox a\nbox b at=2,0,0", expected: .referenceCard)
+            expect(!wrongReference.presentationMatches && wrongReference.score <= 40, "a drawing cannot silently replace an explicitly requested card")
+            let repeatedPart = report("scene3d s\nbox a\nbox a at=2,0,0", expected: .drawing)
+            expect(repeatedPart.geometryPartCount == 1 && !repeatedPart.presentationMatches, "repeated upserts do not inflate the geometry count")
             let garbage = report("this is prose\nso is this")
             expect(garbage.score == 0 && garbage.parseRate == 0, "prose scores nothing")
         }
