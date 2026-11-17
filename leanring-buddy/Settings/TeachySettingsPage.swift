@@ -3,6 +3,7 @@ import Foundation
 enum TeachySettingsPage: String, CaseIterable, Identifiable {
     case account = "Account", general = "General", voice = "Voice", microphone = "Microphone"
     case dictation = "Dictation", shortcuts = "Shortcuts", cursor = "Cursor", touchAndGaze = "Touch & Eyes"
+    case camera = "Camera input"
     case integrations = "Integrations", agents = "Agents", routines = "Routines", drawings = "Drawings", memory = "Memory"
     var id: String { rawValue }
     var icon: String {
@@ -15,6 +16,7 @@ enum TeachySettingsPage: String, CaseIterable, Identifiable {
         case .shortcuts: return "command"
         case .cursor: return "cursorarrow"
         case .touchAndGaze: return "eye"
+        case .camera: return "camera.viewfinder"
         case .integrations: return "puzzlepiece.extension.fill"
         case .agents: return "circle.hexagongrid.fill"
         case .routines: return "repeat"
@@ -32,6 +34,7 @@ enum TeachySettingsPage: String, CaseIterable, Identifiable {
         case .shortcuts: return "The keys that summon Teachy."
         case .cursor: return "The Teachy cursor that lives on your screen."
         case .touchAndGaze: return "Tap the screen to talk, and let Teachy see where you're looking."
+        case .camera: return "Set up hands and eyes with your Mac camera."
         case .integrations: return "Connect the tools you use to Teachy."
         case .agents: return "Give your agents a name and a role."
         case .routines: return "Tasks that run on your schedule."

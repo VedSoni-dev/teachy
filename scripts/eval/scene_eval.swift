@@ -18,8 +18,9 @@
 //
 //  Every model call goes through TeachyAIRouter (job .scene). Nothing is shown on screen.
 //
-//    scripts/eval/run_scene_eval.sh                       12 prompts + 6 refine cases (18 model calls)
-//    scripts/eval/run_scene_eval.sh --only heart          one prompt
+//    scripts/eval/run_scene_eval.sh                       17 prompts + 6 refine cases (23 model calls)
+//    scripts/eval/run_scene_eval.sh --only oslayers,agentloop,network   selected prompts
+//    scripts/eval/run_scene_eval.sh --strict              fail on parse errors, failures or the wrong presentation
 //    scripts/eval/run_scene_eval.sh --no-refine           skip the refine cases
 //    scripts/eval/run_scene_eval.sh --refine-only [DIR]   only the refine cases, on DIR/turbofan.txt if it exists
 //    scripts/eval/run_scene_eval.sh --score DIR           measure saved answers again, no model calls
@@ -34,9 +35,23 @@ import AppKit
 import Foundation
 import SceneKit
 
+// This eval uses Publik only. Do not prompt for an unrelated OpenRouter Keychain
+// credential from a freshly compiled command-line executable. The production
+// router and Publik credential selection are otherwise used unchanged.
+enum TeachyAPIKeyStore {
+    static var apiKey: String? { nil }
+}
+
 struct ScenePromptCase {
     let name: String
     let prompt: String
+    let expected: ScenePresentationExpectation
+
+    init(name: String, prompt: String, expected: ScenePresentationExpectation = .drawing) {
+        self.name = name
+        self.prompt = prompt
+        self.expected = expected
+    }
 }
 
 let sceneEvalCases: [ScenePromptCase] = [
@@ -52,6 +67,11 @@ let sceneEvalCases: [ScenePromptCase] = [
     ScenePromptCase(name: "battery", prompt: "what's inside a battery"),
     ScenePromptCase(name: "bridge", prompt: "why does a suspension bridge stay up"),
     ScenePromptCase(name: "rocket", prompt: "draw a rocket and its stages in 3D"),
+    ScenePromptCase(name: "oslayers", prompt: "how does an operating system work"),
+    ScenePromptCase(name: "agentloop", prompt: "show me how an AI agent works"),
+    ScenePromptCase(name: "network", prompt: "draw how a browser request reaches a server"),
+    ScenePromptCase(name: "textcard", prompt: "Make a plain text reference card summarizing operating system responsibilities in three bullets. Do not draw a diagram.", expected: .referenceCard),
+    ScenePromptCase(name: "chart", prompt: "Make a bar chart comparing requests served: Monday 20, Tuesday 35, Wednesday 25.", expected: .referenceCard),
 ]
 
 /// Shared between the stream reader and the watchdog.
@@ -127,7 +147,19 @@ enum SceneEval {
     @MainActor
     static func run() async {
         let arguments = CommandLine.arguments
-        let only = argument("--only")
+        let only = argument("--only").map { Set($0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }) }
+        let strict = arguments.contains("--strict")
+        if arguments.contains("--only"), only == nil || only?.isEmpty == true {
+            print("--only needs a comma-separated list of case names.")
+            exit(2)
+        }
+        if let only {
+            let unknown = only.subtracting(sceneEvalCases.map(\.name))
+            if !unknown.isEmpty {
+                print("Unknown cases: " + unknown.sorted().joined(separator: ", "))
+                exit(2)
+            }
+        }
         let direct = !arguments.contains("--no-direct")
         let shots = Set((argument("--shots") ?? "").split(separator: ",").map(String.init))
         let outputFolder = URL(fileURLWithPath: argument("--out") ?? work.appendingPathComponent("eval").path)
@@ -138,18 +170,28 @@ enum SceneEval {
             let folder = URL(fileURLWithPath: argument("--score") ?? outputFolder.path)
             var quality: [SceneEvalResult] = []
             var camera: [SceneCameraReport] = []
-            for testCase in sceneEvalCases where only == nil || only == testCase.name {
-                guard let text = try? String(contentsOf: folder.appendingPathComponent("\(testCase.name).txt"), encoding: .utf8) else { continue }
+            for testCase in sceneEvalCases where only == nil || only!.contains(testCase.name) {
+                guard let text = try? String(contentsOf: folder.appendingPathComponent("\(testCase.name).txt"), encoding: .utf8) else {
+                    if strict || only != nil {
+                        var missing = SceneEvalResult(name: testCase.name)
+                        missing.ending = "missing saved answer"
+                        quality.append(missing)
+                    }
+                    continue
+                }
                 let parser = SceneScriptParser()
                 let commands = parser.feed(text) + parser.finish()
                 var result = SceneEvalResult(name: testCase.name)
-                result.quality = SceneQuality.report(commands: commands, stats: parser.stats)
+                result.stats = parser.stats
+                result.quality = SceneQuality.report(commands: commands, stats: parser.stats, expected: testCase.expected)
                 quality.append(result)
-                camera.append(await film(name: testCase.name, script: text, direct: direct, shots: shots.contains(testCase.name)))
+                if result.quality.surface.contains("3D") {
+                    camera.append(await film(name: testCase.name, script: text, direct: direct, shots: shots.contains(testCase.name)))
+                }
             }
             printQuality(quality)
             printCamera(camera, direct: direct)
-            exit(0)
+            exit(strict && (quality.isEmpty || quality.contains(where: failed)) ? 1 : 0)
         }
 
         guard TeachyAIRouter.isReadyForAI else {
@@ -164,11 +206,13 @@ enum SceneEval {
 
         var results: [SceneEvalResult] = []
         var camera: [SceneCameraReport] = []
-        for testCase in sceneEvalCases where only == nil || only == testCase.name {
+        for testCase in sceneEvalCases where only == nil || only!.contains(testCase.name) {
             let (result, text) = await ask(testCase, outputFolder: outputFolder)
             results.append(result)
             print(row(result))
-            camera.append(await film(name: testCase.name, script: text, direct: direct, shots: shots.contains(testCase.name)))
+            if result.quality.surface.contains("3D") {
+                camera.append(await film(name: testCase.name, script: text, direct: direct, shots: shots.contains(testCase.name)))
+            }
         }
 
         print("\n" + header)
@@ -189,7 +233,11 @@ enum SceneEval {
             for rejection in result.rejections.prefix(8) { print("  " + rejection) }
         }
         if only == nil, !arguments.contains("--no-refine") { await refineCases(base: outputFolder) }
-        exit(0)
+        exit(strict && (results.isEmpty || results.contains(where: failed)) ? 1 : 0)
+    }
+
+    static func failed(_ result: SceneEvalResult) -> Bool {
+        result.ending != "ok" || result.stats.parseRate < 1 || !result.quality.presentationMatches || result.quality.surface == "-"
     }
 
     // MARK: - Tables
@@ -204,7 +252,11 @@ enum SceneEval {
     static func printQuality(_ results: [SceneEvalResult]) {
         guard !results.isEmpty else { return }
         print("\n" + qualityHeader)
-        for result in results { print(qualityRow(result.name, result.quality)) }
+        for result in results {
+            print(qualityRow(result.name, result.quality))
+            if let reason = result.quality.presentationMismatch { print("  PRESENTATION MISMATCH: " + reason) }
+            if result.ending != "ok" { print("  FAILURE: " + result.ending) }
+        }
         let threeD = results.filter { $0.quality.surface.contains("3D") }
         let mean = { (values: [Double]) in values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count) }
         let says = results.map(\.quality.sayCount).reduce(0, +), tied = results.map(\.quality.tiedSays).reduce(0, +)
@@ -420,7 +472,7 @@ enum SceneEval {
         result.stats = outcome.stats
         result.rejections = outcome.rejections
         result.parts = SceneRouter.count3DParts(in: outcome.commands)
-        result.quality = SceneQuality.report(commands: outcome.commands, stats: outcome.stats)
+        result.quality = SceneQuality.report(commands: outcome.commands, stats: outcome.stats, expected: testCase.expected)
         if let error = outcome.error, error != "cut" { ending = error }
         if outcome.text.isEmpty, ending == "ok" { ending = "empty" }
         result.ending = ending

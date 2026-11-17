@@ -1001,7 +1001,7 @@ final class CompanionManager: ObservableObject {
 
         THIS ONE DESERVES A REAL ANSWER (they want to understand, decide or fix something):
         - Think it through before you speak, then teach it the way a brilliant friend would: the core idea in plain words first, then the one or two things that make it click (why it works, a concrete example, a vivid comparison), then what to do or look at next. Four to seven spoken sentences is fine; never pad.
-        - Use the screen. If the thing they asked about, or the parts that explain it, are visible, mark them with [MARK:] so the explanation happens on their screen. If it is not on screen and a picture would help, use [SHOW:].
+        - Use the screen. Use [MARK:] to mark actual visible elements. Use [SHOW:] when a new diagram would explain the structure or process, even if its subject is mentioned on screen.
         - Bring the best resource. If a doc page, a video, a reference or a search would genuinely help them go further, open it with [OPEN: url] and say so in a few words.
         - Anticipate the follow-up. End with the one next step or question they would most likely ask, answered or offered, not a generic "anything else?".
         """
@@ -1023,7 +1023,7 @@ final class CompanionManager: ObservableObject {
 
         WHAT YOU CAN DO IN A REPLY (tags are stripped before speaking; combine them when it helps):
         - Answer what they actually asked in the first sentence. Quick asks: one or two short sentences. Bigger asks: as long as it takes to be genuinely useful, and no longer.
-        - When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there,
+        - When they should look somewhere, POINT at it with [POINT:...] so your cursor goes there (unless they ask for a drawn circle, underline or highlight: use MARK even for one target),
           and say "here" / "right here" / "this one" ONLY when you're including that [POINT:...] tag
           in the same reply. If you can't confidently identify a specific, pointable target, describe it
           in words instead: saying "here" with nothing behind it is worse than not pointing at all.
@@ -1285,11 +1285,35 @@ final class CompanionManager: ObservableObject {
                     try? await self.speechSynthesizer.speakText(sentence)  // returns when the sentence has played
                 }
                 SceneDirector.shared.cancelSpeech = { [weak self] in self?.speechSynthesizer.stopPlayback() }
-                if let showRequest = SceneDirector.extractShowRequest(from: fullResponseText).request {
+                if let markRequest = SceneDirector.extractMarkRequest(from: fullResponseText).request {
+                    let mark = ScreenAnnotationRequest(markRequest)
+                    if let index = mark.captureIndex(count: screenCaptures.count,
+                                                     cursorIndex: screenCaptures.firstIndex(where: { $0.isCursorScreen })) {
+                        let original = screenCaptures[index]
+                        // Chat and other windows may have changed while the first reply streamed.
+                        // Ground marks in a fresh image of the SAME physical display.
+                        do {
+                            let fresh = try await CompanionScreenCaptureUtility.captureAllScreensAsJPEG(maxDimension: 1920)
+                            guard !Task.isCancelled else { return }
+                            if let capture = fresh.first(where: {
+                                if let id = original.displayID { return $0.displayID == id }
+                                return $0.displayFrame == original.displayFrame
+                            }) {
+                                SceneDirector.shared.annotate(
+                                    question: mark.instruction + "\nOriginal request: " + transcript,
+                                    screenshotJPEG: capture.imageData, displayFrame: capture.displayFrame)
+                            } else {
+                                speakErrorMessage("That display is no longer available. Ask again on the screen you want marked.")
+                            }
+                        } catch {
+                            guard !Task.isCancelled else { return }
+                            speakErrorMessage("I couldn't get a fresh view of that screen to mark it. Please try again.")
+                        }
+                    } else {
+                        speakErrorMessage("I couldn't identify which screen to mark. Please tell me which one.")
+                    }
+                } else if let showRequest = SceneDirector.extractShowRequest(from: fullResponseText).request {
                     SceneDirector.shared.show(showRequest)
-                } else if let markRequest = SceneDirector.extractMarkRequest(from: fullResponseText).request,
-                          let markCapture = screenCaptures.first(where: { $0.isCursorScreen }) ?? screenCaptures.first {
-                    SceneDirector.shared.annotate(question: markRequest, screenshotJPEG: markCapture.imageData, displayFrame: markCapture.displayFrame)
                 }
 
                 // [JOB: …] hands real multi-step work to a background agent job: it shows its
