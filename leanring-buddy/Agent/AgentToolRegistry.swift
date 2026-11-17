@@ -288,6 +288,18 @@ final class BackgroundAgentToolRegistry {
             return .refused("Tool \(toolName) is not available here. Use only: \(toolNames(allowed: allowedToolNames).joined(separator: ", ")).")
         }
 
+        // The person borrowed the mouse (a click or a big move): Teachy's next mouse or
+        // keyboard action waits until they hold still for 3 seconds. Escape ends the job.
+        if Self.usesThePersonsPointerOrScreen(toolName: toolName) {
+            let personHadControl = await DriveTakeoverMonitor.shared.waitUntilTeachyHasControl(jobID: job.id)
+            if Task.isCancelled || job.status.isFinished {
+                return .failed("Stopped.")
+            }
+            if personHadControl && !Self.onlyLooksAtTheScreen(toolName: toolName, arguments: arguments) {
+                return .result(.textOnly("Not done yet: the person used the mouse for a moment and has now handed it back. The screen may have changed, so take a fresh screenshot (or drive_snapshot) and then continue from what you see."))
+            }
+        }
+
         switch await AgentToolGate.shared.authorize(toolName: toolName, arguments: arguments, tool: tool, job: job) {
         case .refuse(let message):
             return .refused(message)
@@ -309,6 +321,21 @@ final class BackgroundAgentToolRegistry {
         } catch {
             return .failed(error.localizedDescription)
         }
+    }
+
+    // MARK: Pausing while the person has the mouse
+
+    static func usesThePersonsPointerOrScreen(toolName: String) -> Bool {
+        toolName == "computer" || toolName.hasPrefix("drive_")
+    }
+
+    /// Calls that only look, so they are still right to run after the person handed the mouse back.
+    static func onlyLooksAtTheScreen(toolName: String, arguments: [String: Any]) -> Bool {
+        if toolName == "drive_snapshot" { return true }
+        if toolName == "computer" {
+            return ["screenshot", "cursor_position", "wait"].contains(ToolPolicy.string(arguments["action"]).lowercased())
+        }
+        return false
     }
 
     // MARK: Per-call timeout

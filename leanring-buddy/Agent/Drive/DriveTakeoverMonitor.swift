@@ -2,10 +2,14 @@
 //  DriveTakeoverMonitor.swift
 //  leanring-buddy
 //
-//  While Teachy is driving an app, the user can take it back at any moment:
-//  press Escape, click, or move the mouse more than ~40 points. A listen-only
-//  CGEvent tap (same pattern as GlobalPushToTalkShortcutMonitor) watches for
-//  that and stops the job at once. Also owns the small "Teachy is driving" pill.
+//  While Teachy is driving an app, the person can borrow the mouse at any
+//  moment: a click, or moving the mouse more than ~40 points, hands control
+//  back to them without ending the job. Teachy's next mouse or keyboard
+//  action waits until they have held still for 3 seconds (the pill counts
+//  down: "Stay still and I'll take control again in 3"). Escape ends computer
+//  use for the job. A listen-only CGEvent tap (same pattern as
+//  GlobalPushToTalkShortcutMonitor) watches for all of it. Also owns the
+//  small "Teachy is driving" pill.
 //
 //  If the tap cannot be installed, Drive refuses to start: no way to take
 //  control back means no driving.
@@ -62,12 +66,47 @@ enum AgentNotchLayout {
 @MainActor
 final class DrivePillModel: ObservableObject {
     @Published var note = ""
+    /// Set while the person has the mouse: whole seconds left before Teachy takes it back.
+    @Published var secondsUntilTeachyTakesControl: Int?
 }
 
 private struct DrivePillView: View {
     @ObservedObject var model: DrivePillModel
 
     var body: some View {
+        Group {
+            if let secondsLeft = model.secondsUntilTeachyTakesControl {
+                personHasControlContent(secondsLeft: secondsLeft)
+            } else {
+                teachyIsDrivingContent
+            }
+        }
+        .padding(.horizontal, DS.Spacing.lg)
+        // 7 pt, not 8: the key cap is 20 pt tall and the pill's panel is 36 pt.
+        .padding(.vertical, 7)
+        .teachyTile(cornerRadius: DS.CornerRadius.pill)
+        .frame(maxWidth: 560)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func personHasControlContent(secondsLeft: Int) -> some View {
+        HStack(spacing: DS.Spacing.sm) {
+            TeachyStatusMark(kind: .needsYou)
+            Text("Stay still and I'll take control again in \(secondsLeft)")
+                .font(DS.Fonts.controlCompact.monospacedDigit())
+                .foregroundColor(DS.Colors.textPrimary)
+                .fixedSize()
+            HStack(spacing: DS.Spacing.xs) {
+                KeyboardKeyLabel(text: "esc")
+                Text("leaves computer use")
+                    .font(DS.Fonts.caption)
+                    .foregroundColor(DS.Colors.textSecondary)
+            }
+            .fixedSize()
+        }
+    }
+
+    private var teachyIsDrivingContent: some View {
         HStack(spacing: DS.Spacing.sm) {
             TeachyStatusMark(kind: .live)
             Text("Teachy is driving")
@@ -83,18 +122,12 @@ private struct DrivePillView: View {
             }
             HStack(spacing: DS.Spacing.xs) {
                 KeyboardKeyLabel(text: "esc")
-                Text("takes it back")
+                Text("stops")
                     .font(DS.Fonts.caption)
                     .foregroundColor(DS.Colors.textSecondary)
             }
             .fixedSize()
         }
-        .padding(.horizontal, DS.Spacing.lg)
-        // 7 pt, not 8: the key cap is 20 pt tall and the pill's panel is 36 pt.
-        .padding(.vertical, 7)
-        .teachyTile(cornerRadius: DS.CornerRadius.pill)
-        .frame(maxWidth: 560)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -104,6 +137,11 @@ final class DriveTakeoverMonitor {
 
     /// How far the pointer may drift before it counts as the user taking over.
     static let mouseMovementThreshold: CGFloat = 40
+    /// How long the person must hold still before Teachy takes the mouse back.
+    static let stillnessSecondsBeforeTeachyTakesControl: TimeInterval = 3
+    /// While the person has the mouse, movement smaller than this (a hand resting
+    /// on a trackpad) does not restart the countdown.
+    static let stillnessJitterThreshold: CGFloat = 3
     private static let pillSize = NSSize(width: 600, height: 36)
 
     private(set) var activeJobID: String?
@@ -118,7 +156,29 @@ final class DriveTakeoverMonitor {
     private let pillModel = DrivePillModel()
     private var pillPanel: NSPanel?
 
+    /// Non-nil while the person has borrowed the mouse: the last moment they moved,
+    /// clicked or typed. Teachy takes control back once this is 3 seconds old.
+    private var personLastActiveWhileHoldingControlAt: Date?
+    private var lastPointerLocationWhileHoldingControl: CGPoint?
+    private var countdownTimer: Timer?
+
     var isDriving: Bool { activeJobID != nil }
+
+    /// True while the person has the mouse and Teachy is waiting for them to hold still.
+    func personHasControl(jobID: String) -> Bool {
+        activeJobID == jobID && personLastActiveWhileHoldingControlAt != nil
+    }
+
+    /// Waits, without a time limit, until Teachy has the mouse back (the person held
+    /// still for 3 seconds) or driving ended. True when it had to wait at all.
+    func waitUntilTeachyHasControl(jobID: String) async -> Bool {
+        var hadToWait = false
+        while personHasControl(jobID: jobID) && !Task.isCancelled {
+            hadToWait = true
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return hadToWait
+    }
 
     /// Starts the watch and shows the pill. False when the watch could not be installed.
     func beginDriving(jobID: String, appName: String) -> Bool {
@@ -146,6 +206,10 @@ final class DriveTakeoverMonitor {
     func endDriving(jobID: String) {
         guard activeJobID == jobID else { return }
         activeJobID = nil
+        if personLastActiveWhileHoldingControlAt != nil {
+            AgentJobCenter.shared.job(withID: jobID)?.budget.resume(now: Date())
+        }
+        stopHoldingControlCountdown()
         removeTap()
         pillPanel?.orderOut(nil)
         AgentJobCenter.shared.job(withID: jobID)?.isDriving = false
@@ -249,20 +313,93 @@ final class DriveTakeoverMonitor {
         // Keys and clicks Drive posted itself are not the user.
         if marker == DriveSession.syntheticEventMarker { return }
 
+        // Escape always ends computer use, whoever has the mouse.
+        if type == .keyDown && keyCode == 53 {
+            takeOver(jobID: jobID, how: "you pressed Escape")
+            return
+        }
+
+        if personLastActiveWhileHoldingControlAt != nil {
+            noteActivityWhileHoldingControl(type: type, location: location)
+            return
+        }
+
         switch type {
-        case .keyDown:
-            if keyCode == 53 { takeOver(jobID: jobID, how: "you pressed Escape") }
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
-            takeOver(jobID: jobID, how: "you clicked")
+            startHoldingControl(location: location)
         case .mouseMoved, .leftMouseDragged, .rightMouseDragged:
             guard Date() >= ignoreMovementUntil else { return }
             guard let anchor = mouseAnchor else { mouseAnchor = location; return }
             if hypot(location.x - anchor.x, location.y - anchor.y) > Self.mouseMovementThreshold {
-                takeOver(jobID: jobID, how: "you moved the mouse")
+                startHoldingControl(location: location)
             }
         default:
             break
         }
+    }
+
+    // MARK: The person borrowing the mouse
+
+    /// The person grabbed the mouse: Teachy stops acting (its next action waits)
+    /// and counts down 3 still seconds before taking it back.
+    private func startHoldingControl(location: CGPoint) {
+        personLastActiveWhileHoldingControlAt = Date()
+        lastPointerLocationWhileHoldingControl = location
+        if let activeJobID { AgentJobCenter.shared.job(withID: activeJobID)?.budget.pause(now: Date()) }
+        refreshHoldingControlCountdown()
+        countdownTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
+            MainActor.assumeIsolated { DriveTakeoverMonitor.shared.refreshHoldingControlCountdown() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        countdownTimer = timer
+    }
+
+    /// Any click, key or real pointer movement restarts the 3-second countdown.
+    private func noteActivityWhileHoldingControl(type: CGEventType, location: CGPoint) {
+        switch type {
+        case .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseDragged, .rightMouseDragged:
+            personLastActiveWhileHoldingControlAt = Date()
+            lastPointerLocationWhileHoldingControl = location
+        case .mouseMoved:
+            let previousLocation = lastPointerLocationWhileHoldingControl ?? location
+            if hypot(location.x - previousLocation.x, location.y - previousLocation.y) > Self.stillnessJitterThreshold {
+                personLastActiveWhileHoldingControlAt = Date()
+                lastPointerLocationWhileHoldingControl = location
+            }
+        default:
+            break
+        }
+        refreshHoldingControlCountdown()
+    }
+
+    private func refreshHoldingControlCountdown() {
+        guard let lastActiveAt = personLastActiveWhileHoldingControlAt else { return }
+        let secondsLeft = Self.stillnessSecondsBeforeTeachyTakesControl - Date().timeIntervalSince(lastActiveAt)
+        if secondsLeft <= 0 {
+            teachyTakesControlBack()
+            return
+        }
+        let wholeSecondsLeft = Int(secondsLeft.rounded(.up))
+        if pillModel.secondsUntilTeachyTakesControl != wholeSecondsLeft {
+            pillModel.secondsUntilTeachyTakesControl = wholeSecondsLeft
+        }
+    }
+
+    private func teachyTakesControlBack() {
+        if let activeJobID { AgentJobCenter.shared.job(withID: activeJobID)?.budget.resume(now: Date()) }
+        stopHoldingControlCountdown()
+        // Measure the next takeover from where the person left the pointer.
+        mouseAnchor = nil
+        ignoreMovementUntil = Date().addingTimeInterval(0.3)
+    }
+
+    private func stopHoldingControlCountdown() {
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        personLastActiveWhileHoldingControlAt = nil
+        lastPointerLocationWhileHoldingControl = nil
+        pillModel.secondsUntilTeachyTakesControl = nil
     }
 
     private func takeOver(jobID: String, how: String) {
