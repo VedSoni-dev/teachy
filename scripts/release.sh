@@ -11,8 +11,10 @@ export PATH="/opt/homebrew/bin:$PATH"
 # Downloads still work. First open needs a Gatekeeper “Open anyway” click.
 # Sparkle EdDSA signatures still protect update integrity.
 #
-# Optional notarized mode (if you later get Developer ID):
-#   NOTARIZE=1 ./scripts/release.sh 1.0
+# Notarized mode (Developer ID certificate in the keychain, plus a notarytool
+# login saved as AC_PASSWORD, or NOTARY_PROFILE=<name>):
+#   NOTARIZE=1 ./scripts/release.sh 2.2
+# Pick a certificate by name with DEVELOPER_ID_IDENTITY="Developer ID Application: …".
 #
 # Usage:
 #   ./scripts/release.sh              Auto-bumps version
@@ -58,6 +60,41 @@ USE_NOTARIZE=0
 if [ "$NOTARIZE" = "1" ] && [ "$HAS_DEVELOPER_ID" = "1" ]; then
     USE_NOTARIZE=1
 fi
+
+# notarytool credentials saved once with:
+#   xcrun notarytool store-credentials AC_PASSWORD --apple-id <apple-id> --team-id <team-id>
+NOTARY_PROFILE="${NOTARY_PROFILE:-AC_PASSWORD}"
+
+if [ "$USE_NOTARIZE" = "1" ]; then
+    if ! xcrun notarytool history --keychain-profile "${NOTARY_PROFILE}" > /dev/null 2>&1; then
+        echo "❌ No notarization login saved as \"${NOTARY_PROFILE}\". Save it once with:"
+        echo "     xcrun notarytool store-credentials ${NOTARY_PROFILE} --apple-id <apple-id> --team-id <team-id>"
+        exit 1
+    fi
+fi
+
+# Sends a file to Apple's notary service and fails the release unless Apple
+# accepts it, printing Apple's log so the reason is visible.
+submit_for_notarization() {
+    local file_to_notarize_path="$1"
+    local notary_result_json
+    notary_result_json=$(xcrun notarytool submit "${file_to_notarize_path}" \
+        --keychain-profile "${NOTARY_PROFILE}" \
+        --wait \
+        --output-format json)
+    local notary_status
+    notary_status=$(echo "${notary_result_json}" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')
+    if [ "${notary_status}" != "Accepted" ]; then
+        local notary_submission_id
+        notary_submission_id=$(echo "${notary_result_json}" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')
+        echo "❌ Apple did not accept $(basename "${file_to_notarize_path}") (status: ${notary_status:-unknown})"
+        if [ -n "${notary_submission_id}" ]; then
+            xcrun notarytool log "${notary_submission_id}" --keychain-profile "${NOTARY_PROFILE}" || true
+        fi
+        exit 1
+    fi
+    echo "✅ Apple accepted $(basename "${file_to_notarize_path}")"
+}
 
 SPARKLE_BIN=$(find ~/Library/Developer/Xcode/DerivedData/leanring-buddy*/SourcePackages/artifacts/sparkle/Sparkle/bin -maxdepth 0 2>/dev/null | head -1)
 
@@ -139,68 +176,51 @@ rm -rf "${BUILD_DIR}"
 rm -f "${RELEASES_DIR}"/rw.*.dmg "${RELEASES_DIR}/${DMG_FILENAME}"
 mkdir -p "${BUILD_DIR}" "${EXPORT_DIR}" "${RELEASES_DIR}"
 
+echo "📦 Building Release (arm64)…"
+# Day-to-day TCC tip still applies; this path is for shipping only.
+# Built ad-hoc in both modes; notarized mode re-signs it with the Developer ID
+# below, which avoids needing the project's team to match the certificate's.
+xcodebuild build \
+    -scheme "${SCHEME}" \
+    -configuration Release \
+    -derivedDataPath "${DERIVED_DATA_PATH}" \
+    -destination 'platform=macOS,arch=arm64' \
+    ONLY_ACTIVE_ARCH=YES \
+    ARCHS=arm64 \
+    MARKETING_VERSION="${MARKETING_VERSION}" \
+    CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
+    CODE_SIGN_IDENTITY="-" \
+    CODE_SIGNING_ALLOWED=YES \
+    CODE_SIGNING_REQUIRED=NO \
+    2>&1 | tee /tmp/teachy-xcodebuild.log | tail -20
+
+if ! grep -q "BUILD SUCCEEDED" /tmp/teachy-xcodebuild.log; then
+    echo "❌ xcodebuild failed — last errors:"
+    rg -i "error:" /tmp/teachy-xcodebuild.log | head -40 || true
+    exit 1
+fi
+
+BUILT_APP=$(find "${DERIVED_DATA_PATH}/Build/Products/Release" -maxdepth 1 -name "${APP_NAME}.app" | head -1)
+if [ -z "$BUILT_APP" ]; then
+    echo "❌ Could not find ${APP_NAME}.app under ${DERIVED_DATA_PATH}/Build/Products/Release"
+    exit 1
+fi
+
+rm -rf "${EXPORT_DIR}/${APP_NAME}.app"
+cp -R "${BUILT_APP}" "${EXPORT_DIR}/${APP_NAME}.app"
+
 if [ "$USE_NOTARIZE" = "1" ]; then
-    ARCHIVE_PATH="${BUILD_DIR}/${APP_NAME}.xcarchive"
-    echo "📦 Archiving (Developer ID)…"
-    xcodebuild archive \
-        -scheme "${SCHEME}" \
-        -archivePath "${ARCHIVE_PATH}" \
-        MARKETING_VERSION="${MARKETING_VERSION}" \
-        CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
-        2>&1 | tail -8
+    "${PROJECT_DIR}/scripts/sign_developer_id.sh" "${EXPORT_DIR}/${APP_NAME}.app"
 
-    EXPORT_OPTIONS="${BUILD_DIR}/ExportOptions.plist"
-    cat > "${EXPORT_OPTIONS}" << 'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>method</key>
-    <string>developer-id</string>
-    <key>destination</key>
-    <string>export</string>
-</dict>
-</plist>
-PLIST
-
-    echo "📤 Exporting notarized app…"
-    xcodebuild -exportArchive \
-        -archivePath "${ARCHIVE_PATH}" \
-        -exportPath "${EXPORT_DIR}" \
-        -exportOptionsPlist "${EXPORT_OPTIONS}" \
-        2>&1 | tail -8
+    # Notarize and staple the app itself, so a copy dragged out of the DMG
+    # still opens offline.
+    echo "🔏 Notarizing the app with Apple (usually a few minutes)…"
+    APP_NOTARIZATION_ZIP="${BUILD_DIR}/${APP_NAME}-notarize.zip"
+    ditto -c -k --keepParent "${EXPORT_DIR}/${APP_NAME}.app" "${APP_NOTARIZATION_ZIP}"
+    submit_for_notarization "${APP_NOTARIZATION_ZIP}"
+    rm -f "${APP_NOTARIZATION_ZIP}"
+    xcrun stapler staple "${EXPORT_DIR}/${APP_NAME}.app"
 else
-    echo "📦 Building community Release (Apple Development / ad-hoc — no \$99 cert)…"
-    # Day-to-day TCC tip still applies; this path is for shipping only.
-    xcodebuild build \
-        -scheme "${SCHEME}" \
-        -configuration Release \
-        -derivedDataPath "${DERIVED_DATA_PATH}" \
-        -destination 'platform=macOS,arch=arm64' \
-        ONLY_ACTIVE_ARCH=YES \
-        ARCHS=arm64 \
-        MARKETING_VERSION="${MARKETING_VERSION}" \
-        CURRENT_PROJECT_VERSION="${BUILD_NUMBER}" \
-        CODE_SIGN_IDENTITY="-" \
-        CODE_SIGNING_ALLOWED=YES \
-        CODE_SIGNING_REQUIRED=NO \
-        2>&1 | tee /tmp/teachy-xcodebuild.log | tail -20
-
-    if ! grep -q "BUILD SUCCEEDED" /tmp/teachy-xcodebuild.log; then
-        echo "❌ xcodebuild failed — last errors:"
-        rg -i "error:" /tmp/teachy-xcodebuild.log | head -40 || true
-        exit 1
-    fi
-
-    BUILT_APP=$(find "${DERIVED_DATA_PATH}/Build/Products/Release" -maxdepth 1 -name "${APP_NAME}.app" | head -1)
-    if [ -z "$BUILT_APP" ]; then
-        echo "❌ Could not find ${APP_NAME}.app under ${DERIVED_DATA_PATH}/Build/Products/Release"
-        exit 1
-    fi
-
-    rm -rf "${EXPORT_DIR}/${APP_NAME}.app"
-    cp -R "${BUILT_APP}" "${EXPORT_DIR}/${APP_NAME}.app"
-
     echo "🔏 Ad-hoc codesigning (Sparkle still signs the DMG separately)…"
     codesign --force --deep --sign - "${EXPORT_DIR}/${APP_NAME}.app"
 fi
@@ -242,10 +262,10 @@ else
 fi
 
 if [ "$USE_NOTARIZE" = "1" ]; then
+    DEVELOPER_ID_HASH=$(security find-identity -v -p codesigning | grep "${DEVELOPER_ID_IDENTITY:-Developer ID Application}" | head -1 | awk '{print $2}')
+    codesign --force --timestamp --sign "${DEVELOPER_ID_HASH}" "${DMG_PATH}"
     echo "🔏 Notarizing DMG with Apple…"
-    xcrun notarytool submit "${DMG_PATH}" \
-        --keychain-profile "AC_PASSWORD" \
-        --wait
+    submit_for_notarization "${DMG_PATH}"
     echo "📎 Stapling…"
     xcrun stapler staple "${DMG_PATH}"
     echo "✅ DMG notarized and stapled"
@@ -273,9 +293,8 @@ else
 
 This community build is **not** Apple-notarized (keeps Teachy free).
 
-1. Drag **Teachy.app** to Applications
-2. **Right-click** Teachy → **Open** → click **Open**
-   - Or: open once, then System Settings → Privacy & Security → **Open Anyway**
+1. Drag **Teachy.app** to Applications and open it. macOS says it cannot verify Teachy: click **Done**
+2. Open System Settings → Privacy & Security, scroll down and click **Open Anyway** next to Teachy, then confirm with your password
 3. Teachy walks you through permissions, then you sign in (or choose **Use my own key** and paste an OpenRouter key)
 
 Later updates via Sparkle keep working after that first allow.
