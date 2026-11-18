@@ -39,7 +39,7 @@ func runChecks() {
     expect(rate("resume motion", current: 0, resume: 0.5) == 0.5, "restore previous pace")
     expect(rate("resume motion", current: .nan, resume: .infinity) == 1, "finite fallback")
     expect(plan("recenter")?.script.contains("hold") == true, "explicit framing wins")
-    
+
     for degrees in [SceneVec3(15, 25, -35), SceneVec3(0, 90, 0), SceneVec3(90, 0, 0), SceneVec3(0, 0, -90)] {
         let original = SceneOrientation.euler(degrees: degrees)
         let recovered = SceneOrientation.euler(degrees: SceneLiveState.rotationDegrees(original))
