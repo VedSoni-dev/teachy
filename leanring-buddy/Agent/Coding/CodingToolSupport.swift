@@ -34,9 +34,11 @@ nonisolated enum CodingFileReading {
     /// The file's lines: "\r\n" and "\n" both end a line, and a final newline does not add an empty line.
     static func splitIntoLines(_ text: String) -> [String] {
         if text.isEmpty { return [] }
+        // Byte checks, not Character ones: Swift treats "\r\n" as ONE character, so
+        // `hasSuffix("\n")` is false for a Windows-style file.
         var lines = text.components(separatedBy: "\n")
-        if text.hasSuffix("\n") || text.hasSuffix("\r\n") { lines.removeLast() }
-        return lines.map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
+        if text.utf8.last == UInt8(ascii: "\n") { lines.removeLast() }
+        return lines.map { $0.utf8.last == UInt8(ascii: "\r") ? String($0.dropLast()) : $0 }
     }
 
     /// `   12\tcontent`: the number right-aligned in six columns, like `cat -n`.
@@ -556,8 +558,9 @@ nonisolated enum CodingSearchCommand {
         var hiddenCount = 0
         var droppedForLimitCount = 0
         var usedCharacters = 0
-        for rawLine in rawOutput.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = String(rawLine)
+        // splitIntoLines, not split(separator:): a matched line from a Windows-style file ends in
+        // "\r\n", which Swift sees as one character that is not "\n".
+        for line in CodingFileReading.splitIntoLines(rawOutput) where !line.isEmpty {
             let filePath = outputMode == .files ? line : filePathOfContentLine(line)
             if isHiddenPath(filePath) {
                 hiddenCount += 1
@@ -656,7 +659,7 @@ nonisolated enum CodingProjectDetection {
         // Quoted paths may contain spaces.
         let quotedPattern = #"[\"'`“‘]((?:~|/)[^\"'`”’\n]+)[\"'`”’]"#
         // Bare paths end at whitespace or a closing bracket or quote.
-        let barePattern = #"(?:^|[\s(\[{<=:,])((?:~/|/)[^\s\"'`()\[\]{}<>,;]+|~(?=$|[\s.,;!?]))"#
+        let barePattern = #"(?:^|[\s(\[{<=,])((?:~/|/)[^\s\"'`()\[\]{}<>,;]+|~(?=$|[\s.,;!?]))"#
         for pattern in [quotedPattern, barePattern] {
             guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
             let fullRange = NSRange(requestText.startIndex..., in: requestText)

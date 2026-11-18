@@ -82,6 +82,10 @@ npm run harness                      # validate all routes
 | `CompanionGuidedTask.swift` | ~160 | Ephemeral [GUIDE:] walkthrough model (`GuidedStepGoal`, `GuidedStepExecutionMode` `.coach`/`.act`, `AgenticStep`, `CompanionGuidedTask` with a replan cap) plus the [GUIDE:] / [DO:] / [CLIPBOARD:] / [REMEMBER:] tag parsers. |
 | `GuidedTaskPlanner.swift` | ~335 | Model calls behind [GUIDE:]: `GuidedTaskPlanner` (screen-grounded plan, text-only fallback, replan on divergence) and `GuidedStepScreenChecker` (pass / partial / off track + visible error). |
 | `TeachyDataPaths.swift` | ~35 | Resolves `~/.teachy/{connectors,brain}` with legacy `~/.clicky/` fallback for connectors. |
+| `Brain/ChatSessionStore.swift` | ~400 | Saved chats on disk (index + full transcripts), switch/new/rename/delete, search, journal file. |
+| `Brain/ChatSessionModel.swift` | ~430 | Pure rules: context window and compaction, cross-chat search, `JOURNAL.md` format. |
+| `Core/ChatMemoryKeeper.swift` | ~200 | Background compaction, chat titles and journal entries via the router. |
+| `ChatWindow/ChatSessionList.swift` | ~300 | Chat list model and the chat window's history sidebar. |
 | `academy/` | — | Marketing site: assistant landing page (`index.html`, `site.css`, `app.js`) and `changelog.html`. Course store removed; `registry.json` kept for old installs. |
 | `AgentToolResult.swift` | ~35 | Tool results with optional vision images fed back into the agent loop. |
 | `BackgroundAgentSideDockWindow.swift` | ~470 | Side-docked Teachy mascot shown during a live Composio sync prompt (background-agent progress card removed as dead UI — the mascot dock, sync card, and their animations are still live). |
@@ -306,6 +310,18 @@ Do NOT update this file for minor edits, bug fixes, or changes that don't affect
 - The older stores (engine-state.json facts and projects, UserDefaults learner profiles) are imported once by `BrainMigration` (it decodes the old JSON itself) and left in place. [REMEMBER:] facts go straight to `BrainStore.shared.remember(_, kind: .aboutMe)`.
 - Never log memory contents. Screen memory is text only.
 - Tests: `./scripts/tests/run_brain_tests.sh` (standalone, temp directory, never touches the real `~/.teachy`).
+
+### Coding tools for agent jobs (16 Nov 2026)
+`Agent/Coding/CodingTools.swift` (tools) and `CodingToolSupport.swift` (pure helpers), modelled on Claude Code's tool set: `read_file` (numbered lines, `offset`/`limit`), `edit_file` (exact `old_string` → `new_string`, unique unless `replace_all`, returns a unified diff), `grep` (rg if installed, else `grep -rEI`; `files` or `content` output; secret-looking files hidden), `glob` (`**` patterns, newest first), `list_directory`, and `bash` with `working_directory`. A job can have a `projectDirectory` (`AgentJobRequest` / `JobLaunch` / `runTask`); without one, a path to a git repo in the request text is used. Project jobs get a coding guide plus the repo's AGENTS.md / CLAUDE.md (6 KB cap) in the prompt. Policy: reads inside the project are safe (except secret-looking files), edits inside it need consent (auto mode runs them), credential / login-startup paths always ask. Tests: `scripts/tests/run_coding_tools_tests.sh`.
+
+### Saved chats, context compaction and the journal (16 Nov 2026)
+Works like a coding harness's sessions (Claude Code / Codex): every chat is kept whole, the model sees a summary of the old part plus the recent part word for word, and a dated journal carries memory across days.
+- `Brain/ChatSessionStore.swift` (`BrainStore.shared.sessions`): `~/.teachy/brain/sessions/index.json` (every chat: title, dates, `compactSummary` + `summarizedMessageCount`, `journaledMessageCount`, the open chat) and `sessions/<id>.jsonl` (the full chat, never trimmed). `BrainStore.appendMessage` writes to the open chat and still to the 40-message `conversation.jsonl`. The old `conversation.jsonl` is imported once as the first chat. A question after 6 h idle starts a new chat by itself. `forget`/`forgetEverything` reach every chat and the journal.
+- `Brain/ChatSessionModel.swift` (pure): `ChatContextWindow` (what is sent: recent messages within 14k chars after the summary; fold when the unsummarised part passes 20k chars, keeping the last 12; recall cues; the prompt section), `ChatSearch`, `ChatJournal` (`~/.teachy/brain/JOURNAL.md`, one `## yyyy-MM-dd (Weekday)` section per day, hand-editable).
+- `Core/ChatMemoryKeeper.swift`: background pass after each voice turn, on chat switch and every 10 min: compacts the open chat (job `.write`), gives a new chat a model title (`.cleanup`), and journals chats that went quiet for 20 min (`.cleanup`, 1–3 lines or NOTHING).
+- Voice turn: history comes from `sessions.historyForVoiceTurn()`, and `sessions.contextPromptSection(forQuestion:)` adds the chat summary, how the previous chat ended (for a new chat), older chats that match a "yesterday / last time…" question, and the recent journal.
+- Agent jobs get the recent journal in their system prompt and a read-only `search_past_chats` tool (`Agent/PastChatsTool.swift`: search every chat, or read the end of one by `session_id`).
+- UI: `ChatWindow/ChatSessionList.swift` (list model + `ChatSessionSidebarList`: New chat ⌘N, chats grouped Today / Yesterday / Previous 7 / 30 days / Older, search across all chats, Rename/Delete on right-click); `ChatSessionList+Shared.swift` binds it to the Brain. Timeline rows (jobs, drawings) carry the `sessionID` they were posted in. The notch chat has a New chat button.
 
 ## Rebuild status (14 Nov 2026) — read this before the older sections above
 Direction: Teachy is a full HeyClicky competitor; the course/teaching system was removed entirely. Plan: `docs/PARITY-PLAN.md`. Competitor inventory: `docs/research/`.

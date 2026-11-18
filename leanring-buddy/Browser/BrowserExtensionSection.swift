@@ -15,6 +15,7 @@ struct BrowserExtensionSection: View {
     private let startsExpanded: Bool
 
     @State private var isInstalling = false
+    @State private var isSavingExtension = false
     @State private var outcome: BrowserBridge.InstallOutcome?
 
     init(startsExpanded: Bool = false) {
@@ -33,6 +34,8 @@ struct BrowserExtensionSection: View {
             startsExpanded: startsExpanded,
             onInstall: install,
             onOpenExtensionsPage: { BrowserBridge.openExtensionsPage() },
+            onGetExtension: getExtension,
+            isSavingExtension: isSavingExtension,
             onCheckAgain: {
                 outcome = nil
                 bridge.start()
@@ -41,6 +44,15 @@ struct BrowserExtensionSection: View {
         .task {
             // Starting is idempotent; this also re-reads what is installed each time settings opens.
             bridge.start()
+        }
+    }
+
+    private func getExtension() {
+        guard !isSavingExtension else { return }
+        isSavingExtension = true
+        Task {
+            outcome = await bridge.getExtensionWithTeachyGuiding()
+            isSavingExtension = false
         }
     }
 

@@ -224,8 +224,9 @@ final class GlobTool: BackgroundAgentTool {
         }
 
         let rootPath = searchRoot.path
+        let maximumEntriesVisited = Self.maximumEntriesVisited
         let worker = Task.detached(priority: .userInitiated) {
-            CodingFileFinder.find(pattern: pattern, rootPath: rootPath, maximumEntriesVisited: GlobTool.maximumEntriesVisited)
+            CodingFileFinder.find(pattern: pattern, rootPath: rootPath, maximumEntriesVisited: maximumEntriesVisited)
         }
         let found = await withTaskCancellationHandler {
             await worker.value

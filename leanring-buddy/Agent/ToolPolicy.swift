@@ -174,6 +174,9 @@ enum ToolPolicy {
         case "list_routines":
             return decision(.safe, "only lists the routines", summary: "list your routines")
 
+        case "search_past_chats":
+            return decision(.safe, "reads your earlier chats with Teachy, on this Mac", summary: "look through earlier chats", detail: string(arguments["query"]))
+
         case "pause_routine":
             // Pausing loses nothing and is undone with one tap. Resuming makes things run again, so that asks.
             let resumes = (arguments["resume"] as? Bool) == true

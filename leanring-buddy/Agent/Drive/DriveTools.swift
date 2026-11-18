@@ -26,7 +26,7 @@ enum DriveToolGuide {
     - Every action returns what changed (new controls, changed values, a new window title). Read it and confirm the step worked before the next one. If it says nothing changed, look again (drive_snapshot or capture_screen) instead of repeating the action.
     - drive_click_point is the LAST resort, for things the snapshot does not list (canvases, custom controls). Give x and y in the pixels of a screenshot you were shown, plus that screenshot's capture_id; or give index to click the middle of a listed control.
     - Password, verification-code and card fields are the user's to fill in. Teachy stops by itself when one shows up.
-    - The user can press Escape or move the mouse to take the app back at any time; then you stop.
+    - If the user grabs the mouse, your next action waits until they hold still for 3 seconds, then you get a note to look again (drive_snapshot) before continuing. Escape stops you.
     """
 }
 

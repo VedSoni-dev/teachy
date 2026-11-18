@@ -12,6 +12,7 @@ swiftc -swift-version 5 -default-isolation MainActor -o "$WORK/chrome-shots" \
   "$APP/DesignSystem.swift" \
   "$APP/Dictation/DictationDictionary.swift" \
   "$APP/Settings/TeachySettings.swift" \
+  "$APP/Touch/ScreenTapSignalProcessing.swift" \
   "$APP/Settings/TeachySettings+CursorColor.swift" \
   "$APP/Settings/VoicePreviewPlayer.swift" \
   "$APP/Settings/SettingsSections.swift" \

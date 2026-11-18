@@ -18,8 +18,9 @@
 //  Safety, same as Drive:
 //  - Every call goes through the permission gate (ToolPolicy.classifyComputer),
 //    judged by the app under the point or the app in front.
-//  - The takeover watch runs while it acts: Escape, a click or moving the
-//    mouse stops the job. Teachy's own events carry Drive's marker so they
+//  - The takeover watch runs while it acts: a click or moving the mouse
+//    hands the mouse back to the person until they hold still for 3 seconds;
+//    Escape stops the job. Teachy's own events carry Drive's marker so they
 //    are not mistaken for the person.
 //  - Typing into a password / secure field hands back to the person.
 //
@@ -35,7 +36,7 @@ enum ComputerUseGuide {
     - Actions: screenshot, click (button left/right/middle, clicks 1-3), move, drag (x,y to to_x,to_y), type (text into whatever has focus; click the field first), key ("cmd+s", "return", "escape", "tab"), scroll (direction up/down/left/right, amount 1-10, at x,y), wait (seconds), cursor_position.
     - To open an app use control_app; to go to a URL prefer the browser tools or key "cmd+l" then type then key "return".
     - Password, verification-code and card fields are the person's to type. If the result says so, stop and tell them.
-    - The person can press Escape or move the mouse to take over; then you stop.
+    - If the person grabs the mouse, your next action waits until they hold still for 3 seconds, then you get a note to take a fresh screenshot before continuing. Escape stops you.
     """
 }
 

@@ -354,15 +354,121 @@ final class BrowserBridge: ObservableObject {
         return lines.joined(separator: "\n")
     }
 
-    /// What Teachy is asked when the install starts, so it watches Terminal and walks the person through the rest.
-    static func installGuidanceRequest(extensionFolderPath: String?) -> String {
-        let loadStep: String
-        if let extensionFolderPath {
-            loadStep = "turn on Developer mode, click Load unpacked and choose the folder \(extensionFolderPath)"
+    /// What Teachy is asked once the extension zip is saved: teach the person, one click at a time,
+    /// how to load it in their browser, pointing at each place to click.
+    static func installGuidanceRequest(extensionZipPath: String?, helperIsInstallingInTerminal: Bool) -> String {
+        var request = "Teach me how to add the Teachy browser extension to Chrome. Walk me through it one step at a time and point at exactly where to click on my screen for each step."
+        if let extensionZipPath {
+            let unzippedFolderName = (URL(fileURLWithPath: extensionZipPath).deletingPathExtension().lastPathComponent)
+            request += " Teachy just saved the extension as \(extensionZipPath) and showed it in Finder. The steps: double-click that zip to unzip it into a folder named \"\(unzippedFolderName)\"; open chrome://extensions in the browser; switch on Developer mode in the top right; click Load unpacked in the top left; choose the \"\(unzippedFolderName)\" folder in Downloads; leave the extension switched on."
         } else {
-            loadStep = "add the Teachy extension and leave it switched on"
+            request += " The steps: open chrome://extensions in the browser; switch on Developer mode in the top right; click Load unpacked in the top left; choose the Teachy extension folder; leave the extension switched on."
         }
-        return "I'm trying to install Teachy's browser helper. Teachy just opened Terminal and started the installer there. Install it for me and guide me through it: watch the Terminal window and tell me what's happening, and if it fails, read the error on screen and fix it for me. When it says the helper is installed, help me open chrome://extensions, \(loadStep), and check that the Browser row in Teachy's settings says Connected."
+        if helperIsInstallingInTerminal {
+            request += " A Terminal window is also installing the small helper the extension talks to; it closes out by itself, so tell me to ignore it unless it shows an error."
+        }
+        request += " At the end, check that the Browser row in Teachy's settings says Connected."
+        return request
+    }
+
+    // MARK: The extension zip
+
+    /// The name of the zip saved to Downloads and of the folder inside it.
+    static let extensionZipFileName = "Teachy Chrome Extension.zip"
+
+    /// Where release builds fetch the zip: `scripts/release.sh` attaches it to every release.
+    static let releasedExtensionZipURL = URL(string: "https://github.com/VedSoni-dev/teachy-releases/releases/latest/download/Teachy-Chrome-Extension.zip")!
+
+    /// The unpacked extension this build can zip itself: one copied into the app bundle, else the source folder.
+    static func localExtensionFolder(in bundle: Bundle = .main) -> URL? {
+        if let bundled = bundle.url(forResource: "chrome-extension", withExtension: nil),
+           FileManager.default.fileExists(atPath: bundled.appendingPathComponent("manifest.json").path) {
+            return bundled
+        }
+        return sourceFolderExtension()
+    }
+
+    /// Saves the unpacked extension as a zip in Downloads (replacing an older copy) and shows it in Finder.
+    /// Zips the local folder when this build has one; otherwise downloads the zip from the latest release.
+    func saveExtensionZipToDownloads() async -> Result<URL, Error> {
+        let fileManager = FileManager.default
+        let downloadsFolder = fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+        let zipDestination = downloadsFolder.appendingPathComponent(Self.extensionZipFileName)
+
+        do {
+            try fileManager.createDirectory(at: downloadsFolder, withIntermediateDirectories: true)
+            if let extensionFolder = Self.localExtensionFolder() {
+                try await Self.zipExtensionFolder(extensionFolder, to: zipDestination)
+            } else {
+                let (downloadedFile, response) = try await URLSession.shared.download(from: Self.releasedExtensionZipURL)
+                if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
+                    throw ExtensionZipError(message: "The extension download failed (HTTP \(httpResponse.statusCode)).")
+                }
+                if fileManager.fileExists(atPath: zipDestination.path) {
+                    try fileManager.removeItem(at: zipDestination)
+                }
+                try fileManager.moveItem(at: downloadedFile, to: zipDestination)
+            }
+        } catch {
+            return .failure(error)
+        }
+
+        NSWorkspace.shared.activateFileViewerSelecting([zipDestination])
+        return .success(zipDestination)
+    }
+
+    struct ExtensionZipError: LocalizedError {
+        var message: String
+        var errorDescription: String? { message }
+    }
+
+    /// Copies the extension (without its tests) into a temporary folder named like the zip, then
+    /// zips that folder with `ditto` so unzipping gives one folder ready for Load unpacked.
+    static func zipExtensionFolder(_ extensionFolder: URL, to zipDestination: URL) async throws {
+        let fileManager = FileManager.default
+        let stagingRoot = fileManager.temporaryDirectory.appendingPathComponent("teachy-extension-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: stagingRoot) }
+
+        let unzippedFolderName = (extensionZipFileName as NSString).deletingPathExtension
+        let stagedExtensionFolder = stagingRoot.appendingPathComponent(unzippedFolderName, isDirectory: true)
+        try fileManager.createDirectory(at: stagingRoot, withIntermediateDirectories: true)
+        try fileManager.copyItem(at: extensionFolder, to: stagedExtensionFolder)
+        let stagedTestsFolder = stagedExtensionFolder.appendingPathComponent("tests", isDirectory: true)
+        if fileManager.fileExists(atPath: stagedTestsFolder.path) {
+            try fileManager.removeItem(at: stagedTestsFolder)
+        }
+        if fileManager.fileExists(atPath: zipDestination.path) {
+            try fileManager.removeItem(at: zipDestination)
+        }
+
+        let dittoExitStatus: Int32 = try await withCheckedThrowingContinuation { continuation in
+            let dittoProcess = Process()
+            dittoProcess.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+            dittoProcess.arguments = ["-c", "-k", "--norsrc", "--noextattr", "--noqtn", "--keepParent", stagedExtensionFolder.path, zipDestination.path]
+            dittoProcess.terminationHandler = { finishedProcess in
+                continuation.resume(returning: finishedProcess.terminationStatus)
+            }
+            do {
+                try dittoProcess.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+        if dittoExitStatus != 0 {
+            throw ExtensionZipError(message: "Zipping the extension failed (ditto exit \(dittoExitStatus)).")
+        }
+    }
+
+    /// "Get the extension": saves the zip and asks Teachy to teach the person where to click.
+    func getExtensionWithTeachyGuiding() async -> InstallOutcome {
+        switch await saveExtensionZipToDownloads() {
+        case .success(let zipFile):
+            askTeachy?(Self.installGuidanceRequest(extensionZipPath: zipFile.path, helperIsInstallingInTerminal: false))
+            return InstallOutcome(succeeded: true, message: "Saved \(zipFile.lastPathComponent) to Downloads. Teachy is showing you where to click.")
+        case .failure(let error):
+            return InstallOutcome(succeeded: false, message: "Could not save the extension: \(error.localizedDescription)")
+        }
     }
 
     /// Opens Terminal running the install script, and asks Teachy to guide the person through it.
@@ -402,9 +508,15 @@ final class BrowserBridge: ObservableObject {
             return InstallOutcome(succeeded: false, message: "Terminal could not start the installer: \(error.localizedDescription)")
         }
 
-        askTeachy?(Self.installGuidanceRequest(extensionFolderPath: Self.sourceFolderExtension()?.path))
+        // The helper installs in Terminal on its own; the zip is what the person loads by hand,
+        // so Teachy teaches that part. A failed zip still lets Teachy teach the generic steps.
+        let savedExtensionZip = try? await saveExtensionZipToDownloads().get()
+        askTeachy?(Self.installGuidanceRequest(extensionZipPath: savedExtensionZip?.path, helperIsInstallingInTerminal: true))
         watchForInstallToFinish()
-        return InstallOutcome(succeeded: true, message: "Installing in Terminal. Teachy is talking you through it.")
+        if let savedExtensionZip {
+            return InstallOutcome(succeeded: true, message: "Saved \(savedExtensionZip.lastPathComponent) to Downloads and installing the helper in Terminal. Teachy is showing you where to click.")
+        }
+        return InstallOutcome(succeeded: true, message: "Installing the helper in Terminal. The extension zip could not be saved; Teachy is talking you through it.")
     }
 
     /// The script runs outside the app, so look at the disk every couple of seconds until the

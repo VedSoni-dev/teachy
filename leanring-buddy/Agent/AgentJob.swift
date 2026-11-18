@@ -552,6 +552,11 @@ final class AgentJobCenter: ObservableObject {
             if let projectDirectory = job.projectDirectory {
                 systemPrompt += "\n\n" + Self.projectPromptSection(projectDirectory: projectDirectory)
             }
+            // What happened on recent days, so "carry on from yesterday" works; search_past_chats has the details.
+            let journal = BrainStore.shared.sessions.recentJournal(budgetCharacters: 1_200)
+            if !journal.isEmpty {
+                systemPrompt += "\n\nRECENT DAYS WITH THIS PERSON (Teachy's journal; use search_past_chats for details):\n" + journal
+            }
             if request.isUnattended {
                 systemPrompt += "\n\n" + Self.unattendedGuide
             }
@@ -823,6 +828,7 @@ enum AgentToolActivity {
         case "control_app": return "Opening an app"
         case "authenticated_fetch": return "Reading a signed-in page"
         case "remember": return "Saving a note"
+        case "search_past_chats": return "Looking through earlier chats"
         case "create_routine": return "Setting up a routine"
         case "list_routines": return "Checking your routines"
         case "pause_routine", "delete_routine": return "Changing a routine"
