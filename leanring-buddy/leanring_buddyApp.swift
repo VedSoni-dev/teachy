@@ -132,6 +132,9 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     /// with courses, so any link is treated as "show me Teachy".
     func application(_ application: NSApplication, open urls: [URL]) {
         guard urls.contains(where: { $0.scheme?.lowercased() == "teachy" }) else { return }
+        // teachy://demo/… scripted recordings (off unless enabled in defaults).
+        let demoURLs = urls.filter { TeachyDemoDriver.handle($0, companionManager: companionManager) }
+        if demoURLs.count == urls.count { return }
         notchManager?.selectedTab = .home
         notchManager?.show()
         notchManager?.expand()

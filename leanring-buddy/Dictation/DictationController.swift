@@ -199,6 +199,33 @@ final class DictationController {
         }
     }
 
+    // MARK: - Demo driver
+
+    /// `teachy://demo/dictate`: one dictation whose audio comes from a file instead of
+    /// the microphone, as if the shortcut were held for the file's length. Used to
+    /// record launch footage without anyone at the keyboard.
+    func runDemoDictation(audioFileURL: URL) {
+        guard phase == .idle else { return }
+        let audioSeconds = (try? AVAudioFile(forReading: audioFileURL)).map {
+            Double($0.length) / $0.processingFormat.sampleRate
+        } ?? 0
+        guard audioSeconds > 0 else {
+            print("⚠️ Demo: no audio in \(audioFileURL.lastPathComponent)")
+            return
+        }
+        recorder.demoAudioFileURL = audioFileURL
+        beginRecording()
+        recorder.demoAudioFileURL = nil
+        guard phase == .recording else { return }
+        Timer.scheduledTimer(withTimeInterval: audioSeconds + 0.4, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.phase == .recording else { return }
+                self.machine.reset()
+                self.finishRecording()
+            }
+        }
+    }
+
     // MARK: - Recording
 
     private func beginRecording() {

@@ -62,6 +62,12 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
     )!
 
     private var engine: AVAudioEngine?
+    /// Demo driver only (`teachy://demo/dictate`): when set, the next `start` plays this
+    /// audio file through the normal pipeline at real-time pace instead of opening the
+    /// microphone. Everything after the audio (live text, publik, insertion) is unchanged.
+    var demoAudioFileURL: URL?
+    /// Bumped to stop a running demo feed.
+    private var demoFeedGeneration = 0
     private var converter: AVAudioConverter?
     private var converterInputFormat: AVAudioFormat?
     private var pcm = Data()
@@ -164,6 +170,12 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
     func start(contextualStrings: [String], useOnDeviceSpeech: Bool, languageCode: String? = nil) throws {
         cancel()
 
+        if let demoAudioFileURL {
+            self.demoAudioFileURL = nil
+            try startDemoFeed(from: demoAudioFileURL, contextualStrings: contextualStrings, useOnDeviceSpeech: useOnDeviceSpeech, languageCode: languageCode)
+            return
+        }
+
         let engine = AVAudioEngine()
         // Use the microphone chosen in Settings (or the Mac's input when following the system).
         MicrophoneCenter.applyWithFailover(to: engine)
@@ -212,6 +224,7 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
         let engine = self.engine
         self.engine = nil
         isRecording = false
+        demoFeedGeneration += 1
         let recorded = pcm
         pcm = Data()
         let request = recognitionRequest
@@ -231,6 +244,7 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
         let engine = self.engine
         self.engine = nil
         isRecording = false
+        demoFeedGeneration += 1
         pcm = Data()
         sessionGeneration += 1
         let tasks = Array(recognitionTasks.values)
@@ -253,6 +267,54 @@ nonisolated final class DictationAudioRecorder: @unchecked Sendable {
             try? await Task.sleep(nanoseconds: 40_000_000)
         }
         return liveText
+    }
+
+    // MARK: - Demo feed
+
+    /// Same setup as a microphone recording, but the buffers come from a file, paced
+    /// in real time on a background thread so live text appears as it would while speaking.
+    private func startDemoFeed(from fileURL: URL, contextualStrings: [String], useOnDeviceSpeech: Bool, languageCode: String?) throws {
+        let audioFile = try AVAudioFile(forReading: fileURL)
+        let fileFormat = audioFile.processingFormat
+
+        lock.lock()
+        pcm = Data()
+        converter = nil
+        converterInputFormat = nil
+        segments = [SegmentState()]
+        sessionGeneration += 1
+        demoFeedGeneration += 1
+        let feedGeneration = demoFeedGeneration
+        isRecording = true
+        usesOnDeviceSpeech = useOnDeviceSpeech
+        self.contextualStrings = contextualStrings
+        lock.unlock()
+
+        if useOnDeviceSpeech {
+            speechRecognizer = Self.makeSpeechRecognizer(languageCode: languageCode)
+            startRecognitionRequest()
+        } else {
+            lock.lock()
+            segments[0].isFinal = true
+            lock.unlock()
+        }
+
+        let framesPerChunk: AVAudioFrameCount = 1024
+        let secondsPerChunk = Double(framesPerChunk) / fileFormat.sampleRate
+        Thread.detachNewThread { [weak self] in
+            while true {
+                guard let self else { return }
+                self.lock.lock()
+                let stillFeeding = self.demoFeedGeneration == feedGeneration
+                self.lock.unlock()
+                guard stillFeeding,
+                      let buffer = AVAudioPCMBuffer(pcmFormat: fileFormat, frameCapacity: framesPerChunk),
+                      (try? audioFile.read(into: buffer, frameCount: framesPerChunk)) != nil,
+                      buffer.frameLength > 0 else { return }
+                self.consume(buffer)
+                Thread.sleep(forTimeInterval: secondsPerChunk)
+            }
+        }
     }
 
     // MARK: - Audio thread
