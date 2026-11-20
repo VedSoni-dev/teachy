@@ -38,6 +38,70 @@ nonisolated enum TeachySettingsKey {
     static let screenTapSensitivity = "teachyScreenTapSensitivity"
     /// Webcam eye tracking: where the person looks while asking becomes part of the question.
     static let eyeTrackingEnabled = "teachyEyeTrackingEnabled"
+    /// A `TeachyWebControlPreference` raw value: how jobs work on websites.
+    static let webControlPreference = "teachyWebControlPreference"
+    /// A `TeachyPointerControlPreference` raw value: whether jobs may move the real mouse.
+    static let pointerControlPreference = "teachyPointerControlPreference"
+}
+
+// MARK: - How Teachy acts
+
+/// Where agent jobs do web work.
+nonisolated enum TeachyWebControlPreference: String, CaseIterable, Identifiable, Sendable {
+    /// Teachy picks per task: their Chrome for signed-in sites and things to watch or hear,
+    /// its own background browser for research and forms, the mouse only as a last resort.
+    case automatic
+    /// Always their own Chrome (through the Teachy extension, else tabs and AppleScript).
+    case myChrome
+    /// Always Teachy's own browser, out of sight: their screen and mouse stay free.
+    case backgroundBrowser
+    /// Their browser, driven with the real mouse and keyboard so they can watch.
+    case myScreen
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .automatic: return "Let Teachy choose"
+        case .myChrome: return "My Chrome"
+        case .backgroundBrowser: return "Teachy's own browser"
+        case .myScreen: return "My screen"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .automatic: return "Your Chrome for your accounts and anything to watch or hear, Teachy's browser for research, your mouse only when nothing else works."
+        case .myChrome: return "Uses your tabs and sign-ins without moving your mouse. Best with the Teachy Chrome extension."
+        case .backgroundBrowser: return "Works out of sight in a separate browser. Your screen and mouse stay yours; you are not signed in there."
+        case .myScreen: return "Clicks and types in your browser with your mouse and keyboard, so you can watch every step."
+        }
+    }
+}
+
+/// Whether agent jobs may take the real pointer and keyboard (the `computer` tool).
+nonisolated enum TeachyPointerControlPreference: String, CaseIterable, Identifiable, Sendable {
+    case allowed
+    case askFirst
+    case never
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .allowed: return "Allowed"
+        case .askFirst: return "Ask first"
+        case .never: return "Never"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .allowed: return "Teachy may take your mouse when a job needs it. Move the mouse or press Escape to take it back."
+        case .askFirst: return "Teachy asks once per job before it takes your mouse and keyboard."
+        case .never: return "Jobs never move your mouse. Some steps in apps without accessibility support may not be possible."
+        }
+    }
 }
 
 // MARK: - Voices
@@ -392,6 +456,15 @@ nonisolated enum TeachySettingsStorage {
         bool(TeachySettingsKey.agentAutoPermissions, default: true, defaults)
     }
 
+    static func webControlPreference(_ defaults: UserDefaults = .standard) -> TeachyWebControlPreference {
+        defaults.string(forKey: TeachySettingsKey.webControlPreference).flatMap(TeachyWebControlPreference.init(rawValue:)) ?? .automatic
+    }
+
+    /// Ask first by default: taking someone's mouse without warning is the thing they hate most.
+    static func pointerControlPreference(_ defaults: UserDefaults = .standard) -> TeachyPointerControlPreference {
+        defaults.string(forKey: TeachySettingsKey.pointerControlPreference).flatMap(TeachyPointerControlPreference.init(rawValue:)) ?? .askFirst
+    }
+
     static func replyLanguage(_ defaults: UserDefaults = .standard) -> String {
         TeachyReplyLanguages.normalized(defaults.string(forKey: TeachySettingsKey.replyLanguage))
     }
@@ -511,6 +584,14 @@ final class TeachySettings: ObservableObject {
         didSet { defaults.set(agentAutoPermissions, forKey: TeachySettingsKey.agentAutoPermissions) }
     }
 
+    @Published var webControlPreference: TeachyWebControlPreference {
+        didSet { defaults.set(webControlPreference.rawValue, forKey: TeachySettingsKey.webControlPreference) }
+    }
+
+    @Published var pointerControlPreference: TeachyPointerControlPreference {
+        didSet { defaults.set(pointerControlPreference.rawValue, forKey: TeachySettingsKey.pointerControlPreference) }
+    }
+
     @Published var shortcuts: TeachyShortcutSet {
         didSet { TeachySettingsStorage.saveShortcuts(shortcuts, defaults) }
     }
@@ -559,6 +640,8 @@ final class TeachySettings: ObservableObject {
         soundsEnabled = TeachySettingsStorage.soundsEnabled(defaults)
         allowBrowserCookieTools = TeachySettingsStorage.allowBrowserCookieTools(defaults)
         agentAutoPermissions = TeachySettingsStorage.agentAutoPermissions(defaults)
+        webControlPreference = TeachySettingsStorage.webControlPreference(defaults)
+        pointerControlPreference = TeachySettingsStorage.pointerControlPreference(defaults)
         shortcuts = TeachySettingsStorage.shortcuts(defaults)
         replyLanguage = TeachySettingsStorage.replyLanguage(defaults)
         alwaysOnAutoOffMinutes = TeachySettingsStorage.alwaysOnAutoOffMinutes(defaults)

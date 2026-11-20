@@ -144,6 +144,24 @@ nonisolated final class BrainStore: @unchecked Sendable {
         } ?? false
     }
 
+    /// Every remembered bullet in both files with its section title, for recall.
+    func rememberedItems() -> [(section: String, text: String)] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let memory = loadMemory()?.memory else { return [] }
+        var items: [(section: String, text: String)] = []
+        for file in BrainFile.allCases {
+            let document = memory[file]
+            for sectionIndex in document.sections.indices {
+                let title = document.sections[sectionIndex].title
+                for item in document.items(inSectionAt: sectionIndex) where item.isBullet {
+                    items.append((title, item.text))
+                }
+            }
+        }
+        return items
+    }
+
     // MARK: - For the UI
 
     /// How many things are remembered across both files.

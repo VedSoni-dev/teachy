@@ -89,6 +89,8 @@ nonisolated enum BrainAction: Equatable, Sendable, Decodable {
         Kinds:
         - aboutMe: who they are (name, job, interests, life details)
         - answerStyle: how they want answers (tone, length, language). Use this when they say things like "you talk too much"
+        - howToDoThings: how they want you to act ("YouTube: play it in my Chrome", "Don't move my mouse unless I ask")
+        - likes: songs, artists, shows, food, brands, places they like, as "Subject: value" ("Favourite song: <title> by <artist>")
         - tools: apps and tools they use
         - skills: what they can do or are learning
         - mistakes: things that keep catching them (repeats are counted)

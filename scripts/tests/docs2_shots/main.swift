@@ -327,6 +327,17 @@ do {
     check("live: after the file changes, the saved messages replace the live ones", timeline.items.map(\.content) == [.userMessage("Is it live?"), .assistantMessage("Yes, it is.")])
     timeline.post(.note("A note"))
     check("live: a posted row appears at once", timeline.items.last?.plainText == "A note")
+
+    // Saved dates are whole seconds, so a short reply saved in the second it started
+    // streaming reads as slightly older than the live copy. It must still replace it.
+    timeline.userAsked("Quick one?")
+    timeline.streamingReply(text: "Sure.", isFinal: true)
+    let wholeSecondNow = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
+    saved += [ChatMessage(isFromUser: true, text: "Quick one?", date: wholeSecondNow), ChatMessage(isFromUser: false, text: "Sure.", date: wholeSecondNow)]
+    try? "changed again".write(to: conversationURL, atomically: true, encoding: .utf8)
+    settle(1.3)
+    let sureCount = timeline.items.filter { $0.plainText == "Sure." }.count
+    check("live: a reply saved within its first second shows once, not twice (\(sureCount))", sureCount == 1)
     timeline.stopWatching()
 }
 

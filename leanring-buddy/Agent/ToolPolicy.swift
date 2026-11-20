@@ -48,6 +48,8 @@ struct ToolPolicyDecision: Equatable {
     let detail: String
     /// The app (or site host) the consent is scoped to. Empty = the tool as a whole.
     let appScope: String
+    /// Ask even in auto mode (the person chose "ask before taking my mouse").
+    var bypassesAutoMode = false
 
     /// "Always allow" and "allow for this job" are remembered per tool + app.
     var grantKey: String { "\(toolName)|\(appScope.lowercased())" }

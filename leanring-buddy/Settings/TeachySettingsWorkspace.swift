@@ -69,7 +69,11 @@ struct TeachySettingsWorkspace: View {
         case .integrations:
             SettingsPageGroup(title: "Browser") { BrowserExtensionSection(startsExpanded: true) }
             ConnectorsSection()
-        case .agents: AgentsSection(showsRoutines: false)
+        case .agents:
+            VStack(alignment: .leading, spacing: 22) {
+                TeachyActionPreferencesSection()
+                AgentsSection(showsRoutines: false)
+            }
         case .routines: RoutinesSection()
         case .drawings: DrawingsSection(startsExpanded: true, projectOptions: projects.projects.map { (id: $0.id, name: $0.name) })
         case .memory: BrainMemorySection()

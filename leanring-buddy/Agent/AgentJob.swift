@@ -527,6 +527,10 @@ final class AgentJobCenter: ObservableObject {
         if !BrowserBridge.shared.isExtensionConnected {
             allowed = allowed.filter { !$0.hasPrefix("browser_") }
         }
+        // Their setting for websites and for their mouse decides which tools the job even has.
+        let webPreference = TeachySettingsStorage.webControlPreference()
+        let pointerPreference = TeachySettingsStorage.pointerControlPreference()
+        allowed = TeachyActionPreferences.filteredToolNames(allowed, web: webPreference, pointer: pointerPreference)
 
         var config = AgentLoopConfig()
         config.tools = registry.toolDefinitions(allowed: allowed)
@@ -545,6 +549,19 @@ final class AgentJobCenter: ObservableObject {
             }
             if allowed.contains(where: { $0.hasPrefix("browser_") }) {
                 systemPrompt += "\n\n" + BrowserToolGuide.text
+            }
+            systemPrompt += "\n\n" + TeachyActionPreferences.promptSection(web: webPreference, pointer: pointerPreference, availableTools: allowed)
+            // What Teachy knows about them, and what it remembers that bears on this task.
+            let rememberedContext = BrainStore.shared.promptContext()
+            if !rememberedContext.isEmpty {
+                systemPrompt += "\n\nWHAT YOU REMEMBER ABOUT THEM:\n" + rememberedContext
+            }
+            let task = request.transcript
+            let recalled = await Task.detached(priority: .userInitiated) {
+                BrainStore.shared.recallPromptSection(forQuestion: task)
+            }.value
+            if !recalled.isEmpty {
+                systemPrompt += "\n\n" + recalled
             }
             if let agent = request.agent {
                 systemPrompt += "\n\n" + roster.promptSection(for: agent)

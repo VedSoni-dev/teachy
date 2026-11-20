@@ -175,7 +175,10 @@ final class ChatTimeline: ObservableObject {
             if let pendingQuestion, loaded.suffix(4).contains(where: { $0.isFromUser && $0.text == pendingQuestion.text }) {
                 self.pendingQuestion = nil
             }
-            if let streaming, loaded.last.map({ !$0.isFromUser && $0.date >= streaming.date }) == true {
+            // Saved dates are whole seconds (ISO 8601), so a short reply saved within the
+            // second it started streaming reads as up to a second older than the live copy.
+            let savedDateTolerance: TimeInterval = 1
+            if let streaming, loaded.last.map({ !$0.isFromUser && $0.date >= streaming.date.addingTimeInterval(-savedDateTolerance) }) == true {
                 self.streaming = nil
                 clearStreamingTask?.cancel()
             }

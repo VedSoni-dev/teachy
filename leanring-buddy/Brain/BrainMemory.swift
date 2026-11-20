@@ -37,6 +37,10 @@ nonisolated enum BrainFile: CaseIterable, Sendable {
 
             ## How I like answers
 
+            ## How I like things done
+
+            ## Likes and favourites
+
             ## Tools and apps I use
 
             ## Skills
@@ -67,6 +71,10 @@ nonisolated enum BrainFile: CaseIterable, Sendable {
 nonisolated enum BrainKind: String, CaseIterable, Codable, Sendable {
     case aboutMe
     case answerStyle
+    /// How they want Teachy to act: which browser, whether it may move the mouse, per-site habits.
+    case howToDoThings
+    /// Songs, artists, shows, food, brands: what "the one I like" points at.
+    case likes
     case tools
     case skills
     case mistakes
@@ -77,7 +85,7 @@ nonisolated enum BrainKind: String, CaseIterable, Codable, Sendable {
 
     var file: BrainFile {
         switch self {
-        case .aboutMe, .answerStyle, .tools, .skills, .mistakes, .words: return .profile
+        case .aboutMe, .answerStyle, .howToDoThings, .likes, .tools, .skills, .mistakes, .words: return .profile
         case .project, .recent, .screen: return .volatile
         }
     }
@@ -86,6 +94,8 @@ nonisolated enum BrainKind: String, CaseIterable, Codable, Sendable {
         switch self {
         case .aboutMe: return "About me"
         case .answerStyle: return "How I like answers"
+        case .howToDoThings: return "How I like things done"
+        case .likes: return "Likes and favourites"
         case .tools: return "Tools and apps I use"
         case .skills: return "Skills"
         case .mistakes: return "Things that keep catching me"
@@ -122,6 +132,8 @@ nonisolated enum BrainKind: String, CaseIterable, Codable, Sendable {
         switch compactKind {
         case "about", "me", "fact", "personal": return .aboutMe
         case "style", "preference", "preferences", "answers", "tone": return .answerStyle
+        case "howtodo", "howtoact", "howtodothings", "workflow", "habit", "habits", "action", "actions": return .howToDoThings
+        case "like", "favorite", "favorites", "favourite", "favourites", "taste", "music": return .likes
         case "tool", "app", "apps": return .tools
         case "skill": return .skills
         case "mistake", "gotcha", "gotchas": return .mistakes
@@ -279,7 +291,7 @@ nonisolated struct BrainMemory: Equatable, Sendable {
 
     /// Most important first. "How I like answers" is always included whole.
     static let promptPriority: [BrainKind] = [
-        .answerStyle, .project, .aboutMe, .mistakes, .tools, .skills, .words, .recent, .screen,
+        .answerStyle, .howToDoThings, .project, .aboutMe, .likes, .mistakes, .tools, .skills, .words, .recent, .screen,
     ]
 
     static let promptHeader =

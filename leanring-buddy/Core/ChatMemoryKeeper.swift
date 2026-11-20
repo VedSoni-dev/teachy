@@ -10,7 +10,11 @@
 //      the full chat stays on disk;
 //    - titles: a short model-written title after the first exchange;
 //    - journal: once a chat goes quiet, 1–3 dated lines go into JOURNAL.md, so a
-//      fresh launch next week still knows what happened.
+//      fresh launch next week still knows what happened;
+//    - learning: new messages become facts in PROFILE.md / VOLATILE.md (likes,
+//      how they want things done, people, corrections), updating or removing older
+//      facts instead of piling up (`MemoryLearning`). Old chats are caught up a
+//      couple per pass.
 //
 //  Runs after each voice turn and at launch, in the background, one pass at a
 //  time. Failures are quiet: the next pass tries again.
@@ -60,6 +64,7 @@ final class ChatMemoryKeeper {
 
     private func runMaintenancePass() async {
         // Not signed in yet: the router throws and the pass is retried later.
+        await learnFromNewMessages()
         if let current = store.currentSession {
             await compactIfNeeded(current)
             await writeTitleIfNeeded(current)
@@ -99,6 +104,61 @@ final class ChatMemoryKeeper {
         guard let answer = await ask(system: ChatContextWindow.journalSystemPrompt, user: transcript, job: .cleanup, maxTokens: 300) else { return }
         // Marked as journaled even when nothing was worth writing, so it is not asked again.
         store.addJournalLines(ChatJournal.lines(fromModelAnswer: answer), on: lastNew.date, for: session.id, throughMessageCount: allMessages.count)
+    }
+
+    // MARK: - Learning
+
+    private var learningProgressFileURL: URL {
+        BrainStore.shared.directoryURL.appendingPathComponent("learned.json")
+    }
+
+    private func loadLearningProgress() -> MemoryLearningProgress {
+        guard let data = try? Data(contentsOf: learningProgressFileURL),
+              let progress = try? JSONDecoder().decode(MemoryLearningProgress.self, from: data) else { return MemoryLearningProgress() }
+        return progress
+    }
+
+    private func saveLearningProgress(_ progress: MemoryLearningProgress) {
+        guard let data = try? JSONEncoder().encode(progress) else { return }
+        try? FileManager.default.createDirectory(at: BrainStore.shared.directoryURL, withIntermediateDirectories: true)
+        try? data.write(to: learningProgressFileURL, options: .atomic)
+    }
+
+    /// Turns new chat messages into remembered facts. The open chat is learned right after
+    /// each turn; older chats a couple per pass until the whole history is covered.
+    private func learnFromNewMessages() async {
+        var progress = loadLearningProgress()
+        let index = store.index()
+        for session in MemoryLearning.sessionsToLearn(index: index, progress: progress) {
+            let allMessages = store.messages(in: session.id)
+            guard let slice = MemoryLearning.nextSlice(of: allMessages, learnedCount: progress.learnedCount(for: session.id)) else {
+                progress.learnedMessageCountBySession[session.id] = allMessages.count
+                continue
+            }
+            let prompt = MemoryLearning.userPrompt(
+                currentMemory: BrainStore.shared.promptContext(budgetCharacters: 8_000),
+                sessionTitle: session.title,
+                context: slice.context,
+                new: slice.new
+            )
+            guard let answer = await ask(system: MemoryLearning.systemPrompt, user: prompt, job: .write, maxTokens: 700) else { return }
+            let actions = MemoryLearning.actions(fromModelAnswer: answer)
+            if !actions.isEmpty {
+                BrainStore.shared.apply(actions: actions)
+                // Shown in the chat it came from, so the person sees what stuck (and can fix it).
+                if session.id == index.currentSessionID, let note = MemoryLearning.timelineNote(for: actions) {
+                    ChatTimeline.shared.post(.note(note))
+                }
+                print("🧠 Learned \(actions.count) memory change(s) from a chat")
+            }
+            progress.learnedMessageCountBySession[session.id] = slice.learnedThrough
+            saveLearningProgress(progress)
+        }
+        // Chats deleted since: drop their progress.
+        let liveIDs = Set(store.index().sessions.map(\.id))
+        let before = progress.learnedMessageCountBySession.count
+        progress.learnedMessageCountBySession = progress.learnedMessageCountBySession.filter { liveIDs.contains($0.key) }
+        if progress.learnedMessageCountBySession.count != before { saveLearningProgress(progress) }
     }
 
     // MARK: - Model call

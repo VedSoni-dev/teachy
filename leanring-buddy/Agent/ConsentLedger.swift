@@ -88,7 +88,7 @@ final class ConsentLedger {
                 notNowUntil.removeValue(forKey: decision.requestKey)
             }
             if decision.risk == .alwaysAsk { return .ask }
-            if isAutoModeOn() { return .allowed(because: "auto mode") }
+            if isAutoModeOn() && !decision.bypassesAutoMode { return .allowed(because: "auto mode") }
             if jobGrants[jobID]?.contains(decision.grantKey) == true {
                 return .allowed(because: "allowed for this job")
             }

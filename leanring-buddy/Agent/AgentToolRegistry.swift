@@ -104,7 +104,13 @@ final class AgentToolGate {
             argumentsForPolicy["working_directory"] = Self.resolvedPath(absolute)
         }
 
-        let decision = ToolPolicy.classify(toolName: toolName, arguments: argumentsForPolicy, settings: settings(for: job), context: context)
+        var decision = ToolPolicy.classify(toolName: toolName, arguments: argumentsForPolicy, settings: settings(for: job), context: context)
+        // "Ask before taking my mouse": moving the real pointer needs a yes (once per job is enough) even in auto mode.
+        if decision.risk == .needsConsent,
+           TeachyActionPreferences.takesThePointer(toolName: toolName, arguments: arguments),
+           TeachySettingsStorage.pointerControlPreference() == .askFirst {
+            decision.bypassesAutoMode = true
+        }
 
         if job.isUnattended {
             // A routine run: there is nobody to ask, and a routine must never be able to say yes

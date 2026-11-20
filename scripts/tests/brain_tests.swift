@@ -157,7 +157,7 @@ enum BrainTests {
             checkEqual(memory.remember("line one\nline two\n## Fake heading", kind: .aboutMe), .added, "multi-line note")
             checkEqual(bullets(memory.profile, "About me").last, "line one line two ## Fake heading",
                        "a note can never add lines or headings")
-            checkEqual(memory.profile.sections.count, 6, "no section was injected")
+            checkEqual(memory.profile.sections.count, 8, "no section was injected")
 
             checkEqual(memory.remember("Forgets to save before running", kind: .mistakes), .added, "mistake 1")
             checkEqual(memory.remember("forgets to save before running.", kind: .mistakes), .repeated(count: 2), "mistake 2")
@@ -246,6 +246,8 @@ enum BrainTests {
                 memory.remember("Skill \(index) with some description", kind: .skills)
                 memory.remember("Mistake \(index) that keeps happening", kind: .mistakes)
                 memory.remember("Word\(index)", kind: .words)
+                memory.remember("Habit \(index): do it this way", kind: .howToDoThings)
+                memory.remember("Favourite \(index): something", kind: .likes)
                 memory.remember("Project \(index): active; blocker \(index)", kind: .project)
                 memory.remember("Recent \(index)", kind: .recent, date: fixedDate, timeZone: fixedTimeZone)
                 memory.remember("Screen \(index)", kind: .screen, date: fixedDate, timeZone: fixedTimeZone)
@@ -275,7 +277,7 @@ enum BrainTests {
             let fullHeadings = full.components(separatedBy: "\n").filter { $0.hasPrefix("## ") }
             checkEqual(
                 fullHeadings,
-                ["How I like answers", "Working on now", "About me", "Things that keep catching me",
+                ["How I like answers", "How I like things done", "Working on now", "About me", "Likes and favourites", "Things that keep catching me",
                  "Tools and apps I use", "Skills", "Words and names", "Recently", "Screen memory", "My family"]
                     .map { "## \($0)" },
                 "priority order, hand-added sections last"
