@@ -24,7 +24,8 @@
 //  Skills are loaded from the app bundle (files named `*.skill.md`; Xcode copies
 //  resources flat, so the suffix is what tells them apart from other Markdown)
 //  and from `~/.teachy/skills/*.md`. A file in the user folder replaces a
-//  bundled skill with the same name.
+//  bundled skill with the same name. Skills from the Skill Market also carry
+//  `id`, `version` and `author` in the front matter (see SkillMarket.swift).
 //
 //  Foundation only. Tested by scripts/tests/run_walk_tests.sh.
 //
@@ -47,6 +48,22 @@ nonisolated struct Skill: Equatable, Sendable {
     var sections: [Section]
     /// Where it was loaded from: "bundled" or "user".
     var origin: String = "bundled"
+    /// Skill Market listing ID (`id:` in the front matter), when it came from the market.
+    var marketID: String? = nil
+    /// `version:` in the front matter, for spotting updates to market skills.
+    var version: String? = nil
+    /// `author:` in the front matter.
+    var author: String? = nil
+    /// Library presentation (all optional, from the front matter): an emoji for the tile,
+    /// a one-line pitch, who it is for, tags, and what is inside.
+    var icon: String? = nil
+    var headline: String? = nil
+    var details: String? = nil
+    var goodFor: [String] = []
+    var highlights: [String] = []
+    var category: String? = nil
+    /// The file it was read from. Set by `SkillLibrary.load`.
+    var fileURL: URL? = nil
 
     var body: String { sections.map(\.text).joined(separator: "\n\n") }
 }
@@ -75,7 +92,16 @@ nonisolated enum SkillParser {
             sites: (fields["sites"] ?? []).map(normalizeSite).filter { !$0.isEmpty },
             summary: fields["summary"]?.joined(separator: ", ") ?? "",
             sections: sections(from: bodyLines),
-            origin: origin
+            origin: origin,
+            marketID: fields["id"]?.first.flatMap { $0.isEmpty ? nil : $0.lowercased() },
+            version: fields["version"]?.first.flatMap { $0.isEmpty ? nil : $0 },
+            author: fields["author"]?.first.flatMap { $0.isEmpty ? nil : $0 },
+            icon: fields["icon"]?.first.flatMap { $0.isEmpty ? nil : $0 },
+            headline: fields["headline"]?.first.flatMap { $0.isEmpty ? nil : $0 },
+            details: fields["description"]?.first.flatMap { $0.isEmpty ? nil : $0 },
+            goodFor: (fields["goodfor"] ?? []).filter { !$0.isEmpty },
+            highlights: (fields["highlights"] ?? []).filter { !$0.isEmpty },
+            category: fields["category"]?.first.flatMap { $0.isEmpty ? nil : $0 }
         )
     }
 
@@ -303,6 +329,17 @@ nonisolated final class SkillLibrary: @unchecked Sendable {
         return loaded
     }
 
+    /// Only the skills the person added (from a file or the Skill Market), in file-name order.
+    var userSkills: [Skill] {
+        guard let userDirectory else { return [] }
+        return Self.load(bundledDirectories: [], userDirectory: userDirectory)
+    }
+
+    /// Only the skills that ship with Teachy, before any user file replaces them.
+    var bundledSkills: [Skill] {
+        Self.load(bundledDirectories: bundledDirectories, userDirectory: nil)
+    }
+
     func reload() {
         lock.lock()
         cached = nil
@@ -345,14 +382,16 @@ nonisolated final class SkillLibrary: @unchecked Sendable {
 
         for directory in bundledDirectories {
             for file in markdownFiles(in: directory) where file.lastPathComponent.lowercased().hasSuffix(bundledFileSuffix) {
-                if let text = try? String(contentsOf: file, encoding: .utf8), let skill = SkillParser.parse(text, origin: "bundled") {
+                if let text = try? String(contentsOf: file, encoding: .utf8), var skill = SkillParser.parse(text, origin: "bundled") {
+                    skill.fileURL = file
                     add(skill)
                 }
             }
         }
         if let userDirectory {
             for file in markdownFiles(in: userDirectory) {
-                if let text = try? String(contentsOf: file, encoding: .utf8), let skill = SkillParser.parse(text, origin: "user") {
+                if let text = try? String(contentsOf: file, encoding: .utf8), var skill = SkillParser.parse(text, origin: "user") {
+                    skill.fileURL = file
                     add(skill)
                 }
             }

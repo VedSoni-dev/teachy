@@ -18,7 +18,7 @@ struct TeachySettingsWorkspace: View {
                         sidebarHeading("TEACHY")
                         ForEach([TeachySettingsPage.voice, .microphone, .dictation, .shortcuts, .cursor, .touchAndGaze, .camera]) { categoryButton($0) }
                         sidebarHeading("WORK")
-                        ForEach([TeachySettingsPage.projects, .integrations, .agents, .routines, .drawings, .memory]) { categoryButton($0) }
+                        ForEach([TeachySettingsPage.projects, .integrations, .skills, .agents, .routines, .drawings, .memory]) { categoryButton($0) }
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 12)
@@ -69,6 +69,7 @@ struct TeachySettingsWorkspace: View {
         case .integrations:
             SettingsPageGroup(title: "Browser") { BrowserExtensionSection(startsExpanded: true) }
             ConnectorsSection()
+        case .skills: TeachySkillsSettingsPage()
         case .agents:
             VStack(alignment: .leading, spacing: 22) {
                 TeachyActionPreferencesSection()

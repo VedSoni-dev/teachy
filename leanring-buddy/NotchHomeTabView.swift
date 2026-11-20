@@ -33,6 +33,11 @@ struct NotchHomeTabView: View {
                 }
                 .teachyIconButton(sideLength: 30)
                 .accessibilityLabel("Routines")
+                Button { notchManager.openSettings(.skills) } label: {
+                    Image(systemName: "book.closed")
+                }
+                .teachyIconButton(sideLength: 30)
+                .accessibilityLabel("Skills")
                 Spacer()
                 Button { notchManager.openSettings(.integrations) } label: {
                     HStack(spacing: 5) {

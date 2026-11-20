@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "airtable",
+      "name": "Airtable",
+      "summary": "Spreadsheet-like databases with views, forms and automations, in the browser.",
+      "author": "Teachy",
+      "version": "1.0",
+      "file": "skills/airtable.skill.md",
+      "apps": [
+        "Airtable",
+        "airtable.com"
+      ],
+      "category": "Work",
+      "icon": "🗂️",
+      "headline": "Find your way around Airtable bases, views and automations.",
+      "description": "For anyone handed an Airtable base who needs to add fields, build a view or a form, or work out why a filter changed for the whole team.",
+      "goodFor": [
+        "Airtable",
+        "Databases",
+        "Forms"
+      ],
+      "highlights": [
+        "Where views, filters and sorts live, and who sees them",
+        "Adding and editing fields, including links between tables",
+        "Forms, CSV imports and automations",
+        "The gotchas that delete data in every view"
+      ],
+      "added": "2026-11-19"
+    },
+    {
+      "id": "canva",
+      "name": "Canva",
+      "summary": "Design tool for social posts, presentations and documents, in the browser.",
+      "author": "Teachy",
+      "version": "1.0",
+      "file": "skills/canva.skill.md",
+      "apps": [
+        "Canva",
+        "canva.com"
+      ],
+      "category": "Design",
+      "icon": "🎨",
+      "headline": "Resize, edit and export Canva designs without hunting for buttons.",
+      "description": "Turn this on when you are editing a template, resizing a post for another platform, or trying to get a clean download.",
+      "goodFor": [
+        "Canva",
+        "Social posts",
+        "Slides"
+      ],
+      "highlights": [
+        "The editor layout: object panel, page, selection toolbar",
+        "Resizing a design safely",
+        "Swapping photos and removing backgrounds",
+        "Download formats, presenting and sharing"
+      ],
+      "added": "2026-11-19"
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "summary": "Chat servers with text and voice channels, the same in the desktop app and the browser.",
+      "author": "Teachy",
+      "version": "1.0",
+      "file": "skills/discord.skill.md",
+      "apps": [
+        "Discord",
+        "discord.com"
+      ],
+      "category": "Social",
+      "icon": "💬",
+      "headline": "Servers, channels, voice and settings in Discord, mapped out.",
+      "description": "For people new to Discord, or anyone looking for where invites, screen share or per-server profiles are.",
+      "goodFor": [
+        "Discord",
+        "Voice chat",
+        "Communities"
+      ],
+      "highlights": [
+        "Server list, channel list and member list explained",
+        "Invites, DMs and group DMs",
+        "Voice channels and screen sharing",
+        "User settings versus server settings"
+      ],
+      "added": "2026-11-19"
+    },
+    {
+      "id": "linear",
+      "name": "Linear",
+      "summary": "Issue tracking for software teams, the same in the desktop app and the browser.",
+      "author": "Teachy",
+      "version": "1.0",
+      "file": "skills/linear.skill.md",
+      "apps": [
+        "Linear",
+        "linear.app"
+      ],
+      "category": "Work",
+      "icon": "🎯",
+      "headline": "Move fast in Linear: issues, cycles, filters and shortcuts.",
+      "description": "For engineers and PMs working in Linear who want the single-key shortcuts without typing into the wrong issue.",
+      "goodFor": [
+        "Linear",
+        "Issue tracking",
+        "Shortcuts"
+      ],
+      "highlights": [
+        "Sidebar, list and issue layout",
+        "Creating, filtering and triaging issues",
+        "Linking branches and pull requests",
+        "The single-key shortcuts worth knowing"
+      ],
+      "added": "2026-11-19"
+    },
+    {
+      "id": "obsidian",
+      "name": "Obsidian",
+      "summary": "Markdown notes stored as plain files in a folder (a vault) on your Mac.",
+      "author": "Teachy",
+      "version": "1.0",
+      "file": "skills/obsidian.skill.md",
+      "apps": [
+        "Obsidian"
+      ],
+      "category": "Notes",
+      "icon": "💎",
+      "headline": "Notes, links and plugins in an Obsidian vault.",
+      "description": "For anyone starting an Obsidian vault, linking notes, or turning on community plugins.",
+      "goodFor": [
+        "Obsidian",
+        "Notes",
+        "Markdown"
+      ],
+      "highlights": [
+        "Ribbon, sidebars and tabs",
+        "Linking and embedding notes",
+        "Community plugins, themes and sync",
+        "Why renaming in Finder breaks links"
+      ],
+      "added": "2026-11-19"
+    },
+    {
+      "id": "zoom",
+      "name": "Zoom",
+      "summary": "Video meetings. Covers the Zoom Workplace app's home window and the meeting window.",
+      "author": "Teachy",
+      "version": "1.0",
+      "file": "skills/zoom.skill.md",
+      "apps": [
+        "Zoom",
+        "zoom.us",
+        "app.zoom.us"
+      ],
+      "category": "Meetings",
+      "icon": "🎥",
+      "headline": "Run a Zoom meeting without hunting through the toolbar.",
+      "description": "Turn this on before a call: picking a mic, sharing a window with sound, recording, and where a host's controls are.",
+      "goodFor": [
+        "Zoom",
+        "Meetings",
+        "Screen sharing"
+      ],
+      "highlights": [
+        "The home window and the meeting toolbar",
+        "Mic, camera and background settings",
+        "Sharing, recording and breakout rooms",
+        "The Screen Recording permission fix"
+      ],
+      "added": "2026-11-19"
+    }
+  ]
+}

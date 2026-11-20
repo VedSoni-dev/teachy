@@ -1,0 +1,16 @@
+# Skill Market download counter. The Skills Library (the app and /skillmarket on the site)
+# reads counts from GET /counts and reports an install or download with POST /count.
+name = "teachy-skillmarket"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = true
+preview_urls = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "teachy-skillmarket"
+database_id = "3c4a3c3b-dfbc-46fd-b2fa-6c1e380ade98"
+
+[vars]
+# Listings are checked against the published index, so made-up IDs are never counted.
+INDEX_URL = "https://vedsoni-dev.github.io/teachy/skillmarket/index.json"

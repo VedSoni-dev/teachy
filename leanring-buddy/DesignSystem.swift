@@ -111,6 +111,10 @@ enum DS {
             pointerColor(named: UserDefaults.standard.string(forKey: "selectedCursorColor"))
         }
 
+        /// The white fill of a `.prominent` button, and the label colour on it.
+        static let prominentFill = Color.white
+        static let onProminent = Color.black
+
         /// Text or a symbol that sits on a pointer-colour fill.
         static var onPointer: Color {
             colorOnPointerColor(named: UserDefaults.standard.string(forKey: "selectedCursorColor"))
@@ -291,6 +295,9 @@ enum TeachyButtonKind {
     case quiet
     /// Removes or stops something.
     case danger
+    /// A white capsule with a dark label: the one action of a large standalone pane,
+    /// such as Add skill in the Skills Library. Use instead of `.primary`, never beside it.
+    case prominent
 }
 
 enum TeachyButtonSize {
@@ -338,7 +345,7 @@ private struct TeachyButtonBody<Label: View>: View {
             .foregroundColor(labelColor)
             .lineLimit(1)
             .padding(.horizontal, size == .compact ? 10 : 14)
-            .frame(height: size == .large ? 34 : (size == .regular ? 28 : 22))
+            .frame(height: kind == .prominent && size == .large ? 44 : (size == .large ? 34 : (size == .regular ? 28 : 22)))
             .frame(maxWidth: isFullWidth ? .infinity : nil)
             .background(Capsule().fill(fillColor))
             .overlay {
@@ -361,7 +368,9 @@ private struct TeachyButtonBody<Label: View>: View {
 
     private var labelFont: Font {
         switch (size, kind) {
-        case (.regular, .primary), (.large, .primary): return DS.Fonts.sans(13, weight: .semibold)
+        case (.large, .prominent): return DS.Fonts.sans(14, weight: .semibold)
+        case (.regular, .primary), (.large, .primary), (.regular, .prominent): return DS.Fonts.sans(13, weight: .semibold)
+        case (.compact, .prominent): return DS.Fonts.sans(11.5, weight: .semibold)
         case (.regular, _), (.large, _): return DS.Fonts.control
         case (.compact, .primary): return DS.Fonts.sans(11.5, weight: .semibold)
         case (.compact, _): return DS.Fonts.controlCompact
@@ -374,6 +383,7 @@ private struct TeachyButtonBody<Label: View>: View {
         case .secondary: return DS.Colors.textPrimary
         case .quiet: return isHovered || isPressed ? DS.Colors.textPrimary : DS.Colors.textSecondary
         case .danger: return DS.Colors.destructiveText
+        case .prominent: return DS.Colors.onProminent
         }
     }
 
@@ -390,6 +400,9 @@ private struct TeachyButtonBody<Label: View>: View {
         case .danger:
             if isPressed { return DS.Colors.destructive.opacity(0.34) }
             return DS.Colors.destructive.opacity(isHovered ? 0.26 : 0.18)
+        case .prominent:
+            if isPressed { return DS.Colors.prominentFill.opacity(0.78) }
+            return DS.Colors.prominentFill.opacity(isHovered ? 0.92 : 1)
         }
     }
 }

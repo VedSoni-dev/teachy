@@ -127,14 +127,20 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    /// `teachy://` links (the scheme stays registered in Info.plist) just open
-    /// the notch. The old `teachy://install?url=` course installer is gone along
-    /// with courses, so any link is treated as "show me Teachy".
+    /// `teachy://` links (the scheme stays registered in Info.plist). Skill links
+    /// stage a skill install; any other link is treated as "show me Teachy".
     func application(_ application: NSApplication, open urls: [URL]) {
         guard urls.contains(where: { $0.scheme?.lowercased() == "teachy" }) else { return }
         // teachy://demo/… scripted recordings (off unless enabled in defaults).
         let demoURLs = urls.filter { TeachyDemoDriver.handle($0, companionManager: companionManager) }
         if demoURLs.count == urls.count { return }
+        // teachy://skill?url=https://… from the Skill Market's Get button: fetch the file and
+        // show it in the Skills Library, where the person confirms before it is added.
+        if let skillFileURL = urls.lazy.compactMap(SkillInstallLink.skillFileURL(from:)).first {
+            SkillsLibraryWindowController.shared.show()
+            Task { await SkillStore.shared.stageInstall(fromLink: skillFileURL) }
+            return
+        }
         notchManager?.selectedTab = .home
         notchManager?.show()
         notchManager?.expand()

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Skills Library · Teachy</title>
+  <meta name="description" content="Skills for Teachy, the Mac assistant next to your cursor. Each skill teaches Teachy its way around one app or site." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M7 5l20 10-20 12z' fill='%232f7bff' transform='rotate(-18 16 16)'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="../site.css?v=assistant1" />
+  <link rel="stylesheet" href="skillmarket.css?v=3" />
+  <script>document.documentElement.classList.add("js");</script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="logo" href="../index.html"><span class="logo-mark" aria-hidden="true"></span>teachy</a>
+      <nav class="nav" aria-label="Main">
+        <a class="nav-hide-sm" href="../index.html#features">features</a>
+        <a href="./" aria-current="page">skills</a>
+        <a class="nav-hide-sm" href="../changelog.html">changelog</a>
+        <a class="nav-cta" href="https://github.com/VedSoni-dev/teachy-releases/releases/latest/download/Teachy.dmg">download</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <section class="library" aria-label="Skills Library">
+        <div class="library-head">
+          <div>
+            <h1>Skills Library</h1>
+            <p>A skill teaches Teachy its way around one app or site: where things are, what trips people up, the shortcuts worth knowing. Add one and Teachy uses it whenever you're in that app, in its answers and in every agent it runs for you.</p>
+            <div class="library-actions">
+              <a class="pill pill-white" href="#publish"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M8 4.8v6.4M4.8 8h6.4" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>Publish a skill</a>
+              <a class="pill pill-dark" href="https://github.com/VedSoni-dev/teachy-releases/releases/latest/download/Teachy.dmg">Get Teachy for Mac</a>
+            </div>
+          </div>
+        </div>
+        <div class="library-body">
+          <div class="library-list">
+            <div class="library-tools">
+              <div class="chips" id="chips" role="group" aria-label="Category"></div>
+              <label class="library-search">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.6" /><path d="M11 11l3.5 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+                <input id="search" type="search" placeholder="Search skills" autocomplete="off" aria-label="Search skills" />
+              </label>
+            </div>
+            <div class="rows" id="rows" role="listbox" aria-label="Skills"></div>
+            <p class="library-empty" id="empty" hidden></p>
+          </div>
+          <article class="library-detail" id="detail" aria-live="polite"></article>
+        </div>
+      </section>
+      <p class="market-note">“Add to Teachy” opens Teachy, which shows you the skill before adding it. Or download the file and use Teachy → Settings → Skills → Add from file.</p>
+
+      <section class="publish" id="publish">
+        <div>
+          <h2>publish a skill</h2>
+          <p>Know an app well? Write down where things are, once, and everyone's Teachy gets better at it.</p>
+          <ol>
+            <li>Write a Markdown file like the one here. Use the names people see on screen. Keep it short: under about 2,500 characters is what fits in Teachy's prompt.</li>
+            <li>Try it yourself first: Teachy → Settings → Skills → Add from file.</li>
+            <li>Open a pull request that adds it as <code>academy/skillmarket/skills/&lt;id&gt;.skill.md</code> in <a href="https://github.com/VedSoni-dev/teachy" target="_blank" rel="noopener">VedSoni-dev/teachy</a>. The <a href="https://github.com/VedSoni-dev/teachy/blob/main/academy/skillmarket/README.md" target="_blank" rel="noopener">guide</a> has the details.</li>
+            <li>Once it's merged, it shows up here and in everyone's Teachy.</li>
+          </ol>
+        </div>
+        <pre><code>---
+name: Linear
+id: linear
+version: 1.0
+author: Your name
+category: Work
+bundleIds: [com.linear]
+sites: [linear.app]
+summary: Issue tracking for software teams.
+---
+## Layout
+- Left sidebar: Inbox, My issues, your teams.
+
+## Where things are
+- New issue: C.
+
+## Gotchas
+- Single-key shortcuts act on the
+  selected issue.
+
+## Shortcuts
+- Command menu: Cmd+K.</code></pre>
+      </section>
+    </div>
+  </main>
+
+  <dialog class="preview" id="preview">
+    <div class="preview-head">
+      <h3 id="preview-title">Skill</h3>
+      <button type="button" id="preview-close" aria-label="Close">&times;</button>
+    </div>
+    <pre id="preview-body"></pre>
+  </dialog>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <a class="logo" href="../index.html"><span class="logo-mark" aria-hidden="true"></span>teachy</a>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="https://github.com/VedSoni-dev/teachy-releases/releases/latest/download/Teachy.dmg">download</a>
+        <a href="./">skills</a>
+        <a href="../changelog.html">changelog</a>
+        <a href="https://github.com/VedSoni-dev/teachy-releases/releases" target="_blank" rel="noopener">releases</a>
+      </nav>
+      <span>&copy; <span data-year>2026</span> teachy</span>
+    </div>
+  </footer>
+
+  <script src="../app.js?v=assistant1" defer></script>
+  <script src="skillmarket.js?v=3" defer></script>
+</body>
+</html>

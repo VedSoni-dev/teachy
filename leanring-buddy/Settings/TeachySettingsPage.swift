@@ -5,7 +5,7 @@ enum TeachySettingsPage: String, CaseIterable, Identifiable {
     case dictation = "Dictation", shortcuts = "Shortcuts", cursor = "Cursor", touchAndGaze = "Touch & Eyes"
     case camera = "Camera input"
     case projects = "Projects"
-    case integrations = "Integrations", agents = "Agents", routines = "Routines", drawings = "Drawings", memory = "Memory"
+    case integrations = "Integrations", skills = "Skills", agents = "Agents", routines = "Routines", drawings = "Drawings", memory = "Memory"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -20,6 +20,7 @@ enum TeachySettingsPage: String, CaseIterable, Identifiable {
         case .camera: return "camera.viewfinder"
         case .projects: return "folder"
         case .integrations: return "puzzlepiece.extension.fill"
+        case .skills: return "book.closed"
         case .agents: return "circle.hexagongrid.fill"
         case .routines: return "repeat"
         case .drawings: return "scribble.variable"
@@ -39,6 +40,7 @@ enum TeachySettingsPage: String, CaseIterable, Identifiable {
         case .camera: return "Set up hands and eyes with your Mac camera."
         case .projects: return "Choose where Teachy keeps new agent jobs and drawings."
         case .integrations: return "Connect the tools you use to Teachy."
+        case .skills: return "Teach Teachy your apps, or get skills other people made."
         case .agents: return "Give your agents a name and a role."
         case .routines: return "Tasks that run on your schedule."
         case .drawings: return "Pictures and explanations to revisit."
