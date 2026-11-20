@@ -26,3 +26,6 @@ dist-installers/
 
 # launch films (Remotion project, renders): kept out of the repo
 launch/
+
+# Instagram brand material (art, voice samples): kept out of the public repo
+brand-insta/
