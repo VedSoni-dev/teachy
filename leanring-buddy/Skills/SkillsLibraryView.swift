@@ -146,11 +146,14 @@ struct SkillsLibraryView: View {
             store.refreshInstalledSkills()
             if loadsMarketOnAppear { await store.loadMarketIfNeeded() }
         }
-        .onChange(of: store.pendingInstall) { _, pending in
+        .onChange(of: store.pendingInstall) { previous, pending in
             // A skill link or a chosen file jumps straight to the skill waiting for confirmation.
             if let pending {
                 filter = .all
                 selectedEntryID = SkillsLibraryEntry(source: .pending(pending)).id
+            } else if let previous {
+                // Once it's added (or dropped), stay on that skill instead of jumping to the top.
+                selectedEntryID = entryID(afterResolving: previous)
             }
         }
     }
@@ -288,6 +291,17 @@ struct SkillsLibraryView: View {
         case .mine: return true
         case .pending: return false
         }
+    }
+
+    /// The row that shows a skill once it is no longer waiting: its market listing, or the file it was saved as.
+    private func entryID(afterResolving pending: SkillStore.PendingInstall) -> String? {
+        if let marketID = pending.file.skill.marketID, store.listings.contains(where: { $0.id == marketID }) {
+            return "market:" + marketID
+        }
+        if store.userSkills.contains(where: { $0.fileURL?.lastPathComponent == pending.file.fileName }) {
+            return "mine:" + pending.file.fileName
+        }
+        return nil
     }
 
     private var currentEntry: SkillsLibraryEntry? {

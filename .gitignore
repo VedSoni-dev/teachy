@@ -1,4 +1,6 @@
 worker/node_modules/
+# Wrangler's local state (dev databases, caches)
+**/.wrangler/
 worker/.dev.vars
 worker/.env
 .DS_Store

@@ -13,8 +13,6 @@ SHARED="${TMPDIR:-/tmp}/teachy-skill-market-shared.swift"
   for name in SettingsPageGroup SettingsPageHeading SettingsPageLabel; do
     awk "/^struct $name[<:]/,/^}/" "$APP/Settings/SettingsSections.swift"
   done
-  awk '/^struct FlowLayout:/,/^}/' "$APP/NotchPanelSharedComponents.swift"
-  awk '/^private struct LayoutResult/,/^}/' "$APP/NotchPanelSharedComponents.swift"
 } > "$SHARED"
 swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/DesignSystem.swift" \

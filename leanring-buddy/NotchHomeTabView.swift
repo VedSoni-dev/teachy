@@ -33,7 +33,7 @@ struct NotchHomeTabView: View {
                 }
                 .teachyIconButton(sideLength: 30)
                 .accessibilityLabel("Routines")
-                Button { notchManager.openSettings(.skills) } label: {
+                Button { SkillsLibraryWindowController.shared.show() } label: {
                     Image(systemName: "book.closed")
                 }
                 .teachyIconButton(sideLength: 30)

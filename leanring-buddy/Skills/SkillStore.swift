@@ -10,7 +10,9 @@
 //
 
 import AppKit
+import Combine
 import Foundation
+import UniformTypeIdentifiers
 
 @MainActor
 final class SkillStore: ObservableObject {

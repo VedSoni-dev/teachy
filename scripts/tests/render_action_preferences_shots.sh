@@ -20,6 +20,11 @@ swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/Voice/VoicePolicy.swift" \
   "$APP/Voice/AlwaysOnPillView.swift" \
   "$APP/NotchHomeTabView.swift" \
+  "$APP/Skills/SkillLibrary.swift" \
+  "$APP/Skills/SkillMarket.swift" \
+  "$APP/Skills/SkillStore.swift" \
+  "$APP/Skills/SkillsLibraryView.swift" \
+  "$APP/Skills/SkillsLibraryWindowController.swift" \
   "$APP/NotchPanelTab.swift" \
   "$APP/Settings/TeachySettingsPage.swift" \
   "$APP/ClickyNotchRootView.swift" \

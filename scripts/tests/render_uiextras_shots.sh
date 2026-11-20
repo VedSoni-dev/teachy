@@ -14,6 +14,7 @@ swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/Dictation/DictationShortcutPickerRow.swift" \
   "$APP/PushToTalkShortcutKeys.swift" \
   "$APP/Settings/TeachySettings.swift" \
+  "$APP/Touch/ScreenTapSignalProcessing.swift" \
   "$APP/Settings/TeachySettings+CursorColor.swift" \
   "$APP/Settings/VoicePreviewPlayer.swift" \
   "$APP/Settings/SettingsSections.swift" \
