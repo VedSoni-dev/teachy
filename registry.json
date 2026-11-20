@@ -1,0 +1,38 @@
+{
+  "name": "Teachy",
+  "tagline": "AI fluency by doing — how to use tools, how to ship real work.",
+  "products": {
+    "consumer": {
+      "name": "Teachy",
+      "positioning": "AI fluency itself: a 1:1 tutor that teaches how to use AI tools and how to do real work on your Mac.",
+      "price": "free"
+    },
+    "enterprise": {
+      "name": "Teachy Enterprise",
+      "positioning": "Bespoke AI + Teachy for employee AI fluency on your tools and workflows.",
+      "price": "bespoke",
+      "contact": "enterprise@teachy.app",
+      "page": "https://vedsoni-dev.github.io/teachy/enterprise.html"
+    }
+  },
+  "flagshipCourseID": "build-a-website",
+  "onrampCourseID": "build-a-website",
+  "websiteURL": "https://vedsoni-dev.github.io/teachy/",
+  "courses": [
+    {
+      "id": "build-a-website",
+      "title": "Make a Website",
+      "subtitle": "Plan in ChatGPT. Build. Live on Vercel.",
+      "authorName": "Teachy",
+      "authorHandle": "teachy",
+      "estimatedMinutes": 45,
+      "goalCount": 5,
+      "trackTitle": "How to do",
+      "installURL": "https://raw.githubusercontent.com/VedSoni-dev/teachy/main/courses/build-a-website.json",
+      "hasVideoParts": false,
+      "shipsWithApp": true,
+      "featured": true,
+      "blurb": "Teachy interviews you, writes the ChatGPT prompt, helps you mock and build, then ships a live Vercel URL."
+    }
+  ]
+}
