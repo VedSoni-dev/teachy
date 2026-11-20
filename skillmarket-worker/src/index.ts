@@ -37,9 +37,12 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/** The listing IDs in the published index, cached at the edge for five minutes. */
+/** The listing IDs in the published index, cached at the edge for up to five minutes. */
 async function publishedSkillIDs(env: Env): Promise<Set<string>> {
-  const response = await fetch(env.INDEX_URL, { cf: { cacheTtl: 300, cacheEverything: true } });
+  // A new cache key every five minutes, so an old answer (say, a 404 from before the site
+  // was published) can never stick at the edge.
+  const indexURL = `${env.INDEX_URL}?window=${Math.floor(Date.now() / 300_000)}`;
+  const response = await fetch(indexURL, { cf: { cacheTtlByStatus: { "200-299": 300, "400-599": 0 }, cacheEverything: true } });
   if (!response.ok) throw new Error(`index ${response.status}`);
   const index = (await response.json()) as { skills?: Array<{ id?: string }> };
   return new Set((index.skills ?? []).map((skill) => skill.id ?? "").filter(Boolean));
@@ -59,7 +62,7 @@ async function handleCount(request: Request, env: Env): Promise<Response> {
     return json({ error: "source must be app or download." }, 400);
   }
 
-  const known = await publishedSkillIDs(env).catch(() => null);
+  const known = await publishedSkillIDs(env).catch((error) => { console.error("index fetch failed", String(error)); return null; });
   if (!known) return json({ error: "Try again later." }, 503);
   if (!known.has(skillID)) return json({ error: "Unknown skill." }, 404);
 
