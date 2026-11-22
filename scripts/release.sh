@@ -113,8 +113,16 @@ LATEST_TAG=$(gh release view --repo "${GITHUB_REPO}" --json tagName --jq '.tagNa
 
 if [ -n "$LATEST_TAG" ]; then
     LATEST_VERSION="${LATEST_TAG#v}"
-    LATEST_BUILD=$(gh release list --repo "${GITHUB_REPO}" --json tagName --jq 'length' 2>/dev/null || echo "0")
-    echo "   Latest release: ${LATEST_TAG} (approx build ${LATEST_BUILD})"
+    # Sparkle only offers an update whose build number (sparkle:version) is higher than the
+    # installed one, so the next build must beat every build already in the feed. Counting
+    # releases does not do that: 2.3 shipped as build 4 after 2.2 was build 5, and 2.4 then
+    # reused 5 and overwrote 2.2's feed entry. Read the highest build from both the published
+    # feed and the local copy instead.
+    PUBLISHED_APPCAST_XML=$(gh api "repos/${GITHUB_REPO}/contents/appcast.xml" --jq .content 2>/dev/null | base64 -d 2>/dev/null || true)
+    LATEST_BUILD=$( { printf '%s\n' "${PUBLISHED_APPCAST_XML}"; cat "${PROJECT_DIR}/appcast.xml" 2>/dev/null || true; } \
+        | sed -n 's/.*<sparkle:version>\([0-9][0-9]*\)<\/sparkle:version>.*/\1/p' | sort -n | tail -1)
+    LATEST_BUILD=${LATEST_BUILD:-0}
+    echo "   Latest release: ${LATEST_TAG} (highest build in the feed: ${LATEST_BUILD})"
 else
     LATEST_VERSION="0.0"
     LATEST_BUILD=0
