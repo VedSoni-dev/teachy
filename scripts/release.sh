@@ -96,7 +96,11 @@ submit_for_notarization() {
     echo "✅ Apple accepted $(basename "${file_to_notarize_path}")"
 }
 
-SPARKLE_BIN=$(find ~/Library/Developer/Xcode/DerivedData/leanring-buddy*/SourcePackages/artifacts/sparkle/Sparkle/bin -maxdepth 0 2>/dev/null | head -1)
+# Sparkle's signing tools come with the Sparkle package: from Xcode's own build folder, or
+# from this script's build folder after an earlier release. `|| true` keeps a missing Xcode
+# folder from ending the script silently under `set -e -o pipefail`.
+SPARKLE_BIN=$( { find ~/Library/Developer/Xcode/DerivedData/leanring-buddy*/SourcePackages/artifacts/sparkle/Sparkle/bin \
+    "${DERIVED_DATA_PATH}/SourcePackages/artifacts/sparkle/Sparkle/bin" -maxdepth 0 2>/dev/null || true; } | head -1)
 
 if [ -z "$SPARKLE_BIN" ]; then
     echo "❌ Sparkle tools not found. Build the project in Xcode first so SPM downloads Sparkle."
