@@ -82,7 +82,11 @@ struct TeachyGeneralSettingsPage: View {
                 TeachyRule()
                 actionRow("Replay the welcome tour", caption: "Watch the Teachy introduction again.") { companionManager.replayOnboarding() }
             }
-            SettingsPageGroup(title: "Advanced") { AdvancedSettingsSection(startsExpanded: true) }
+            SettingsPageGroup(title: "Advanced") {
+                VercelGatewaySettingsSection(startsExpanded: true)
+                TeachyRule()
+                AdvancedSettingsSection(startsExpanded: true)
+            }
         }
         .sheet(isPresented: $showsAbout) { TeachyAboutSettingsView() }
     }

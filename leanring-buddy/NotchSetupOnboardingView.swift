@@ -50,7 +50,7 @@ struct NotchSetupOnboardingView: View {
                 PermissionChoreographyView(companionManager: companionManager)
             } else if !hasSeenAutomationPermissionExplainer {
                 automationPermissionExplainer
-            } else if publikSession.choice == "own_key" && !TeachyAPIKeyStore.isConfigured && !hasSkippedAPIKeySetup {
+            } else if publikSession.choice == "own_key" && TeachyAIRouter.ownKeyEndpoint == nil && !hasSkippedAPIKeySetup {
                 apiKeySetupView
             } else if !companionManager.hasCompletedOnboarding {
                 teachyProductOnboarding

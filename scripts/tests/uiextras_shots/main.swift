@@ -123,6 +123,7 @@ func runShots() {
     render(onNotch(ShortcutsSettingsSection(startsExpanded: true)), width: homeWidth + 16, name: "04-shortcuts")
     render(onNotch(PrivacySettingsSection(startsExpanded: true)), width: homeWidth + 16, name: "05-privacy")
     render(onNotch(AdvancedSettingsSection(startsExpanded: true)), width: homeWidth + 16, name: "06-advanced")
+    render(onNotch(VercelGatewaySettingsSection(startsExpanded: true)), width: homeWidth + 16, name: "06b-vercel-gateway")
 
     // MARK: Caption bar (as it sits on a 1512-point-wide screen, over a busy light page)
 

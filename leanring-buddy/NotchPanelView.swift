@@ -48,7 +48,7 @@ struct NotchPanelView: View {
     private var needsSetup: Bool {
         !publikSession.isReady
             || !companionManager.allPermissionsGranted
-            || (publikSession.choice == "own_key" && !TeachyAPIKeyStore.isConfigured && !hasSkippedAPIKeySetup)
+            || (publikSession.choice == "own_key" && TeachyAIRouter.ownKeyEndpoint == nil && !hasSkippedAPIKeySetup)
             || !companionManager.hasCompletedOnboarding
     }
 

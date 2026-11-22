@@ -42,7 +42,7 @@ final class TeachyAnnouncementController: NSObject, NSWindowDelegate {
     private var isReady: Bool {
         guard let companionManager else { return false }
         let account = TeachyPublikSession.shared
-        let needsOwnKey = account.choice == "own_key" && !TeachyAPIKeyStore.isConfigured
+        let needsOwnKey = account.choice == "own_key" && TeachyAIRouter.ownKeyEndpoint == nil
             && !UserDefaults.standard.bool(forKey: "teachyHasSkippedAPIKeySetup")
         return account.isReady && !needsOwnKey && companionManager.hasCompletedOnboarding
             && companionManager.allPermissionsGranted && companionManager.voiceState == .idle

@@ -281,6 +281,13 @@ final class SceneDirector {
             title: controller?.model.title, parts: controller?.subjectCandidates ?? [])
     }
 
+    /// Asks Jev whether a request the keyword rules sent away from a live 3D drawing is really
+    /// about it. Nil when no drawing is up, no gateway key is saved, or Jev is unsure or slow.
+    func jevCanvasDecision(for request: String) async -> SceneJevDecision? {
+        guard scene.canRefine, let controller = scene.modelWindow?.controller else { return nil }
+        return await SceneJevRouter.decide(request: request, title: controller.model.title, candidates: controller.subjectCandidates)
+    }
+
     /// Command-style local API shared by chat and agent tools. Validate the complete batch
     /// before changing anything; no shell process, screen capture, or model round trip.
     func applyCanvasCommands(_ script: String) -> String {

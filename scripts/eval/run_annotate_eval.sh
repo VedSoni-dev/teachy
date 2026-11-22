@@ -27,7 +27,7 @@ if ! swiftc -O -swift-version 5 -default-isolation MainActor -parse-as-library \
   leanring-buddy/Scene/SceneNarration.swift \
   leanring-buddy/Scene/SceneOverlayView.swift \
   leanring-buddy/Core/StreamIdleGuard.swift \
-  leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyPublikSession.swift \
+  leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyGatewayKeyStore.swift leanring-buddy/TeachyPublikSession.swift \
   leanring-buddy/Publik.swift \
   scripts/eval/annotate_eval.swift \
   -o "$BUILD_DIR/annotate_eval" > "$BUILD_DIR/compile.log" 2>&1; then

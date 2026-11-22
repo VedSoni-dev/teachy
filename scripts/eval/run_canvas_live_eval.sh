@@ -9,7 +9,7 @@ BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/teachy-canvas-live-eval.XXXXXX")"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 swiftc -Onone -swift-version 5 -default-isolation MainActor -parse-as-library \
   leanring-buddy/DesignSystem.swift leanring-buddy/Scene/*.swift \
-  leanring-buddy/Core/StreamIdleGuard.swift leanring-buddy/TeachyAIRouter.swift \
+  leanring-buddy/Core/StreamIdleGuard.swift leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyGatewayKeyStore.swift \
   leanring-buddy/TeachyPublikSession.swift leanring-buddy/Publik.swift \
   scripts/eval/canvas_live_eval.swift -o "$BUILD_DIR/eval" \
   > "$RESULT_DIR/compile.log" 2>&1 || { cat "$RESULT_DIR/compile.log" >&2; exit 1; }

@@ -1146,7 +1146,7 @@ final class CompanionManager: ObservableObject {
             voiceState = .processing
             ChatTimeline.shared.userAsked(transcript)
 
-            let canvasRoute = SceneDirector.shared.canvasRoute(for: transcript)
+            var canvasRoute = SceneDirector.shared.canvasRoute(for: transcript)
             switch canvasRoute {
             case .inspect, .commands:
                 _ = mouseOutlineTracker.consumeFinalizedOutlinePoints()
@@ -1165,7 +1165,21 @@ final class CompanionManager: ObservableObject {
             default: break
             }
 
-            if let response = SceneDirector.shared.adjustImmediately(transcript) {
+            var immediateAdjustmentResponse = SceneDirector.shared.adjustImmediately(transcript)
+            // The keyword rules couldn't tie it to the live drawing: one fast Jev call decides
+            // before the screenshot and full voice turn (needs a Vercel AI Gateway key).
+            if immediateAdjustmentResponse == nil, case .external = canvasRoute,
+               let jevDecision = await SceneDirector.shared.jevCanvasDecision(for: transcript) {
+                guard !Task.isCancelled else { return }
+                switch jevDecision {
+                case .adjust(let phrase):
+                    immediateAdjustmentResponse = SceneDirector.shared.adjustImmediately(phrase)
+                case .refine(let parts):
+                    canvasRoute = .refine(parts: parts, reason: "Jev: about the drawing")
+                }
+            }
+
+            if let response = immediateAdjustmentResponse {
                 _ = mouseOutlineTracker.consumeFinalizedOutlinePoints()
                 _ = GazeTracker.shared.consumeQuestionGaze()
                 ChatTimeline.shared.streamingReply(text: response, isFinal: true)

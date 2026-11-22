@@ -18,6 +18,8 @@ swiftc -swift-version 5 -default-isolation MainActor -o "$OUT" \
   "$APP/Settings/TeachySettings+CursorColor.swift" \
   "$APP/Settings/VoicePreviewPlayer.swift" \
   "$APP/Settings/SettingsSections.swift" \
+  "$APP/TeachyGatewayKeyStore.swift" \
+  "$APP/TeachyJev.swift" \
   "$APP/Captions/CaptionLineFitter.swift" \
   "$APP/Captions/CaptionPresenter.swift" \
   "$APP/TextBox/DoubleTapControlStateMachine.swift" \

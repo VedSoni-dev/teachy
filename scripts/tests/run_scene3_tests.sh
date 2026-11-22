@@ -13,7 +13,7 @@ cd "$(dirname "$0")/../.."
 OUT="${TMPDIR:-/tmp}/teachy-scene3/bin"
 mkdir -p "$OUT"
 S=leanring-buddy/Scene
-APP_SOURCES="leanring-buddy/DesignSystem.swift $S/*.swift leanring-buddy/Core/StreamIdleGuard.swift leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyPublikSession.swift leanring-buddy/Publik.swift leanring-buddy/TeachyAPIKeyStore.swift"
+APP_SOURCES="leanring-buddy/DesignSystem.swift $S/*.swift leanring-buddy/Core/StreamIdleGuard.swift leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyGatewayKeyStore.swift leanring-buddy/TeachyPublikSession.swift leanring-buddy/Publik.swift leanring-buddy/TeachyAPIKeyStore.swift"
 
 if [ "${1:-}" = "--perf" ]; then
   swiftc -O -swift-version 5 -default-isolation MainActor $APP_SOURCES scripts/tests/scene3/perf/main.swift -o "$OUT/scene3_perf"

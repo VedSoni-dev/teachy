@@ -24,7 +24,7 @@ if ! swiftc -O -swift-version 5 -default-isolation MainActor -parse-as-library \
   leanring-buddy/DesignSystem.swift \
   $S/*.swift \
   leanring-buddy/Core/SceneDirector.swift leanring-buddy/Core/StreamIdleGuard.swift \
-  leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyPublikSession.swift leanring-buddy/Publik.swift \
+  leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyGatewayKeyStore.swift leanring-buddy/TeachyPublikSession.swift leanring-buddy/Publik.swift \
   scripts/eval/scene_eval.swift \
   -o "$BUILD_DIR/scene_eval" > "$BUILD_DIR/compile.log" 2>&1; then
   cat "$BUILD_DIR/compile.log" >&2

@@ -28,7 +28,7 @@ if [ "${1:-}" = "--live" ]; then
     leanring-buddy/DesignSystem.swift \
     $S/*.swift \
     leanring-buddy/Core/SceneDirector.swift leanring-buddy/Core/StreamIdleGuard.swift \
-    leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyPublikSession.swift leanring-buddy/Publik.swift leanring-buddy/TeachyAPIKeyStore.swift \
+    leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyGatewayKeyStore.swift leanring-buddy/TeachyPublikSession.swift leanring-buddy/Publik.swift leanring-buddy/TeachyAPIKeyStore.swift \
     scripts/tests/scene2/director/main.swift \
     -o "$OUT/scene2_director_test"
   DO_NOT_TRACK=1 "$OUT/scene2_director_test"
@@ -38,7 +38,7 @@ fi
 swiftc -O -swift-version 5 -default-isolation MainActor \
   leanring-buddy/DesignSystem.swift \
   $S/*.swift \
-  leanring-buddy/Core/StreamIdleGuard.swift leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyPublikSession.swift leanring-buddy/Publik.swift leanring-buddy/TeachyAPIKeyStore.swift \
+  leanring-buddy/Core/StreamIdleGuard.swift leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyGatewayKeyStore.swift leanring-buddy/TeachyPublikSession.swift leanring-buddy/Publik.swift leanring-buddy/TeachyAPIKeyStore.swift \
   scripts/tests/scene2/app/main.swift \
   -o "$OUT/scene2_app_tests"
 DO_NOT_TRACK=1 "$OUT/scene2_app_tests" "$@"

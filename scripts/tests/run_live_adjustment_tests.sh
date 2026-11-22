@@ -8,7 +8,7 @@ S=leanring-buddy/Scene
 if [ "${1:-}" = "--engine" ]; then
     swiftc -O -swift-version 5 -default-isolation MainActor -D LIVE_ENGINE \
       leanring-buddy/DesignSystem.swift "$S"/*.swift \
-      leanring-buddy/Core/StreamIdleGuard.swift leanring-buddy/TeachyAIRouter.swift \
+      leanring-buddy/Core/StreamIdleGuard.swift leanring-buddy/TeachyAIRouter.swift leanring-buddy/TeachyGatewayKeyStore.swift \
       leanring-buddy/TeachyPublikSession.swift leanring-buddy/Publik.swift leanring-buddy/TeachyAPIKeyStore.swift \
       scripts/tests/live-adjustment/main.swift -o "$OUT/checks"
 else

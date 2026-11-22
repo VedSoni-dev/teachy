@@ -935,6 +935,133 @@ struct AdvancedSettingsSection: View {
 }
 
 
+// MARK: - Advanced (own Vercel AI Gateway key)
+
+/// The optional Vercel AI Gateway key (`TeachyGatewayKeyStore`). It turns on Jev, which
+/// answers follow-ups about a live 3D drawing without a full model turn, and it serves
+/// the "Use my own key" path's chat models. Saving checks it with one tiny Jev call.
+struct VercelGatewaySettingsSection: View {
+    private let startsExpanded: Bool
+
+    @State private var apiKeyInput: String = ""
+    @State private var isValidating: Bool = false
+    @State private var errorMessage: String?
+    @State private var isConfigured: Bool = TeachyGatewayKeyStore.isConfigured
+
+    init(startsExpanded: Bool = false) {
+        self.startsExpanded = startsExpanded
+    }
+
+    var body: some View {
+        SettingsDisclosureCard(
+            icon: "bolt",
+            title: "Vercel AI Gateway",
+            summary: isConfigured ? "Jev on" : nil,
+            startsExpanded: startsExpanded
+        ) {
+            SettingsLabelWithCaption(
+                title: "Your own AI Gateway key",
+                caption: "Optional. Turns on Jev, which handles follow-ups about a 3D drawing (zoom, speed, \"what's that part\") in a fraction of a second. If you signed in with your own key, chat also goes through the gateway. Usage is billed by Vercel."
+            )
+
+            if isConfigured {
+                HStack(spacing: 8) {
+                    TeachyStatusMark(kind: .done)
+                    Text(TeachyGatewayKeyStore.isFromEnvironment ? "Key set by \(TeachyGatewayKeyStore.environmentVariableName)" : "Key saved")
+                        .font(DS.Fonts.data)
+                        .foregroundColor(DS.Colors.textSecondary)
+                    Spacer()
+                    if !TeachyGatewayKeyStore.isFromEnvironment {
+                        Button("Remove") {
+                            TeachyGatewayKeyStore.remove()
+                            apiKeyInput = ""
+                            errorMessage = nil
+                            isConfigured = false
+                        }
+                        .teachyButton(.danger, size: .compact)
+                    }
+                }
+            } else {
+                HStack(spacing: 6) {
+                    SecureField(
+                        "",
+                        text: $apiKeyInput,
+                        prompt: Text("AI Gateway API key").font(DS.Fonts.body).foregroundColor(DS.Colors.textQuaternary)
+                    )
+                        .textFieldStyle(.plain)
+                        .font(DS.Fonts.mono(12))
+                        .foregroundColor(DS.Colors.textPrimary)
+                        .settingsFieldWell()
+                        .onSubmit(validateAndSave)
+
+                    Button(action: validateAndSave) {
+                        Group {
+                            if isValidating {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Text("Save")
+                            }
+                        }
+                        .frame(minWidth: 30)
+                    }
+                    .teachyButton(.secondary)
+                    .disabled(trimmedKey.isEmpty || isValidating)
+                }
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(DS.Fonts.caption)
+                        .foregroundColor(DS.Colors.destructiveText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private var trimmedKey: String {
+        apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func validateAndSave() {
+        let key = trimmedKey
+        guard !key.isEmpty, !isValidating else { return }
+        isValidating = true
+        errorMessage = nil
+
+        Task {
+            do {
+                // The same call Teachy makes for real, so a key that passes here works for Jev.
+                _ = try await TeachyJev.ask(
+                    state: "Teachy is checking its connection.",
+                    questions: ["ok": .noul(instructions: "This is a connection check.")],
+                    timeout: 10,
+                    apiKey: key
+                )
+                TeachyGatewayKeyStore.save(key)
+                isConfigured = true
+            } catch let jevError as TeachyJevError {
+                errorMessage = Self.errorMessage(for: jevError)
+            } catch {
+                errorMessage = "Couldn't reach Vercel AI Gateway. Check your connection."
+            }
+            isValidating = false
+        }
+    }
+
+    private static func errorMessage(for jevError: TeachyJevError) -> String {
+        switch jevError.statusCode {
+        case 401:
+            return "That key doesn't seem valid. Check it and try again."
+        case 402:
+            return "Your AI Gateway account is out of credits. Add credits in Vercel, then save again."
+        case 403:
+            return "The key works, but Jev isn't enabled for this Vercel team yet: \(jevError.message)"
+        default:
+            return jevError.message
+        }
+    }
+}
+
 /// Dictation speed switches (keys documented in Dictation/DictationSpeedPolicy.swift).
 struct DictationSpeedRows: View {
     @AppStorage("teachyDictationLiveInsertionEnabled") private var typesAsYouSpeak = true

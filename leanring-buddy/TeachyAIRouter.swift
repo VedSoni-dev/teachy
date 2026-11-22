@@ -17,6 +17,8 @@
 //  publik is the only provider by default. The "Use my own key" button on
 //  publik's sign-in screen (required by publik) keeps working: it uses the
 //  person's OpenRouter key with fixed open-weight models, still chosen per job.
+//  When they have saved a Vercel AI Gateway key (Settings → Advanced), that path
+//  goes through the gateway instead, with its own fixed models per job.
 //
 
 import AppKit
@@ -60,6 +62,7 @@ struct TeachyAINotReadyError: LocalizedError {
 
 enum TeachyAIRouter {
     static let openRouterBaseURL = "https://openrouter.ai/api/v1"
+    static let vercelGatewayBaseURL = "https://ai-gateway.vercel.sh/v1"
 
     /// publik's request body limit is 4 MB including base64 images. Leave headroom for JSON.
     static let maximumRequestBodyBytes = 3_900_000
@@ -90,12 +93,35 @@ enum TeachyAIRouter {
         return ["deepseek/deepseek-v4-flash", "qwen/qwen3-vl-30b-a3b-instruct"]
     }
 
+    /// Own-key path through Vercel AI Gateway. Gemini Flash Lite where speed matters most,
+    /// Flash where the answer is long or the job plans.
+    static func gatewayModelOrder(for job: TeachyAIJob, hasImages: Bool) -> [String] {
+        switch job {
+        case .quickCheck, .cleanup, .voice, .coach:
+            return ["google/gemini-2.5-flash-lite", "google/gemini-2.5-flash"]
+        case .agent, .scene, .plan, .write:
+            return hasImages
+                ? ["google/gemini-2.5-flash", "google/gemini-2.5-flash-lite"]
+                : ["google/gemini-2.5-flash", "deepseek/deepseek-v4-flash"]
+        }
+    }
+
+    /// The person's own key: a Vercel AI Gateway key wins over an OpenRouter key.
+    static var ownKeyEndpoint: (baseURL: String, apiKey: String)? {
+        if let gatewayKey = TeachyGatewayKeyStore.apiKey, !gatewayKey.isEmpty {
+            return (baseURL: vercelGatewayBaseURL, apiKey: gatewayKey)
+        }
+        if let openRouterKey = TeachyAPIKeyStore.apiKey, !openRouterKey.isEmpty {
+            return (baseURL: openRouterBaseURL, apiKey: openRouterKey)
+        }
+        return nil
+    }
+
     static func routes(for job: TeachyAIJob, hasImages: Bool) throws -> [TeachyAIRoute] {
         guard !TeachyPublikSession.shared.isSwitchingAccount else { throw TeachyAINotReadyError() }
         let hasEnvironmentKey = !(ProcessInfo.processInfo.environment["PUBLIK_API_KEY"] ?? "").isEmpty
         guard hasEnvironmentKey || Publik.readCredential()?.choice != nil else { throw TeachyAINotReadyError() }
-        let ownKey = TeachyAPIKeyStore.apiKey.flatMap { $0.isEmpty ? nil : (baseURL: openRouterBaseURL, apiKey: $0) }
-        switch Publik.resolveProvider(userKey: ownKey) {
+        switch Publik.resolveProvider(userKey: ownKeyEndpoint) {
         case let .publik(baseURL, apiKey):
             var tiers = publikTierOrder(for: job)
             if hasImages {
@@ -104,7 +130,10 @@ enum TeachyAIRouter {
             }
             return tiers.map { route(baseURL: baseURL, apiKey: apiKey, model: $0, isPublik: true) }
         case let .own(baseURL, apiKey):
-            return ownKeyModelOrder(for: job, hasImages: hasImages)
+            let models = baseURL == vercelGatewayBaseURL
+                ? gatewayModelOrder(for: job, hasImages: hasImages)
+                : ownKeyModelOrder(for: job, hasImages: hasImages)
+            return models
                 .map { route(baseURL: baseURL, apiKey: apiKey, model: $0, isPublik: false) }
         case .needsOwnKey:
             throw TeachyAINotReadyError()
@@ -164,6 +193,9 @@ enum TeachyAIRouter {
             routedBody["max_tokens"] = max(requestedMaxTokens, minimumPublikMaxTokens)
         }
         // OpenRouter-only extension; publik rejects unknown routing fields on some tiers.
+        if route.baseURL == vercelGatewayBaseURL {
+            routedBody.removeValue(forKey: "reasoning")
+        }
         if route.isPublik {
             routedBody.removeValue(forKey: "reasoning")
             if routedBody["reasoning_effort"] == nil, let job, let effort = reasoningEffort(for: job) {

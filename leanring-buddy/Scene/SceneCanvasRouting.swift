@@ -8,14 +8,21 @@ enum SceneCanvasRoute: Equatable {
     case refine(parts: [String], reason: String)
     case external
 
+    /// Words that point outside Teachy's own canvas ("on my screen", "in chrome", "this error").
+    static let externalTargetPhrases = ["screenshot", "on my screen", "on the screen", "in chrome", "in safari", "in firefox", "in the browser", "website", "web page", "my code", "this error", "terminal", "email", "spreadsheet", "settings", "this tab", "this window"]
+
+    static func namesExternalTarget(_ request: String) -> Bool {
+        let lower = request.lowercased()
+        return externalTargetPhrases.contains(where: lower.contains)
+    }
+
     static func decide(_ request: String, live: Bool, title: String?, parts: [SceneSubjectCandidate]) -> Self {
         let trimmed = request.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed == "/canvas" || trimmed == "/canvas inspect" { return .inspect }
         if trimmed.hasPrefix("/canvas ") { return .commands(String(trimmed.dropFirst(8))) }
         guard live else { return .external }
         let lower = request.lowercased()
-        let external = ["screenshot", "on my screen", "on the screen", "in chrome", "in safari", "in firefox", "in the browser", "website", "web page", "my code", "this error", "terminal", "email", "spreadsheet", "settings", "this tab", "this window"]
-        guard !external.contains(where: lower.contains) else { return .external }
+        guard !namesExternalTarget(request) else { return .external }
         let words = SceneSubjectMatcher.words(request)
         let newRequest = ["new diagram", "new model", "new drawing", "instead", "different subject"].contains(where: lower.contains)
             || words.contains(where: { ["draw", "sketch", "build", "create", "generate"].contains($0) })
