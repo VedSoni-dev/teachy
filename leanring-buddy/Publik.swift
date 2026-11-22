@@ -1,6 +1,7 @@
 // Publik.swift — copied from https://publikhq.com/sdk/publik.swift.md (keep it in sync; don't hand-edit the module).
-// Teachy signs in through the vedanttalksai builds hub listing (slug "deckhand"); the hub beacon in
-// TeachyAIRouter.swift tells the hub these users are Teachy's.
+// Teachy has its own publik listing (slug "teachy", publikhq.com/teachy) since 2.4; before that it
+// signed in through the builds hub listing "deckhand". The hub beacon in TeachyAIRouter.swift still
+// tells the hub these users are Teachy's.
 // Publik.swift — Sign in with publik, usage counting, and publik API as one provider option.
 // At launch, before any window of your own: `let gate = await Publik.ensureSignedIn(ui)`. It
 //   1. loads or provisions this computer's publik key (POST /api/v1/installs);
@@ -18,8 +19,8 @@ protocol PublikGateUI: Sendable {
 }
 
 enum Publik {
-    static let appSlug = "deckhand"
-    static let appVersion = "1.0"
+    static let appSlug = "teachy"
+    static let appVersion = "2.4"
     /// false: the app calls no model. It still signs in and counts users; it stores no choice.
     static let usesAI = true
     static let origin = ProcessInfo.processInfo.environment["PUBLIK_ORIGIN"] ?? "https://publikhq.com" // PUBLIK_ORIGIN: tests only

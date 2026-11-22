@@ -292,13 +292,13 @@ Do NOT update this file for minor edits, bug fixes, or changes that don't affect
 - Docs: https://publikhq.com/llms.txt, https://publikhq.com/developers, https://publikhq.com/skills/api.md
 
 ### How Teachy uses it
-- Listing: Teachy signs in through the vedanttalksai **builds hub** listing (slug `deckhand`, token copied from `~/Projects/vedanttalksai/kit/publik-app-token.txt`). `TeachyHubBeacon` reports `build: "teachy"` to https://builds.vedantsoni.com/api/beacon so the hub's /stats splits Teachy out.
-- `leanring-buddy/Publik.swift` is publik's Swift module, copied verbatim (only `appSlug`/`appVersion` set). Re-copy it from https://publikhq.com/sdk/publik.swift.md rather than hand-editing.
+- Listing: since 2.4 Teachy has its own listing, https://publikhq.com/teachy (slug `teachy`, repo VedSoni-dev/teachy, homepage tryteachy.com); `publik-app-token.txt` is that listing's token. Up to 2.3 it signed in through the builds hub listing `deckhand`, so updating users see Sign in with publik once more. publik reads releases from VedSoni-dev/teachy, so each release also goes there with the DMG attached (an image or installer asset; publik ignores asset-less releases and flags source zips). `TeachyHubBeacon` still reports `build: "teachy"` to https://builds.vedantsoni.com/api/beacon.
+- `leanring-buddy/Publik.swift` is publik's Swift module, copied verbatim (only `appSlug`/`appVersion` set; bump `appVersion` with each release). Re-copy it from https://publikhq.com/sdk/publik.swift.md rather than hand-editing.
 - `leanring-buddy/TeachyAIRouter.swift` is the only path to a model. Users never pick a model: the router maps each job to a tier (quickCheck → fast, coach/agent/write → balanced, plan → smart), falls back to the next tier on errors, remembers tiers that reject images, and never falls back on 402.
 - `ClaudeAPI` and `BackgroundAgentManager.sendChatRequest` call the router; the agent's web tools are local (`web_search` → publik `/search`, `web_fetch` → local fetch).
 - The "Use my own key" button on publik's gate is kept (publik requires it); that path uses the person's OpenRouter key with fixed open-weight models, still chosen per job.
 - `worker/` and the Windows port still speak OpenRouter; the macOS app no longer uses the worker for AI.
-- Self-test: `PUBLIK_SELF_TEST=1 ~/Applications/Teachy.app/Contents/MacOS/Teachy` → `publik self-test: ok deckhand 1.0`.
+- Self-test: `PUBLIK_SELF_TEST=1 ~/Applications/Teachy.app/Contents/MacOS/Teachy` → `publik self-test: ok teachy <version>`.
 
 ### Account switching
 - `TeachyPublikSession.swift` owns the sign-in gate and account state. Account → Log out removes this listing’s local Publik credential, clears account state, stops active AI work, and restarts sign-in. The browser’s Publik session is separate; users can sign out there to choose another account. A launch-time `PUBLIK_API_KEY` must be removed before switching.

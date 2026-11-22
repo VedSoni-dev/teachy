@@ -11,6 +11,8 @@ import SwiftUI
 
 /// Draws whatever screen publik's gate is asking for and returns the pressed button.
 struct PublikGateView: View {
+    static let whySignInNote = "Teachy is free and open source, made by one person. Signing in is free, with no card, and it’s how Teachy gets counted as a real user in an open-source competition. Thank you for helping."
+
     @ObservedObject var gate: GateModel
     @ObservedObject private var session = TeachyPublikSession.shared
 
@@ -25,6 +27,17 @@ struct PublikGateView: View {
             if let screen = gate.screen {
                 VStack(alignment: .leading, spacing: 10) {
                     TeachySetupStepHeader(headline: screen.title, explanation: screen.body)
+
+                    // Teachy's own words under publik's sign-in screen (Publik.swift stays
+                    // verbatim). People who stop here are not counted as Teachy users, so
+                    // say plainly why signing in helps and that it costs nothing.
+                    if screen.id == "sign_in" {
+                        Text(Self.whySignInNote)
+                            .font(DS.Fonts.caption)
+                            .foregroundColor(DS.Colors.textSecondary)
+                            .lineSpacing(1.5)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     // publik's note is always about something it is waiting on the
                     // person for (finishing sign-in or a plan in the browser).
