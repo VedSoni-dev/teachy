@@ -937,46 +937,75 @@ struct AdvancedSettingsSection: View {
 
 // MARK: - Advanced (own Vercel AI Gateway key)
 
-/// The optional Vercel AI Gateway key (`TeachyGatewayKeyStore`). It turns on Jev, which
-/// answers follow-ups about a live 3D drawing without a full model turn, and it serves
-/// the "Use my own key" path's chat models. Saving checks it with one tiny Jev call.
-struct VercelGatewaySettingsSection: View {
-    private let startsExpanded: Bool
+/// Settings → Keys: the person's own keys for Jev, the fast yes/no and pick-one model
+/// that handles follow-ups about a live 3D drawing without a full model turn. One row
+/// per service (`TeachyJevProvider`); Gemini and OpenRouter keys are Jev-only, a Vercel
+/// AI Gateway key also carries chat on the "Use my own key" path. Saving checks the key
+/// with one tiny Jev call.
+struct JevKeysSettingsSection: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Optional. Add a key to turn on Jev, which handles follow-ups about a 3D drawing (zoom, speed, \"what's that part\") in a fraction of a second. One key is enough. Usage is billed by that service.")
+                .font(DS.Fonts.caption)
+                .foregroundColor(DS.Colors.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            JevKeyRow(
+                provider: .gemini,
+                title: "Gemini",
+                caption: "A Google AI Studio key (AIza…). Uses Gemini Decision 1.",
+                placeholder: "Gemini API key"
+            )
+            TeachyRule()
+            JevKeyRow(
+                provider: .openRouter,
+                title: "OpenRouter",
+                caption: "An OpenRouter key (sk-or-…). Uses Jev.",
+                placeholder: "OpenRouter API key"
+            )
+            TeachyRule()
+            JevKeyRow(
+                provider: .vercelGateway,
+                title: "Vercel AI Gateway",
+                caption: "Uses Jev. If you signed in with your own key, chat goes through it too.",
+                placeholder: "AI Gateway API key"
+            )
+        }
+    }
+}
+
+/// One service's key: a secure field and Save, or "Key saved" and Remove.
+private struct JevKeyRow: View {
+    let provider: TeachyJevProvider
+    let title: String
+    let caption: String
+    let placeholder: String
 
     @State private var apiKeyInput: String = ""
     @State private var isValidating: Bool = false
     @State private var errorMessage: String?
-    @State private var isConfigured: Bool = TeachyGatewayKeyStore.isConfigured
+    @State private var isSaved: Bool = false
 
-    init(startsExpanded: Bool = false) {
-        self.startsExpanded = startsExpanded
+    private var isSetByEnvironment: Bool {
+        provider == .vercelGateway && TeachyGatewayKeyStore.isFromEnvironment
     }
 
     var body: some View {
-        SettingsDisclosureCard(
-            icon: "bolt",
-            title: "Vercel AI Gateway",
-            summary: isConfigured ? "Jev on" : nil,
-            startsExpanded: startsExpanded
-        ) {
-            SettingsLabelWithCaption(
-                title: "Your own AI Gateway key",
-                caption: "Optional. Turns on Jev, which handles follow-ups about a 3D drawing (zoom, speed, \"what's that part\") in a fraction of a second. If you signed in with your own key, chat also goes through the gateway. Usage is billed by Vercel."
-            )
+        VStack(alignment: .leading, spacing: 8) {
+            SettingsPageLabel(title: title, caption: caption)
 
-            if isConfigured {
+            if isSaved {
                 HStack(spacing: 8) {
                     TeachyStatusMark(kind: .done)
-                    Text(TeachyGatewayKeyStore.isFromEnvironment ? "Key set by \(TeachyGatewayKeyStore.environmentVariableName)" : "Key saved")
+                    Text(isSetByEnvironment ? "Key set by \(TeachyGatewayKeyStore.environmentVariableName)" : "Key saved")
                         .font(DS.Fonts.data)
                         .foregroundColor(DS.Colors.textSecondary)
                     Spacer()
-                    if !TeachyGatewayKeyStore.isFromEnvironment {
+                    if !isSetByEnvironment {
                         Button("Remove") {
-                            TeachyGatewayKeyStore.remove()
+                            TeachyGatewayKeyStore.removeKey(for: provider)
                             apiKeyInput = ""
                             errorMessage = nil
-                            isConfigured = false
+                            isSaved = false
                         }
                         .teachyButton(.danger, size: .compact)
                     }
@@ -986,7 +1015,7 @@ struct VercelGatewaySettingsSection: View {
                     SecureField(
                         "",
                         text: $apiKeyInput,
-                        prompt: Text("AI Gateway API key").font(DS.Fonts.body).foregroundColor(DS.Colors.textQuaternary)
+                        prompt: Text(placeholder).font(DS.Fonts.body).foregroundColor(DS.Colors.textQuaternary)
                     )
                         .textFieldStyle(.plain)
                         .font(DS.Fonts.mono(12))
@@ -1016,6 +1045,7 @@ struct VercelGatewaySettingsSection: View {
                 }
             }
         }
+        .onAppear { isSaved = !(TeachyGatewayKeyStore.savedKey(for: provider) ?? "").isEmpty }
     }
 
     private var trimmedKey: String {
@@ -1025,6 +1055,13 @@ struct VercelGatewaySettingsSection: View {
     private func validateAndSave() {
         let key = trimmedKey
         guard !key.isEmpty, !isValidating else { return }
+        // Jev picks the service from the key's prefix, so a key pasted in the wrong row would
+        // quietly go somewhere else. Say so instead.
+        let keyProvider = TeachyJevProvider.forKey(key)
+        guard keyProvider == provider else {
+            errorMessage = "That looks like a \(keyProvider.displayName) key. Paste it in the \(keyProvider.displayName) row."
+            return
+        }
         isValidating = true
         errorMessage = nil
 
@@ -1037,25 +1074,25 @@ struct VercelGatewaySettingsSection: View {
                     timeout: 10,
                     apiKey: key
                 )
-                TeachyGatewayKeyStore.save(key)
-                isConfigured = true
+                TeachyGatewayKeyStore.saveKey(key, for: provider)
+                isSaved = true
             } catch let jevError as TeachyJevError {
-                errorMessage = Self.errorMessage(for: jevError)
+                errorMessage = Self.errorMessage(for: jevError, provider: provider)
             } catch {
-                errorMessage = "Couldn't reach Vercel AI Gateway. Check your connection."
+                errorMessage = "Couldn't reach \(provider.displayName). Check your connection."
             }
             isValidating = false
         }
     }
 
-    private static func errorMessage(for jevError: TeachyJevError) -> String {
+    private static func errorMessage(for jevError: TeachyJevError, provider: TeachyJevProvider) -> String {
         switch jevError.statusCode {
         case 401:
             return "That key doesn't seem valid. Check it and try again."
         case 402:
-            return "Your AI Gateway account is out of credits. Add credits in Vercel, then save again."
+            return "Your \(provider.displayName) account is out of credits. Add credits, then save again."
         case 403:
-            return "The key works, but Jev isn't enabled for this Vercel team yet: \(jevError.message)"
+            return "The key works, but this model isn't enabled for your \(provider.displayName) account yet: \(jevError.message)"
         default:
             return jevError.message
         }

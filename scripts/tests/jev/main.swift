@@ -12,6 +12,13 @@ let body = TeachyJev.requestBody(state: "hi", questions: ["urgent": .noul(instru
                                                            "team": .choice(instructions: "Team", criteria: ["a": "A"]),
                                                            "mood": .score(instructions: "Mood", levels: ["calm", "angry"])])
 check(body["model"] as? String == "typesafe-ai/jev", "model id")
+check(TeachyJev.requestBody(state: "hi", questions: [:], provider: .openRouter)["model"] as? String == "~typesafe/jev-latest", "openrouter model id")
+check(TeachyJevProvider.forKey("sk-or-v1-abc") == .openRouter && TeachyJevProvider.forKey("vck_abc") == .vercelGateway, "key picks the service")
+check(TeachyJevProvider.openRouter.endpoint.absoluteString == "https://openrouter.ai/api/alpha/decisions", "openrouter endpoint")
+let geminiBody = TeachyJev.requestBody(state: "hi", questions: [:], provider: .gemini)
+check(geminiBody["model"] as? String == "gemini-decision-1" && geminiBody["input"] as? String == "hi" && geminiBody["state"] == nil, "gemini body uses input")
+check(TeachyJevProvider.forKey("AIzaSyExample") == .gemini, "gemini key picks gemini")
+check(TeachyJevProvider.gemini.endpoint.absoluteString == "https://generativelanguage.googleapis.com/v1beta/decisions", "gemini endpoint")
 let questionObjects = body["questions"] as? [String: [String: Any]]
 check(questionObjects?["urgent"]?["type"] as? String == "noul", "noul question")
 check((questionObjects?["team"]?["criteria"] as? [String: String])?["a"] == "A", "choice criteria")

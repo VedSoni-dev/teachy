@@ -14,8 +14,13 @@
 //  (see SceneJevRouter). Every caller must work without it: no key, a timeout or
 //  an error all mean "decide the old way".
 //
-//  Endpoint: POST https://ai-gateway.vercel.sh/typesafe/v1/systemone with the
-//  person's AI Gateway key. Text state only (Jev on the gateway is text-only).
+//  Endpoints (same request and answer shape):
+//    - Vercel AI Gateway: POST https://ai-gateway.vercel.sh/typesafe/v1/systemone
+//    - OpenRouter: POST https://openrouter.ai/api/alpha/decisions (an `sk-or-` key)
+//    - Gemini: POST https://generativelanguage.googleapis.com/v1beta/decisions with
+//      gemini-decision-1 (an `AIza` key). Same questions and answers; the state is
+//      sent as `input` and the key in `x-goog-api-key`.
+//  Text state only.
 //
 
 import Foundation
@@ -99,37 +104,88 @@ struct TeachyJevError: LocalizedError {
     }
 }
 
+/// Where a Jev call goes, chosen from the key: OpenRouter keys start with `sk-or-`,
+/// Google AI Studio (Gemini) keys with `AIza`; anything else is a Vercel AI Gateway key.
+enum TeachyJevProvider: Equatable {
+    case vercelGateway
+    case openRouter
+    case gemini
+
+    static func forKey(_ apiKey: String) -> TeachyJevProvider {
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedKey.hasPrefix("sk-or-") { return .openRouter }
+        if trimmedKey.hasPrefix("AIza") { return .gemini }
+        return .vercelGateway
+    }
+
+    /// Gemini's Decisions API calls the shared state `input`; the others call it `state`.
+    var stateFieldName: String {
+        self == .gemini ? "input" : "state"
+    }
+
+    var endpoint: URL {
+        switch self {
+        case .vercelGateway: return URL(string: "https://ai-gateway.vercel.sh/typesafe/v1/systemone")!
+        case .openRouter: return URL(string: "https://openrouter.ai/api/alpha/decisions")!
+        case .gemini: return URL(string: "https://generativelanguage.googleapis.com/v1beta/decisions")!
+        }
+    }
+
+    var modelID: String {
+        switch self {
+        case .vercelGateway: return "typesafe-ai/jev"
+        case .openRouter: return "~typesafe/jev-latest"
+        case .gemini: return "gemini-decision-1"
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .vercelGateway: return "Vercel AI Gateway"
+        case .openRouter: return "OpenRouter"
+        case .gemini: return "Gemini"
+        }
+    }
+}
+
 enum TeachyJev {
-    static let systemOneEndpoint = URL(string: "https://ai-gateway.vercel.sh/typesafe/v1/systemone")!
-    static let modelID = "typesafe-ai/jev"
+    static var isAvailable: Bool { TeachyGatewayKeyStore.isJevConfigured }
 
-    static var isAvailable: Bool { TeachyGatewayKeyStore.isConfigured }
-
-    static func requestBody(state: String, questions: [String: TeachyJevQuestion]) -> [String: Any] {
+    static func requestBody(
+        state: String,
+        questions: [String: TeachyJevQuestion],
+        provider: TeachyJevProvider = .vercelGateway
+    ) -> [String: Any] {
         [
-            "model": modelID,
-            "state": state,
+            "model": provider.modelID,
+            provider.stateFieldName: state,
             "questions": questions.mapValues(\.jsonObject),
         ]
     }
 
-    /// One Jev call. `apiKey` defaults to the saved gateway key.
+    /// One Jev call. `apiKey` defaults to the saved key (gateway first, then OpenRouter);
+    /// the key decides which service is called.
     static func ask(
         state: String,
         questions: [String: TeachyJevQuestion],
         timeout: TimeInterval = 2,
-        apiKey: String? = TeachyGatewayKeyStore.apiKey,
+        apiKey: String? = TeachyGatewayKeyStore.jevKey,
         session: URLSession = .shared
     ) async throws -> TeachyJevAnswers {
         guard let apiKey, !apiKey.isEmpty else {
-            throw TeachyJevError(statusCode: 0, message: "No Vercel AI Gateway key is set.")
+            throw TeachyJevError(statusCode: 0, message: "No Jev key is set.")
         }
-        var request = URLRequest(url: systemOneEndpoint)
+        let provider = TeachyJevProvider.forKey(apiKey)
+        var request = URLRequest(url: provider.endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody(state: state, questions: questions))
+        if provider == .gemini {
+            request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        } else {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody(state: state, questions: questions, provider: provider))
 
         let (responseData, response) = try await session.data(for: request)
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
