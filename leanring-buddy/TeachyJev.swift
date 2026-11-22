@@ -104,18 +104,22 @@ struct TeachyJevError: LocalizedError {
     }
 }
 
-/// Where a Jev call goes, chosen from the key: OpenRouter keys start with `sk-or-`,
-/// Google AI Studio (Gemini) keys with `AIza`; anything else is a Vercel AI Gateway key.
+/// Where a Jev call goes. Each key is saved under its service, so the service is known;
+/// `recognized(fromKey:)` only spots keys whose prefix gives the service away.
 enum TeachyJevProvider: Equatable {
     case vercelGateway
     case openRouter
     case gemini
 
-    static func forKey(_ apiKey: String) -> TeachyJevProvider {
+    /// The service a key clearly belongs to, or nil when the prefix doesn't say.
+    /// OpenRouter: `sk-or-`. Google AI Studio: `AIza` (classic) or `AQ.` (newer keys).
+    /// Vercel AI Gateway: `vck_`.
+    static func recognized(fromKey apiKey: String) -> TeachyJevProvider? {
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedKey.hasPrefix("sk-or-") { return .openRouter }
-        if trimmedKey.hasPrefix("AIza") { return .gemini }
-        return .vercelGateway
+        if trimmedKey.hasPrefix("AIza") || trimmedKey.hasPrefix("AQ.") { return .gemini }
+        if trimmedKey.hasPrefix("vck_") { return .vercelGateway }
+        return nil
     }
 
     /// Gemini's Decisions API calls the shared state `input`; the others call it `state`.
@@ -163,19 +167,25 @@ enum TeachyJev {
         ]
     }
 
-    /// One Jev call. `apiKey` defaults to the saved key (gateway first, then OpenRouter);
-    /// the key decides which service is called.
+    /// One Jev call. Without `apiKey`, the saved key is used (gateway, then Gemini, then
+    /// OpenRouter) with its service; with one, pass its `provider` too.
     static func ask(
         state: String,
         questions: [String: TeachyJevQuestion],
         timeout: TimeInterval = 2,
-        apiKey: String? = TeachyGatewayKeyStore.jevKey,
+        apiKey explicitKey: String? = nil,
+        provider explicitProvider: TeachyJevProvider? = nil,
         session: URLSession = .shared
     ) async throws -> TeachyJevAnswers {
+        let savedRoute = TeachyGatewayKeyStore.jevRoute
+        let apiKey = explicitKey ?? savedRoute?.apiKey
         guard let apiKey, !apiKey.isEmpty else {
             throw TeachyJevError(statusCode: 0, message: "No Jev key is set.")
         }
-        let provider = TeachyJevProvider.forKey(apiKey)
+        let provider = explicitProvider
+            ?? (explicitKey == nil ? savedRoute?.provider : nil)
+            ?? TeachyJevProvider.recognized(fromKey: apiKey)
+            ?? .vercelGateway
         var request = URLRequest(url: provider.endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout

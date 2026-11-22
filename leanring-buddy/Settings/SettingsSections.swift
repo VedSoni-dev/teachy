@@ -952,7 +952,7 @@ struct JevKeysSettingsSection: View {
             JevKeyRow(
                 provider: .gemini,
                 title: "Gemini",
-                caption: "A Google AI Studio key (AIza…). Uses Gemini Decision 1.",
+                caption: "A Google AI Studio key. Uses Gemini Decision 1.",
                 placeholder: "Gemini API key"
             )
             TeachyRule()
@@ -1057,8 +1057,7 @@ private struct JevKeyRow: View {
         guard !key.isEmpty, !isValidating else { return }
         // Jev picks the service from the key's prefix, so a key pasted in the wrong row would
         // quietly go somewhere else. Say so instead.
-        let keyProvider = TeachyJevProvider.forKey(key)
-        guard keyProvider == provider else {
+        if let keyProvider = TeachyJevProvider.recognized(fromKey: key), keyProvider != provider {
             errorMessage = "That looks like a \(keyProvider.displayName) key. Paste it in the \(keyProvider.displayName) row."
             return
         }
@@ -1072,7 +1071,8 @@ private struct JevKeyRow: View {
                     state: "Teachy is checking its connection.",
                     questions: ["ok": .noul(instructions: "This is a connection check.")],
                     timeout: 10,
-                    apiKey: key
+                    apiKey: key,
+                    provider: provider
                 )
                 TeachyGatewayKeyStore.saveKey(key, for: provider)
                 isSaved = true

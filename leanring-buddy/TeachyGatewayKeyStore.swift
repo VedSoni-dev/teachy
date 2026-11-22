@@ -44,13 +44,14 @@ enum TeachyGatewayKeyStore {
     }
 
     /// Jev can run: a gateway key, or an OpenRouter or Gemini key saved for Jev.
-    static var isJevConfigured: Bool { !(jevKey ?? "").isEmpty }
+    static var isJevConfigured: Bool { jevRoute != nil }
 
-    /// The key Jev uses: the gateway key first, then Gemini, then OpenRouter.
-    static var jevKey: String? {
-        if let gatewayKey = apiKey, !gatewayKey.isEmpty { return gatewayKey }
-        if let geminiKey = jevOnlyKey(for: .gemini), !geminiKey.isEmpty { return geminiKey }
-        return jevOnlyKey(for: .openRouter)
+    /// The key Jev uses and its service: the gateway key first, then Gemini, then OpenRouter.
+    static var jevRoute: (apiKey: String, provider: TeachyJevProvider)? {
+        for provider in [TeachyJevProvider.vercelGateway, .gemini, .openRouter] {
+            if let key = savedKey(for: provider), !key.isEmpty { return (key, provider) }
+        }
+        return nil
     }
 
     static func saveJevOnlyKey(_ key: String, for provider: TeachyJevProvider) {
