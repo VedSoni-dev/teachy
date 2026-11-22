@@ -9,11 +9,6 @@ struct TeachyAccountSettingsPage: View {
             SettingsPageGroup(title: "AI payment") {
                 SettingsPageLabel(title: paymentTitle, caption: "Teachy chooses the right model for each task.")
                 if session.choice == "publik", let wallet = session.wallet {
-                    if wallet.planKind != "plan" {
-                        Text(String(format: "$%.2f", Double(wallet.balanceMicros) / 1_000_000))
-                            .font(DS.Fonts.sans(28, weight: .semibold)).foregroundColor(DS.Colors.textPrimary)
-                        Text("Available balance").font(DS.Fonts.caption).foregroundColor(DS.Colors.textSecondary)
-                    }
                     if let url = URL(string: wallet.topUpURL) {
                         Button("Open publik wallet") { NSWorkspace.shared.open(url) }
                             .buttonStyle(SettingsGlossyButtonStyle(isSelected: true)).pointerCursor()

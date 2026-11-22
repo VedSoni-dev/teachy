@@ -5,11 +5,11 @@
 // At launch, before any window of your own: `let gate = await Publik.ensureSignedIn(ui)`. It
 //   1. loads or provisions this computer's publik key (POST /api/v1/installs);
 //   2. shows Sign in with publik until GET /api/v1/wallet says "claimed" (no other way past it);
-//   3. when usesAI: asks once how the app pays for AI and stores the answer (setChoice changes it);
+//   3. when usesAI: uses the publik account for AI, with no pay screen (setChoice changes it);
 //   4. starts usage counting: app_opened now, active_session every 30 minutes (POST /api/v1/telemetry).
+import Foundation
 import AppKit
 import Combine
-import Foundation
 
 /// show(): draw the screen and return the button pressed. When the task is cancelled (the gate saw the sign-in), close it and return nil.
 protocol PublikGateUI: Sendable {
@@ -20,11 +20,11 @@ protocol PublikGateUI: Sendable {
 enum Publik {
     static let appSlug = "deckhand"
     static let appVersion = "1.0"
-    /// false: the app calls no model. It still signs in and counts users; it skips the plan screen.
+    /// false: the app calls no model. It still signs in and counts users; it stores no choice.
     static let usesAI = true
     static let origin = ProcessInfo.processInfo.environment["PUBLIK_ORIGIN"] ?? "https://publikhq.com" // PUBLIK_ORIGIN: tests only
     static let defaultBaseURL = "\(origin)/api/v1"
-    /// Ask for a tier, never a vendor model name.
+    /// Ask for a tier, or a vendor/model name from GET /api/v1/models; never a bare vendor model name.
     static let models = (fast: "publik-fast", balanced: "publik-balanced", smart: "publik-smart")
 
     struct Credential: Codable { var key: String; var base_url: String; var install_id: String; var claim_url: String?; var choice: String? }
@@ -129,7 +129,7 @@ enum Publik {
             return Screen(id: id, title: "Choose how to pay for AI", body: "\(who) This app uses AI. Get a publik plan, or use your own key.", note: note,
                           buttons: [("get_plan", "Get a plan"), ("own_key", "Use my own key")])
         }
-        let what = w.planKind == "plan" ? "Your plan: \(w.planLabel ?? "publik")." : String(format: "Your balance: $%.2f.", Double(w.balanceMicros) / 1_000_000)
+        let what = w.planKind == "plan" ? "Your plan: \(w.planLabel ?? "publik")." : "You have publik use ready."
         return Screen(id: id, title: "Connect your plan", body: "\(who) \(what) Connect it to use AI in this app, or use your own key.", note: note,
                       buttons: [("connect", "Connect your plan"), ("own_key", "Use my own key")])
     }
@@ -157,8 +157,8 @@ enum Publik {
     /// The gate (see the top of the file). Returns once the person is signed in; `choice` is nil when usesAI is false.
     static func ensureSignedIn(_ ui: PublikGateUI = TerminalGateUI()) async -> (key: String, wallet: Wallet, choice: String?) {
         if ProcessInfo.processInfo.environment["PUBLIK_SELF_TEST"] != nil { print(await selfTest()); exit(0) }
-        var signNote: String?, signPoll = true, planNote: String?, planPoll = false
-        let signedIn: @Sendable (Wallet) -> Bool = { $0.claimed }, hasPlan: @Sendable (Wallet) -> Bool = { $0.planKind != "none" || $0.balanceMicros > 0 }
+        var signNote: String?, signPoll = true
+        let signedIn: @Sendable (Wallet) -> Bool = { $0.claimed }
         while true {
             let envKey = ProcessInfo.processInfo.environment["PUBLIK_API_KEY"].flatMap { $0.isEmpty ? nil : $0 }
             let c: Credential, status: Int, wallet: Wallet?, message: String?
@@ -180,16 +180,7 @@ enum Publik {
                 continue
             }
             var choice = usesAI ? readCredential()?.choice : nil
-            if usesAI && choice == nil {
-                if hasPlan(w) { planNote = nil; planPoll = false } // the plan is there: Connect your plan
-                let a = await ask(ui, gateScreen("choose", w, note: planNote), key: c.key, until: planPoll ? hasPlan : nil)
-                planNote = nil; planPoll = false
-                if a == "get_plan", let url = URL(string: w.topUpURL) { ui.open(url); planNote = "Waiting for your plan. Finish in your browser."; planPoll = true }
-                if a == "timeout" { planNote = "No plan after 10 minutes. Click Get a plan to try again." }
-                guard a == "connect" || a == "own_key" else { continue } // "done": the plan is there; the next screen is Connect your plan
-                choice = a == "connect" ? "publik" : "own_key"
-                setChoice(choice)
-            }
+            if usesAI && choice == nil { choice = "publik"; setChoice(choice) } // no pay screen at start: publik is the choice; the app offers a plan when publik answers 402
             startTelemetry()
             return (c.key, w, choice)
         }

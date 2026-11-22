@@ -185,7 +185,7 @@ struct PublikAccountSection: View {
             let planLabel = wallet.planLabel ?? "publik"
             return ("publik plan \u{00B7} \(planLabel)", "AI runs on your publik plan (\(planLabel))")
         }
-        let balanceLeft = String(format: "$%.2f left", Double(wallet.balanceMicros) / 1_000_000)
-        return ("publik \u{00B7} \(balanceLeft)", "AI runs on publik \u{00B7} \(balanceLeft)")
+        // publik asks apps never to show an amount of money.
+        return ("publik", "AI runs on publik")
     }
 }
