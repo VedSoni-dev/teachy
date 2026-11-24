@@ -779,6 +779,25 @@ struct PrivacySettingsSection: View {
             SettingsDivider()
 
             SettingsToggleRow(
+                title: "Suggestions",
+                caption: "Once a day, a few things Teachy could take off your plate appear from the notch, each with its plan. Nothing happens until you press Do it, and results stay as drafts.",
+                isOn: $settings.suggestionsEnabled
+            )
+
+            HStack {
+                Spacer()
+                Button("Suggest things now") {
+                    // A notification rather than a direct call keeps this section free of the
+                    // suggestion engine, so settings renders still compile on their own.
+                    NotificationCenter.default.post(name: Notification.Name("teachy.suggestions.offerNow"), object: nil)
+                }
+                .teachyButton(.secondary, size: .compact)
+                .disabled(!settings.suggestionsEnabled)
+            }
+
+            SettingsDivider()
+
+            SettingsToggleRow(
                 title: "Auto permissions",
                 caption: "On: agents click, type, browse and change things without stopping to ask. They still ask every time before deleting, sending, paying, posting or touching passwords. Off: they ask before every change.",
                 isOn: $settings.agentAutoPermissions

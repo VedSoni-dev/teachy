@@ -314,6 +314,26 @@ final class CompanionManager: ObservableObject {
         startPermissionPolling()
         bindVoiceStateObservation()
         bindAudioPowerLevel()
+        // Next-step buttons under the notch: rewrite what Teachy typed, or ask the label as a request.
+        NextStepChipsPresenter.shared.onChoose = { [weak self] chip in
+            switch chip.kind {
+            case .askTeachy:
+                self?.submitSyntheticCompanionRequest(chip.label)
+            case .rewriteLastWriting(let change):
+                Task { @MainActor [weak self] in
+                    let outcome = await ScreenAwareWriter.shared.rewriteLastWriting(change: change)
+                    switch outcome {
+                    case .inserted:
+                        // Offer the same tweaks again on the new version.
+                        NextStepChipsPresenter.shared.show(NextStepRules.chips(modelLabels: [], typedTextJustNow: true))
+                    case .copiedToClipboard:
+                        self?.speakErrorMessage("That text changed since I typed it, so the new version is on your clipboard.")
+                    case .failed(let message):
+                        self?.speakErrorMessage(message)
+                    }
+                }
+            }
+        }
         bindShortcutTransitions()
         // Hands-free mode: each finished utterance runs through the normal voice turn.
         VoiceModeController.shared.onUtterance = { [weak self] text in
@@ -739,6 +759,8 @@ final class CompanionManager: ObservableObject {
                     self.voiceState = .processing
                 } else if isRecording {
                     self.voiceState = .listening
+                    // A new question replaces the last answer's next steps.
+                    NextStepChipsPresenter.shared.hide()
                 } else if isPreparing {
                     // The key is held and the mic is starting (a fraction of a second): from the
                     // person's side it is already listening, so show that, not "thinking".
@@ -1044,6 +1066,7 @@ final class CompanionManager: ObservableObject {
         - When they want it DONE, do it rather than explain it: [DO:] for a single native command, [JOB:] for real multi-step work (it can browse the web in a real browser, use the mouse and keyboard, and work across apps), [WALK:] when they'd rather click through it themselves. If it's unclear whether they want you to do it, answer, then offer in one short line ("want me to just do it?").
         - When they want real multi-step work DONE for them (research something on the web, fill something in, sort or rename files, build or change something, anything across several apps or their connected services) add [JOB: the whole task in one clear sentence, with every detail they gave and anything you can see that it needs] and SAY one short line that you're on it. A job runs in the background, shows its plan, and asks them before anything risky. Don't use [JOB:] for a single native command (that's [DO:]).
         \(WritingPrompt.voicePromptRule)
+        \(NextStepRules.voicePromptRule)
         - If they share something personal (their job, an interest, a joke, a life detail) tag it [REMEMBER: the fact] in your reply. This is stripped before speaking, never shown to them. Teachy also learns from every chat on its own afterwards.
         - When they refer to something they like or did before ("the one song I like", "my usual"), look in FROM MEMORY and WHAT YOU REMEMBER first and act on it. Ask only if memory has nothing, and then ask for the one detail you need.
         \(TeachyActionPreferences.voicePromptLine(web: TeachySettingsStorage.webControlPreference()))\(depthSection)
@@ -1452,13 +1475,22 @@ final class CompanionManager: ObservableObject {
 
                 // [WRITE: …] drafts text from what's on screen, in their voice, and types it
                 // into the field they have focused.
-                let (replyWithoutWriteTag, writeInstruction) = VoiceTag.extract("WRITE", from: replyWithoutOpenTags)
+                let (replyWithoutWriteTagAndNextTags, writeInstruction) = VoiceTag.extract("WRITE", from: replyWithoutOpenTags)
+
+                // [NEXT: label] tags become a row of next-step buttons under the notch. After
+                // Teachy typed something, "Make it shorter" / "Make it warmer" join them.
+                let (replyWithoutWriteTag, nextStepLabels) = NextStepRules.extract(from: replyWithoutWriteTagAndNextTags)
                 if let writeInstruction {
                     Task { @MainActor [weak self] in
                         let outcome = await ScreenAwareWriter.shared.writeAndInsert(instruction: writeInstruction, screenshots: labeledImages)
                         await self?.speechSynthesizer.finishStream()
                         self?.speakErrorMessage(outcome.spokenLine)
+                        let typedText: Bool
+                        if case .inserted = outcome { typedText = true } else { typedText = false }
+                        NextStepChipsPresenter.shared.show(NextStepRules.chips(modelLabels: nextStepLabels, typedTextJustNow: typedText))
                     }
+                } else if !nextStepLabels.isEmpty {
+                    NextStepChipsPresenter.shared.show(NextStepRules.chips(modelLabels: nextStepLabels, typedTextJustNow: false))
                 }
 
                 // [WALK: …] starts a step-by-step walkthrough: Teachy rings each control and

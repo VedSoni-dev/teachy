@@ -218,6 +218,8 @@ final class BackgroundAgentToolRegistry {
         register(RunAppleScriptTool())
         register(OpenBrowserTabTool())
         register(CaptureScreenTool())
+        // Blurs faces / names / regions in a copy of an image before it is shared.
+        register(ImageRedactionTool())
         register(CanvasInspectTool())
         register(CanvasEditTool())
         register(AuthenticatedFetchTool())

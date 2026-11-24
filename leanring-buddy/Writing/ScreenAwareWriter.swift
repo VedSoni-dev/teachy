@@ -50,6 +50,61 @@ final class ScreenAwareWriter {
 
     private init() {}
 
+    /// The text the last [WRITE:] typed, so "Make it shorter" can rewrite it where it sits.
+    private(set) var lastInsertedText: String?
+
+    /// Rewrites the text Teachy typed last, in place: finds it in the focused field, asks the
+    /// model for the new version and replaces just that part. If the field no longer holds it
+    /// (the person edited it, or moved to another field), the new version goes on the clipboard.
+    func rewriteLastWriting(change: String) async -> WriteOutcome {
+        guard let originalText = lastInsertedText else {
+            return .failed(message: "I don't have anything I typed to change.")
+        }
+        let newText: String
+        do {
+            newText = try await write(
+                instruction: NextStepRules.rewriteInstruction(originalText: originalText, change: change),
+                screenshots: [],
+                frontmostApp: NSWorkspace.shared.frontmostApplication?.localizedName,
+                focusedFieldContext: nil
+            )
+        } catch let error as TeachyAIBillingError {
+            return .failed(message: error.message)
+        } catch let error as WriterError {
+            return .failed(message: error.message)
+        } catch {
+            return .failed(message: "I couldn't rewrite that just now. Try again in a moment.")
+        }
+
+        if let element = DictationTextInserter.focusedElement() {
+            let field = DictationAXField(element: element, bundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+            if let fieldValue = field.value(),
+               let range = NextStepRules.rangeOfLastWriting(originalText, in: fieldValue),
+               field.setSelectedRange(range) {
+                // Replace the selection: through Accessibility when the field allows it,
+                // otherwise the inserter pastes over the selected text.
+                let replaced: Bool
+                let accessibilityResult = field.setSelectedText(newText)
+                // A timed-out set may still land later, so never paste on top of it.
+                if accessibilityResult == .accepted || accessibilityResult == .timedOut {
+                    replaced = true
+                } else {
+                    switch await DictationTextInserter.insert(newText) {
+                    case .accessibility, .pasted: replaced = true
+                    default: replaced = false
+                    }
+                }
+                if replaced {
+                    lastInsertedText = newText
+                    return .inserted(newText)
+                }
+            }
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(newText, forType: .string)
+        return .copiedToClipboard(newText)
+    }
+
     /// The text to insert, and nothing else. One model call.
     func write(
         instruction: String,
@@ -113,6 +168,7 @@ final class ScreenAwareWriter {
 
         switch await DictationTextInserter.insert(text) {
         case .accessibility, .pasted:
+            lastInsertedText = text
             return .inserted(text)
         case .copiedToClipboard:
             return .copiedToClipboard(text)

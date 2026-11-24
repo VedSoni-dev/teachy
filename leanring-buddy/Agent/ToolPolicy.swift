@@ -204,6 +204,12 @@ enum ToolPolicy {
         case "read_file", "grep", "glob", "list_directory":
             return classifyFileRead(toolName: toolName, arguments: arguments, settings: settings)
 
+        case "redact_image":
+            // Reads one image (judged like read_file, so secret-looking files still ask) and
+            // writes a new copy only into Teachy's own output folder; the original is untouched.
+            let readDecision = classifyFileRead(toolName: "read_file", arguments: arguments, settings: settings)
+            return decision(readDecision.risk, readDecision.reason, summary: "blur private parts of an image", detail: string(arguments["path"]))
+
         case "write_file", "edit_file":
             let path = string(arguments["path"])
             let verb = toolName == "edit_file" ? "edit" : "write"

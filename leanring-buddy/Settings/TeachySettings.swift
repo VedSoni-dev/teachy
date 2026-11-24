@@ -27,6 +27,8 @@ nonisolated enum TeachySettingsKey {
     static let allowBrowserCookieTools = "teachyAllowBrowserCookieTools"
     /// On (the default): agents make ordinary changes without asking; risky ones still ask.
     static let agentAutoPermissions = "teachyAgentAutoPermissions"
+    /// On (the default): once a day Teachy offers a few things it could do, from the notch.
+    static let suggestionsEnabled = "teachySuggestionsEnabled"
     static let shortcuts = "teachyShortcuts"
     /// "auto" (answer in the language they spoke) or a `TeachyReplyLanguages` code.
     static let replyLanguage = "teachyReplyLanguage"
@@ -456,6 +458,10 @@ nonisolated enum TeachySettingsStorage {
         bool(TeachySettingsKey.agentAutoPermissions, default: true, defaults)
     }
 
+    static func suggestionsEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        bool(TeachySettingsKey.suggestionsEnabled, default: true, defaults)
+    }
+
     static func webControlPreference(_ defaults: UserDefaults = .standard) -> TeachyWebControlPreference {
         defaults.string(forKey: TeachySettingsKey.webControlPreference).flatMap(TeachyWebControlPreference.init(rawValue:)) ?? .automatic
     }
@@ -584,6 +590,11 @@ final class TeachySettings: ObservableObject {
         didSet { defaults.set(agentAutoPermissions, forKey: TeachySettingsKey.agentAutoPermissions) }
     }
 
+    /// On by default: a few ideas a day from the notch. Nothing runs until the person presses Do it.
+    @Published var suggestionsEnabled: Bool {
+        didSet { defaults.set(suggestionsEnabled, forKey: TeachySettingsKey.suggestionsEnabled) }
+    }
+
     @Published var webControlPreference: TeachyWebControlPreference {
         didSet { defaults.set(webControlPreference.rawValue, forKey: TeachySettingsKey.webControlPreference) }
     }
@@ -640,6 +651,7 @@ final class TeachySettings: ObservableObject {
         soundsEnabled = TeachySettingsStorage.soundsEnabled(defaults)
         allowBrowserCookieTools = TeachySettingsStorage.allowBrowserCookieTools(defaults)
         agentAutoPermissions = TeachySettingsStorage.agentAutoPermissions(defaults)
+        suggestionsEnabled = TeachySettingsStorage.suggestionsEnabled(defaults)
         webControlPreference = TeachySettingsStorage.webControlPreference(defaults)
         pointerControlPreference = TeachySettingsStorage.pointerControlPreference(defaults)
         shortcuts = TeachySettingsStorage.shortcuts(defaults)

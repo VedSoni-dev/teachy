@@ -89,6 +89,11 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         }
         // Scheduled routines run as agent jobs while the app is open.
         RoutineScheduler.shared.start(using: companionManager.backgroundAgentManager)
+        // Once a day: a few things Teachy could take off the person's plate, from the notch.
+        SuggestionCenter.shared.start(backgroundAgentManager: companionManager.backgroundAgentManager) { [weak self] in
+            guard let self else { return true }
+            return self.companionManager.voiceState != .idle || !AgentJobCenter.shared.activeJobs.isEmpty
+        }
         // The chat window: full conversation history, a composer and file drops (Control+Command+A).
         ChatWindowController.shared.accentColor = companionManager.selectedCursorColor.displayColor
         ChatWindowController.shared.install(onSubmit: { [weak self] text in

@@ -587,7 +587,7 @@ final class AgentJobCenter: ObservableObject {
             }
             messages.append([
                 "role": "user",
-                "content": await Self.buildUserMessageContent(request: request, drive: job.drive)
+                "content": await Self.buildUserMessageContent(request: request, drive: job.drive, jobID: job.id)
             ])
             job.messages = messages
         }
@@ -742,7 +742,7 @@ final class AgentJobCenter: ObservableObject {
 
     // MARK: Messages
 
-    private static func buildUserMessageContent(request: AgentJobRequest, drive: DriveSession) async -> Any {
+    private static func buildUserMessageContent(request: AgentJobRequest, drive: DriveSession, jobID: String) async -> Any {
         guard !request.screenCaptures.isEmpty else { return request.transcript }
 
         let cursorCaptures = request.screenCaptures.filter(\.isCursorScreen)
@@ -750,7 +750,7 @@ final class AgentJobCenter: ObservableObject {
         let primaryDisplayHeight = NSScreen.screens.first?.frame.height ?? 0
         var blocks: [[String: Any]] = []
 
-        for capture in capturesToAttach {
+        for (screenIndex, capture) in capturesToAttach.enumerated() {
             let outlinePoints = capture.isCursorScreen ? (request.mouseOutlineContext?.outlinePointsInScreenshotSpace ?? []) : []
             let highlightedCells = capture.isCursorScreen ? (request.mouseOutlineContext?.touchedGridCellLabels ?? []) : []
             let captureID = await drive.registerCapture(
@@ -763,6 +763,21 @@ final class AgentJobCenter: ObservableObject {
             var label = capture.label + " (capture_id: \(captureID); image dimensions: \(capture.screenshotWidthInPixels)x\(capture.screenshotHeightInPixels) pixels, grid overlay: columns A-X, rows 1-16)"
             if let spatial = request.mouseOutlineContext?.spatialContextLabel, capture.isCursorScreen {
                 label += "; \(spatial)"
+            }
+            // The same screenshot as a real file (and the circled area on its own), so the job
+            // can blur it with redact_image, attach it or upload it.
+            if let saved = JobRequestScreenshotFiles.save(
+                imageData: capture.imageData,
+                jobID: jobID,
+                screenIndex: screenIndex,
+                outlinePoints: outlinePoints,
+                screenshotWidth: capture.screenshotWidthInPixels,
+                screenshotHeight: capture.screenshotHeightInPixels
+            ) {
+                label += "; saved as file: \(saved.screenshotPath)"
+                if let circledAreaPath = saved.circledAreaPath {
+                    label += "; the circled area alone is saved as: \(circledAreaPath)"
+                }
             }
             let annotated = ScreenGridAnnotationUtility.annotateScreenshotForModel(
                 originalJPEGData: capture.imageData,

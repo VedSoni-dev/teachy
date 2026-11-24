@@ -20,7 +20,7 @@ protocol PublikGateUI: Sendable {
 
 enum Publik {
     static let appSlug = "teachy"
-    static let appVersion = "2.4"
+    static let appVersion = "2.5"
     /// false: the app calls no model. It still signs in and counts users; it stores no choice.
     static let usesAI = true
     static let origin = ProcessInfo.processInfo.environment["PUBLIK_ORIGIN"] ?? "https://publikhq.com" // PUBLIK_ORIGIN: tests only
